@@ -5,7 +5,11 @@
   "type": "module",
   "bin": {
     "claude-search": "./bin/claude-search.mjs",
-    "claude-context": "./bin/claude-context.mjs"
+    "claude-context": "./bin/claude-context.mjs",
+    "claude-structure": "./bin/claude-structure.mjs",
+    "claude-diff": "./bin/claude-diff.mjs",
+    "claude-related": "./bin/claude-related.mjs",
+    "claude-component": "./bin/claude-component.mjs"
   },
   "scripts": {
     "link": "npm link"
