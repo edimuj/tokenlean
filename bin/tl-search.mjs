@@ -8,8 +8,13 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { join } from 'path';
+
+try { execSync('which rg', { stdio: 'ignore' }); } catch {
+  console.error('⚠️  ripgrep (rg) not found. Install: brew install ripgrep');
+  process.exit(1);
+}
 
 const CONFIG_PATH = '.claude/search-patterns.json';
 

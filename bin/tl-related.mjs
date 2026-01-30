@@ -13,6 +13,11 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join, dirname, basename, relative, extname } from 'path';
 import { execSync } from 'child_process';
 
+try { execSync('which rg', { stdio: 'ignore' }); } catch {
+  console.error('⚠️  ripgrep (rg) not found. Install: brew install ripgrep');
+  process.exit(1);
+}
+
 const SKIP_DIRS = new Set([
   'node_modules', '.git', 'android', 'ios', 'dist', 'build', '.expo', '.next'
 ]);

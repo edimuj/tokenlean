@@ -1,20 +1,20 @@
 {
-  "name": "claude-tools",
+  "name": "tokenlean",
   "version": "0.1.0",
-  "description": "Cross-project CLI tools for working with Claude Code",
+  "description": "Lean CLI tools for AI agents and developers - reduce context, save tokens",
   "type": "module",
   "bin": {
-    "claude-search": "./bin/claude-search.mjs",
-    "claude-context": "./bin/claude-context.mjs",
-    "claude-structure": "./bin/claude-structure.mjs",
-    "claude-diff": "./bin/claude-diff.mjs",
-    "claude-related": "./bin/claude-related.mjs",
-    "claude-component": "./bin/claude-component.mjs"
+    "tl-search": "./bin/tl-search.mjs",
+    "tl-context": "./bin/tl-context.mjs",
+    "tl-structure": "./bin/tl-structure.mjs",
+    "tl-diff": "./bin/tl-diff.mjs",
+    "tl-related": "./bin/tl-related.mjs",
+    "tl-component": "./bin/tl-component.mjs"
   },
   "scripts": {
     "link": "npm link"
   },
-  "keywords": ["claude", "cli", "tools", "developer"],
-  "author": "",
+  "keywords": ["ai", "agents", "cli", "tools", "tokens", "context", "developer"],
+  "author": "Edin Mujkanovic",
   "license": "MIT"
 }

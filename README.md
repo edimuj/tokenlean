@@ -1,36 +1,40 @@
-# Claude Tools
+# tokenlean
 
-Cross-project CLI tools for working with Claude Code. Helps reduce context usage and improve workflow efficiency.
+Lean CLI tools for AI agents and developers. Reduce context usage, save tokens, improve workflow efficiency.
 
 ## Installation
 
 ```bash
-cd ~/projects/claude-tools
+npm install -g tokenlean
+```
+
+Or link locally for development:
+```bash
+git clone https://github.com/YOUR_USERNAME/tokenlean.git
+cd tokenlean
 npm link
 ```
 
-This makes all tools available globally.
-
 ## Tools
 
-### claude-context
+### tl-context
 
 Estimate context token usage for files/directories.
 
 ```bash
-claude-context              # Current dir, top 20 files
-claude-context src/         # Specific directory
-claude-context --top 50     # Show top 50 files
-claude-context --all        # Show all files
+tl-context              # Current dir, top 20 files
+tl-context src/         # Specific directory
+tl-context --top 50     # Show top 50 files
+tl-context --all        # Show all files
 ```
 
-### claude-search
+### tl-search
 
 Pre-defined search patterns for common lookups.
 
 ```bash
-claude-search               # Show available patterns
-claude-search hooks         # Run a specific pattern
+tl-search               # Show available patterns
+tl-search hooks         # Run a specific pattern
 ```
 
 Requires `.claude/search-patterns.json` in your project:
@@ -47,37 +51,37 @@ Requires `.claude/search-patterns.json` in your project:
 }
 ```
 
-### claude-structure
+### tl-structure
 
 Smart project overview with token estimates.
 
 ```bash
-claude-structure            # Default depth (3)
-claude-structure --depth 2  # Shallow view
-claude-structure src/       # Specific directory
+tl-structure            # Default depth (3)
+tl-structure --depth 2  # Shallow view
+tl-structure src/       # Specific directory
 ```
 
-Shows directory tree with file counts and token estimates. Marks important directories/files with `*`.
+Shows a directory tree with file counts and token estimates. Marks important directories/files with `*`.
 
-### claude-diff
+### tl-diff
 
 Token-efficient git diff summary.
 
 ```bash
-claude-diff                 # Unstaged changes
-claude-diff --staged        # Staged changes only
-claude-diff HEAD~3          # Compare with ref
-claude-diff --stat-only     # Just the summary
+tl-diff                 # Unstaged changes
+tl-diff --staged        # Staged changes only
+tl-diff HEAD~3          # Compare with ref
+tl-diff --stat-only     # Just the summary
 ```
 
 Categorizes changes by type (components, hooks, store, tests, etc.) and estimates token impact.
 
-### claude-related
+### tl-related
 
 Find related files for a given file.
 
 ```bash
-claude-related src/components/Button.tsx
+tl-related src/components/Button.tsx
 ```
 
 Finds:
@@ -86,12 +90,12 @@ Finds:
 - Files that import this one
 - Sibling files in the same directory
 
-### claude-component
+### tl-component
 
 React component analyzer.
 
 ```bash
-claude-component src/components/MyComponent.tsx
+tl-component src/components/MyComponent.tsx
 ```
 
 Shows:
@@ -103,22 +107,18 @@ Shows:
 
 ## Dependencies
 
-- **ripgrep** (`rg`): Required for claude-search and claude-related
-  ```bash
-  brew install ripgrep  # macOS
-  ```
+- **ripgrep** (`rg`): Required for tl-search and tl-related 
 
-## Adding to a Project
+## Why tokenlean?
 
-1. Create `.claude/search-patterns.json` with project-specific search patterns
-2. Use the tools from anywhere in the project directory
-
-## Why These Tools?
-
-When working with Claude Code, context window usage directly impacts cost and effectiveness. These tools help:
+When working with AI coding assistants, context window usage directly impacts cost and effectiveness. These tools help:
 
 - **Estimate before reading**: Know file sizes before deciding to read them
 - **Find efficiently**: Pre-defined patterns avoid multiple grep iterations
 - **Understand structure**: Quick project overview without reading everything
 - **Navigate changes**: Understand diffs without full content
-- **Analyze components**: Get component info without reading full file
+- **Analyze components**: Get component info without reading the full file
+
+## License
+
+MIT
