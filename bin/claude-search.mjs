@@ -66,7 +66,7 @@ function runSearch(name, config, rootDir) {
     return;
   }
 
-  const args = ['--color=always', '-n', '-E', config.pattern];
+  const args = ['--color=always', '-n', '-e', config.pattern];
 
   if (config.glob) {
     args.push('-g', config.glob);
