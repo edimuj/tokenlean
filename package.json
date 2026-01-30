@@ -1,0 +1,16 @@
+{
+  "name": "claude-tools",
+  "version": "0.1.0",
+  "description": "Cross-project CLI tools for working with Claude Code",
+  "type": "module",
+  "bin": {
+    "claude-search": "./bin/claude-search.mjs",
+    "claude-context": "./bin/claude-context.mjs"
+  },
+  "scripts": {
+    "link": "npm link"
+  },
+  "keywords": ["claude", "cli", "tools", "developer"],
+  "author": "",
+  "license": "MIT"
+}
