@@ -1,132 +1,110 @@
 #!/usr/bin/env node
 
 /**
- * Claude Context - Estimate context token usage for files/directories
+ * tl-context - Estimate context token usage for files/directories
  *
  * Helps understand what contributes to context usage.
- * Usage: claude-context [path] [--top N]
+ * Usage: tl-context [path] [--top N]
  */
+
+// Prompt info for tl-prompt
+if (process.argv.includes('--prompt')) {
+  console.log(JSON.stringify({
+    name: 'tl-context',
+    desc: 'Estimate token usage for files/directories',
+    when: 'before-read',
+    example: 'tl-context src/'
+  }));
+  process.exit(0);
+}
 
 import { readFileSync, readdirSync, statSync, existsSync } from 'fs';
 import { join, relative } from 'path';
+import {
+  createOutput,
+  parseCommonArgs,
+  estimateTokens,
+  formatTokens,
+  formatTable,
+  COMMON_OPTIONS_HELP
+} from '../src/output.mjs';
+import {
+  findProjectRoot,
+  shouldSkip,
+  getSkipDirs,
+  getImportantDirs
+} from '../src/project.mjs';
 
-const SKIP_DIRS = new Set([
-  'node_modules', '.git', 'android', 'ios', 'dist', 'build',
-  '.expo', '.next', 'coverage', '__pycache__', '.cache'
-]);
+const HELP = `
+tl-context - Estimate context token usage for files/directories
 
-const SKIP_EXTENSIONS = new Set([
-  '.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.webp',
-  '.woff', '.woff2', '.ttf', '.eot',
-  '.mp3', '.mp4', '.wav', '.ogg',
-  '.zip', '.tar', '.gz',
-  '.lock', '.log'
-]);
+Usage: tl-context [path] [options]
 
-// Rough token estimate: ~4 chars per token for code
-function estimateTokens(content) {
-  return Math.ceil(content.length / 4);
-}
+Options:
+  --top N, -n N       Show top N files (default: 20, use --all for all)
+  --all               Show all files
+${COMMON_OPTIONS_HELP}
 
-function formatTokens(tokens) {
-  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`;
-  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k`;
-  return String(tokens);
-}
+Examples:
+  tl-context src/              # Estimate tokens for src directory
+  tl-context src/ --top 10     # Show top 10 largest files
+  tl-context src/ --all        # Show all files
+  tl-context package.json      # Single file estimate
+  tl-context -j                # JSON output for scripting
+`;
 
-function shouldSkip(name, isDir) {
-  if (isDir && SKIP_DIRS.has(name)) return true;
-  if (!isDir) {
-    const ext = name.substring(name.lastIndexOf('.'));
-    if (SKIP_EXTENSIONS.has(ext)) return true;
-  }
-  return false;
-}
+function analyzeDir(dirPath, results = [], skipDirs, importantDirs) {
+  try {
+    const entries = readdirSync(dirPath, { withFileTypes: true });
 
-function analyzeDir(dirPath, results = [], depth = 0) {
-  const entries = readdirSync(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name.startsWith('.') && !importantDirs.has(entry.name)) continue;
+      if (shouldSkip(entry.name, entry.isDirectory())) continue;
 
-  for (const entry of entries) {
-    if (entry.name.startsWith('.') && entry.name !== '.claude') continue;
-    if (shouldSkip(entry.name, entry.isDirectory())) continue;
+      const fullPath = join(dirPath, entry.name);
 
-    const fullPath = join(dirPath, entry.name);
-
-    if (entry.isDirectory()) {
-      analyzeDir(fullPath, results, depth + 1);
-    } else {
-      try {
-        const content = readFileSync(fullPath, 'utf-8');
-        const tokens = estimateTokens(content);
-        results.push({ path: fullPath, tokens, lines: content.split('\n').length });
-      } catch (e) {
-        // Skip binary or unreadable files
+      if (entry.isDirectory()) {
+        analyzeDir(fullPath, results, skipDirs, importantDirs);
+      } else {
+        try {
+          const content = readFileSync(fullPath, 'utf-8');
+          const tokens = estimateTokens(content);
+          results.push({ path: fullPath, tokens, lines: content.split('\n').length });
+        } catch {
+          // Skip binary or unreadable files
+        }
       }
     }
+  } catch {
+    // Permission error
   }
 
   return results;
 }
 
-function printResults(results, rootPath, topN) {
-  // Sort by tokens descending
-  results.sort((a, b) => b.tokens - a.tokens);
-
-  const total = results.reduce((sum, r) => sum + r.tokens, 0);
-
-  console.log(`\n📊 Context Estimate for: ${rootPath}\n`);
-  console.log(`Total: ~${formatTokens(total)} tokens across ${results.length} files\n`);
-
-  if (topN) {
-    console.log(`Top ${topN} largest files:\n`);
-    results = results.slice(0, topN);
-  }
-
-  const maxPathLen = Math.min(60, Math.max(...results.map(r => relative(rootPath, r.path).length)));
-
-  console.log('  Tokens   Lines  Path');
-  console.log('  ' + '-'.repeat(maxPathLen + 20));
-
-  for (const r of results) {
-    const relPath = relative(rootPath, r.path);
-    const truncPath = relPath.length > 60 ? '...' + relPath.slice(-57) : relPath;
-    console.log(`  ${formatTokens(r.tokens).padStart(6)}   ${String(r.lines).padStart(5)}  ${truncPath}`);
-  }
-
-  console.log();
-
-  // Group by directory
-  const byDir = {};
-  for (const r of results) {
-    const rel = relative(rootPath, r.path);
-    const dir = rel.includes('/') ? rel.split('/')[0] : '.';
-    byDir[dir] = (byDir[dir] || 0) + r.tokens;
-  }
-
-  const sortedDirs = Object.entries(byDir).sort((a, b) => b[1] - a[1]);
-
-  console.log('By top-level directory:\n');
-  for (const [dir, tokens] of sortedDirs.slice(0, 10)) {
-    const pct = ((tokens / total) * 100).toFixed(1);
-    console.log(`  ${formatTokens(tokens).padStart(6)}  ${pct.padStart(5)}%  ${dir}/`);
-  }
-  console.log();
-}
-
 // Main
 const args = process.argv.slice(2);
-let targetPath = '.';
-let topN = 20;
+const options = parseCommonArgs(args);
 
-for (let i = 0; i < args.length; i++) {
-  if (args[i] === '--top' && args[i + 1]) {
-    topN = parseInt(args[i + 1], 10);
+// Parse tool-specific options
+let topN = 20;
+let targetPath = '.';
+
+for (let i = 0; i < options.remaining.length; i++) {
+  const arg = options.remaining[i];
+  if ((arg === '--top' || arg === '-n') && options.remaining[i + 1]) {
+    topN = parseInt(options.remaining[i + 1], 10);
     i++;
-  } else if (args[i] === '--all') {
+  } else if (arg === '--all') {
     topN = null;
-  } else if (!args[i].startsWith('-')) {
-    targetPath = args[i];
+  } else if (!arg.startsWith('-')) {
+    targetPath = arg;
   }
+}
+
+if (options.help) {
+  console.log(HELP);
+  process.exit(0);
 }
 
 if (!existsSync(targetPath)) {
@@ -134,12 +112,94 @@ if (!existsSync(targetPath)) {
   process.exit(1);
 }
 
+const projectRoot = findProjectRoot();
+const skipDirs = getSkipDirs();
+const importantDirs = getImportantDirs();
+const out = createOutput(options);
+
 const stat = statSync(targetPath);
 if (stat.isFile()) {
+  // Single file
   const content = readFileSync(targetPath, 'utf-8');
   const tokens = estimateTokens(content);
-  console.log(`\n${targetPath}: ~${formatTokens(tokens)} tokens (${content.split('\n').length} lines)\n`);
+  const lines = content.split('\n').length;
+
+  out.setData('file', targetPath);
+  out.setData('tokens', tokens);
+  out.setData('lines', lines);
+
+  out.header(`${targetPath}: ~${formatTokens(tokens)} tokens (${lines} lines)`);
+  out.print();
 } else {
-  const results = analyzeDir(targetPath);
-  printResults(results, targetPath, topN);
+  // Directory
+  const results = analyzeDir(targetPath, [], skipDirs, importantDirs);
+
+  // Sort by tokens descending
+  results.sort((a, b) => b.tokens - a.tokens);
+
+  const total = results.reduce((sum, r) => sum + r.tokens, 0);
+  const totalLines = results.reduce((sum, r) => sum + r.lines, 0);
+
+  // Set JSON data
+  out.setData('path', targetPath);
+  out.setData('totalTokens', total);
+  out.setData('totalLines', totalLines);
+  out.setData('fileCount', results.length);
+
+  // Header
+  out.header(`Context Estimate: ${targetPath}`);
+  out.header(`Total: ~${formatTokens(total)} tokens across ${results.length} files`);
+  out.blank();
+
+  // File list
+  const displayResults = topN ? results.slice(0, topN) : results;
+
+  if (displayResults.length > 0) {
+    if (topN) {
+      out.header(`Top ${Math.min(topN, results.length)} largest files:`);
+    }
+    out.blank();
+
+    // Format as table
+    const rows = displayResults.map(r => {
+      const relPath = relative(targetPath, r.path);
+      const truncPath = relPath.length > 60 ? '...' + relPath.slice(-57) : relPath;
+      return [formatTokens(r.tokens), r.lines, truncPath];
+    });
+
+    const tableLines = formatTable(rows, { indent: '  ', separator: '   ' });
+    out.add('  Tokens   Lines  Path');
+    out.add('  ' + '-'.repeat(70));
+    out.addLines(tableLines);
+  }
+
+  // Group by directory
+  const byDir = {};
+  for (const r of results) {
+    const rel = relative(targetPath, r.path);
+    const dir = rel.includes('/') ? rel.split('/')[0] : '.';
+    byDir[dir] = (byDir[dir] || 0) + r.tokens;
+  }
+
+  const sortedDirs = Object.entries(byDir).sort((a, b) => b[1] - a[1]);
+
+  out.blank();
+  out.header('By top-level directory:');
+  out.blank();
+
+  const dirRows = sortedDirs.slice(0, 10).map(([dir, tokens]) => {
+    const pct = ((tokens / total) * 100).toFixed(1) + '%';
+    return [formatTokens(tokens), pct, dir + '/'];
+  });
+
+  out.addLines(formatTable(dirRows, { indent: '  ', separator: '  ' }));
+
+  out.setData('byDirectory', Object.fromEntries(sortedDirs));
+  out.setData('files', results.slice(0, 100).map(r => ({
+    path: relative(targetPath, r.path),
+    tokens: r.tokens,
+    lines: r.lines
+  })));
+
+  out.print();
 }

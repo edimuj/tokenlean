@@ -19,3 +19,12 @@ coverage/
 # Build output
 dist/
 build/
+
+# Local planning docs
+TODO-COMMANDS.md
+
+# Local config (users create their own)
+.tokenleanrc.json
+
+# Serena agent (MCP tool)
+.serena/

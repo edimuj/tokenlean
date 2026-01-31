@@ -1,25 +1,47 @@
 #!/usr/bin/env node
 
 /**
- * Claude Component - React component analyzer
+ * tl-component - React component analyzer
  *
  * Analyzes a React component to show props, hooks, dependencies,
  * and structure without reading the full file.
  *
- * Usage: claude-component <file.tsx>
+ * Usage: tl-component <file.tsx>
  */
 
-import { readFileSync, existsSync } from 'fs';
-import { join, relative, dirname, basename } from 'path';
-
-function findProjectRoot() {
-  let dir = process.cwd();
-  while (dir !== '/') {
-    if (existsSync(join(dir, 'package.json'))) return dir;
-    dir = dirname(dir);
-  }
-  return process.cwd();
+// Prompt info for tl-prompt
+if (process.argv.includes('--prompt')) {
+  console.log(JSON.stringify({
+    name: 'tl-component',
+    desc: 'Analyze React component (props, hooks, imports)',
+    when: 'before-read',
+    example: 'tl-component src/Button.tsx'
+  }));
+  process.exit(0);
 }
+
+import { readFileSync, existsSync } from 'fs';
+import { join, relative } from 'path';
+import {
+  createOutput,
+  parseCommonArgs,
+  estimateTokens,
+  formatTokens,
+  COMMON_OPTIONS_HELP
+} from '../src/output.mjs';
+import { findProjectRoot } from '../src/project.mjs';
+
+const HELP = `
+tl-component - React component analyzer
+
+Usage: tl-component <file.tsx> [options]
+${COMMON_OPTIONS_HELP}
+
+Examples:
+  tl-component src/Button.tsx       # Analyze component
+  tl-component src/App.tsx -j       # JSON output
+  tl-component src/Modal.tsx -q     # Quiet (minimal)
+`;
 
 function extractImports(content) {
   const imports = {
@@ -164,79 +186,14 @@ function extractRedux(content) {
   return redux;
 }
 
-function printAnalysis(analysis) {
-  const { file, lines, tokens, imports, hooks, propsInfo, components, styles, redux } = analysis;
-
-  console.log(`\n🧩 Component Analysis: ${file}`);
-  console.log(`   ${lines} lines, ~${tokens} tokens\n`);
-
-  // Components
-  if (components.length > 0) {
-    console.log(`📦 Components: ${components.join(', ')}`);
-  }
-
-  // Props
-  if (propsInfo) {
-    console.log(`\n📋 ${propsInfo.name}:`);
-    for (const p of propsInfo.props) {
-      const opt = p.optional ? '?' : '';
-      console.log(`   ${p.name}${opt}: ${p.type}`);
-    }
-  }
-
-  // Hooks
-  if (hooks.length > 0) {
-    console.log(`\n🪝 Hooks: ${hooks.join(', ')}`);
-  }
-
-  // Redux
-  if (redux.dispatch || redux.selectors.length > 0) {
-    console.log(`\n📦 Redux:`);
-    if (redux.selectors.length > 0) {
-      console.log(`   Selectors: ${redux.selectors.join(', ')}`);
-    }
-    if (redux.actions.length > 0) {
-      console.log(`   Actions: ${redux.actions.join(', ')}`);
-    }
-  }
-
-  // Imports summary
-  console.log(`\n📥 Imports:`);
-  if (imports.react.length > 0) {
-    console.log(`   React: ${imports.react.join(', ')}`);
-  }
-  if (imports.reactNative.length > 0) {
-    console.log(`   React Native: ${imports.reactNative.join(', ')}`);
-  }
-  if (imports.internal.length > 0) {
-    console.log(`   Internal: ${imports.internal.length} modules`);
-    for (const i of imports.internal.slice(0, 5)) {
-      console.log(`     ${i.source}`);
-    }
-    if (imports.internal.length > 5) {
-      console.log(`     ... and ${imports.internal.length - 5} more`);
-    }
-  }
-  if (imports.external.length > 0) {
-    console.log(`   External: ${imports.external.map(i => i.source).join(', ')}`);
-  }
-
-  // Styles
-  if (styles.length > 0) {
-    console.log(`\n🎨 Styling: ${styles.join(', ')}`);
-  }
-
-  console.log();
-}
-
 // Main
 const args = process.argv.slice(2);
-const targetFile = args[0];
+const options = parseCommonArgs(args);
+const targetFile = options.remaining.find(a => !a.startsWith('-'));
 
-if (!targetFile) {
-  console.log('\nUsage: claude-component <file.tsx>\n');
-  console.log('Analyzes a React component to show props, hooks, and dependencies.');
-  process.exit(1);
+if (options.help || !targetFile) {
+  console.log(HELP);
+  process.exit(options.help ? 0 : 1);
 }
 
 const fullPath = targetFile.startsWith('/') ? targetFile : join(process.cwd(), targetFile);
@@ -247,11 +204,12 @@ if (!existsSync(fullPath)) {
 
 const content = readFileSync(fullPath, 'utf-8');
 const projectRoot = findProjectRoot();
+const relPath = relative(projectRoot, fullPath);
 
 const analysis = {
-  file: relative(projectRoot, fullPath),
+  file: relPath,
   lines: content.split('\n').length,
-  tokens: Math.ceil(content.length / 4),
+  tokens: estimateTokens(content),
   imports: extractImports(content),
   hooks: extractHooks(content),
   propsInfo: extractProps(content),
@@ -260,4 +218,83 @@ const analysis = {
   redux: extractRedux(content)
 };
 
-printAnalysis(analysis);
+const out = createOutput(options);
+
+// Set JSON data
+out.setData('file', analysis.file);
+out.setData('lines', analysis.lines);
+out.setData('tokens', analysis.tokens);
+out.setData('components', analysis.components);
+out.setData('props', analysis.propsInfo);
+out.setData('hooks', analysis.hooks);
+out.setData('imports', analysis.imports);
+out.setData('styles', analysis.styles);
+out.setData('redux', analysis.redux);
+
+// Headers
+out.header(`Component Analysis: ${analysis.file}`);
+out.header(`${analysis.lines} lines, ~${formatTokens(analysis.tokens)} tokens`);
+out.blank();
+
+// Components
+if (analysis.components.length > 0) {
+  out.add(`Components: ${analysis.components.join(', ')}`);
+}
+
+// Props
+if (analysis.propsInfo) {
+  out.blank();
+  out.add(`${analysis.propsInfo.name}:`);
+  for (const p of analysis.propsInfo.props) {
+    const opt = p.optional ? '?' : '';
+    out.add(`  ${p.name}${opt}: ${p.type}`);
+  }
+}
+
+// Hooks
+if (analysis.hooks.length > 0) {
+  out.blank();
+  out.add(`Hooks: ${analysis.hooks.join(', ')}`);
+}
+
+// Redux
+if (analysis.redux.dispatch || analysis.redux.selectors.length > 0) {
+  out.blank();
+  out.add('Redux:');
+  if (analysis.redux.selectors.length > 0) {
+    out.add(`  Selectors: ${analysis.redux.selectors.join(', ')}`);
+  }
+  if (analysis.redux.actions.length > 0) {
+    out.add(`  Actions: ${analysis.redux.actions.join(', ')}`);
+  }
+}
+
+// Imports summary
+out.blank();
+out.add('Imports:');
+if (analysis.imports.react.length > 0) {
+  out.add(`  React: ${analysis.imports.react.join(', ')}`);
+}
+if (analysis.imports.reactNative.length > 0) {
+  out.add(`  React Native: ${analysis.imports.reactNative.join(', ')}`);
+}
+if (analysis.imports.internal.length > 0) {
+  out.add(`  Internal: ${analysis.imports.internal.length} modules`);
+  for (const i of analysis.imports.internal.slice(0, 5)) {
+    out.add(`    ${i.source}`);
+  }
+  if (analysis.imports.internal.length > 5) {
+    out.add(`    ... and ${analysis.imports.internal.length - 5} more`);
+  }
+}
+if (analysis.imports.external.length > 0) {
+  out.add(`  External: ${analysis.imports.external.map(i => i.source).join(', ')}`);
+}
+
+// Styles
+if (analysis.styles.length > 0) {
+  out.blank();
+  out.add(`Styling: ${analysis.styles.join(', ')}`);
+}
+
+out.print();

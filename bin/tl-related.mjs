@@ -1,51 +1,59 @@
 #!/usr/bin/env node
 
 /**
- * Claude Related - Find related files (tests, types, usages)
+ * tl-related - Find related files (tests, types, usages)
  *
  * Given a file, finds its tests, type definitions, and files that import it.
  * Helps understand what to read before modifying a file.
  *
- * Usage: claude-related <file>
+ * Usage: tl-related <file>
  */
+
+// Prompt info for tl-prompt
+if (process.argv.includes('--prompt')) {
+  console.log(JSON.stringify({
+    name: 'tl-related',
+    desc: 'Find tests, types, and importers of a file',
+    when: 'before-modify',
+    example: 'tl-related src/Button.tsx'
+  }));
+  process.exit(0);
+}
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join, dirname, basename, relative, extname } from 'path';
 import { execSync } from 'child_process';
+import {
+  createOutput,
+  parseCommonArgs,
+  estimateTokens,
+  formatTokens,
+  shellEscape,
+  COMMON_OPTIONS_HELP
+} from '../src/output.mjs';
+import { findProjectRoot } from '../src/project.mjs';
 
-try { execSync('which rg', { stdio: 'ignore' }); } catch {
-  console.error('⚠️  ripgrep (rg) not found. Install: brew install ripgrep');
+const HELP = `
+tl-related - Find related files (tests, types, usages)
+
+Usage: tl-related <file> [options]
+${COMMON_OPTIONS_HELP}
+
+Examples:
+  tl-related src/Button.tsx        # Find tests, types, importers
+  tl-related src/api.ts -j         # JSON output
+  tl-related src/utils.ts -q       # Quiet (file paths only)
+`;
+
+// Check for ripgrep
+try {
+  execSync('which rg', { stdio: 'ignore' });
+} catch {
+  console.error('ripgrep (rg) not found. Install: brew install ripgrep');
   process.exit(1);
 }
 
-const SKIP_DIRS = new Set([
-  'node_modules', '.git', 'android', 'ios', 'dist', 'build', '.expo', '.next'
-]);
-
-function findProjectRoot() {
-  let dir = process.cwd();
-  while (dir !== '/') {
-    if (existsSync(join(dir, 'package.json'))) return dir;
-    dir = dirname(dir);
-  }
-  return process.cwd();
-}
-
-function estimateTokens(filePath) {
-  try {
-    const content = readFileSync(filePath, 'utf-8');
-    return Math.ceil(content.length / 4);
-  } catch {
-    return 0;
-  }
-}
-
-function formatTokens(tokens) {
-  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k`;
-  return String(tokens);
-}
-
-function findTestFiles(filePath, projectRoot) {
+function findTestFiles(filePath) {
   const dir = dirname(filePath);
   const name = basename(filePath, extname(filePath));
   const tests = [];
@@ -54,10 +62,15 @@ function findTestFiles(filePath, projectRoot) {
   const patterns = [
     join(dir, `${name}.test.ts`),
     join(dir, `${name}.test.tsx`),
+    join(dir, `${name}.test.js`),
+    join(dir, `${name}.test.jsx`),
     join(dir, `${name}.spec.ts`),
     join(dir, `${name}.spec.tsx`),
+    join(dir, `${name}.spec.js`),
+    join(dir, `${name}.spec.jsx`),
     join(dir, '__tests__', `${name}.test.ts`),
     join(dir, '__tests__', `${name}.test.tsx`),
+    join(dir, '__tests__', `${name}.test.js`),
     join(dir, '__tests__', `${name}.spec.ts`),
     join(dir, '__tests__', `${name}.spec.tsx`),
   ];
@@ -92,42 +105,45 @@ function findTypeFiles(filePath, projectRoot) {
   // Check project-wide types directory
   const globalTypes = join(projectRoot, 'src', 'types');
   if (existsSync(globalTypes)) {
-    const typeFiles = readdirSync(globalTypes).filter(f => f.endsWith('.ts'));
-    for (const tf of typeFiles.slice(0, 5)) {
-      types.push(join(globalTypes, tf));
-    }
+    try {
+      const typeFiles = readdirSync(globalTypes).filter(f => f.endsWith('.ts'));
+      for (const tf of typeFiles.slice(0, 5)) {
+        types.push(join(globalTypes, tf));
+      }
+    } catch { /* permission error */ }
   }
 
   return types;
 }
 
 function findImporters(filePath, projectRoot) {
-  const relPath = relative(projectRoot, filePath);
   const name = basename(filePath, extname(filePath));
-
-  // Use ripgrep to find files that import this one
-  const patterns = [
-    `from.*['"].*${name}['"]`,
-    `import.*['"].*${name}['"]`,
-    `require\\(['"].*${name}['"]\\)`,
-  ];
-
   const importers = new Set();
 
-  for (const pattern of patterns) {
-    try {
-      const result = execSync(
-        `rg -l "${pattern}" --type ts --type tsx ${projectRoot}/src 2>/dev/null || true`,
-        { encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024 }
-      );
+  // Search for files that might import this module
+  try {
+    const result = execSync(
+      `rg -l -g "*.{js,mjs,ts,tsx,jsx}" -e "${shellEscape(name)}" "${shellEscape(projectRoot)}" 2>/dev/null || true`,
+      { encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024 }
+    );
 
-      for (const line of result.trim().split('\n')) {
-        if (line && line !== filePath && !line.includes('.test.') && !line.includes('.spec.')) {
+    for (const line of result.trim().split('\n')) {
+      if (!line) continue;
+      if (line === filePath) continue;
+      if (line.includes('.test.') || line.includes('.spec.')) continue;
+      if (line.includes('node_modules')) continue;
+
+      // Verify it's actually an import statement
+      try {
+        const content = readFileSync(line, 'utf-8');
+        // Match: from '...name' or from "...name" or require('...name')
+        const pattern = new RegExp(`(?:from|require)\\s*\\(?\\s*['"][^'"]*\\/${name}(?:\\.m?[jt]sx?)?['"]`);
+        if (pattern.test(content)) {
           importers.add(line);
         }
-      }
-    } catch (e) { /* rg not found or no matches */ }
-  }
+      } catch { /* skip unreadable files */ }
+    }
+  } catch { /* rg not found or no matches */ }
 
   return Array.from(importers);
 }
@@ -139,43 +155,48 @@ function findSiblings(filePath) {
   try {
     const files = readdirSync(dir).filter(f => {
       const fullPath = join(dir, f);
-      return statSync(fullPath).isFile() &&
-        f !== basename(filePath) &&
-        !f.includes('.test.') &&
-        !f.includes('.spec.') &&
-        (f.endsWith('.ts') || f.endsWith('.tsx'));
+      try {
+        return statSync(fullPath).isFile() &&
+          f !== basename(filePath) &&
+          !f.includes('.test.') &&
+          !f.includes('.spec.') &&
+          (f.endsWith('.ts') || f.endsWith('.tsx') || f.endsWith('.js') || f.endsWith('.jsx'));
+      } catch {
+        return false;
+      }
     });
 
     for (const f of files.slice(0, 5)) {
       siblings.push(join(dir, f));
     }
-  } catch (e) { /* permission error */ }
+  } catch { /* permission error */ }
 
   return siblings;
 }
 
-function printSection(title, files, projectRoot) {
-  if (files.length === 0) return;
-
-  console.log(`\n${title}`);
-  for (const f of files) {
-    const rel = relative(projectRoot, f);
-    const tokens = estimateTokens(f);
-    console.log(`  ${rel} (~${formatTokens(tokens)})`);
+function getFileInfo(filePath) {
+  try {
+    const content = readFileSync(filePath, 'utf-8');
+    return {
+      tokens: estimateTokens(content),
+      lines: content.split('\n').length
+    };
+  } catch {
+    return { tokens: 0, lines: 0 };
   }
 }
 
 // Main
 const args = process.argv.slice(2);
-const targetFile = args[0];
+const options = parseCommonArgs(args);
+const targetFile = options.remaining.find(a => !a.startsWith('-'));
 
-if (!targetFile) {
-  console.log('\nUsage: claude-related <file>\n');
-  console.log('Finds tests, types, and importers for a given file.');
-  process.exit(1);
+if (options.help || !targetFile) {
+  console.log(HELP);
+  process.exit(options.help ? 0 : 1);
 }
 
-const fullPath = join(process.cwd(), targetFile);
+const fullPath = targetFile.startsWith('/') ? targetFile : join(process.cwd(), targetFile);
 if (!existsSync(fullPath)) {
   console.error(`File not found: ${targetFile}`);
   process.exit(1);
@@ -183,31 +204,65 @@ if (!existsSync(fullPath)) {
 
 const projectRoot = findProjectRoot();
 const relPath = relative(projectRoot, fullPath);
+const out = createOutput(options);
 
-console.log(`\n📎 Related files for: ${relPath}`);
-
-const tests = findTestFiles(fullPath, projectRoot);
+const tests = findTestFiles(fullPath);
 const types = findTypeFiles(fullPath, projectRoot);
 const importers = findImporters(fullPath, projectRoot);
 const siblings = findSiblings(fullPath);
 
-printSection('🧪 Tests', tests, projectRoot);
-printSection('📝 Types', types, projectRoot);
-printSection('📥 Imported by', importers.slice(0, 10), projectRoot);
-printSection('👥 Siblings', siblings, projectRoot);
+// Collect file info for JSON
+const testsInfo = tests.map(f => ({ path: relative(projectRoot, f), ...getFileInfo(f) }));
+const typesInfo = types.map(f => ({ path: relative(projectRoot, f), ...getFileInfo(f) }));
+const importersInfo = importers.slice(0, 10).map(f => ({ path: relative(projectRoot, f), ...getFileInfo(f) }));
+const siblingsInfo = siblings.map(f => ({ path: relative(projectRoot, f), ...getFileInfo(f) }));
+
+// Set JSON data
+out.setData('file', relPath);
+out.setData('tests', testsInfo);
+out.setData('types', typesInfo);
+out.setData('importers', importersInfo);
+out.setData('siblings', siblingsInfo);
+out.setData('totalImporters', importers.length);
+
+// Header
+out.header(`Related files for: ${relPath}`);
+out.blank();
+
+// Sections
+function addSection(title, files) {
+  if (files.length === 0) return;
+  out.add(title);
+  for (const f of files) {
+    const rel = relative(projectRoot, f);
+    const info = getFileInfo(f);
+    out.add(`  ${rel} (~${formatTokens(info.tokens)})`);
+  }
+  out.blank();
+}
+
+addSection('Tests:', tests);
+addSection('Types:', types);
+addSection('Imported by:', importers.slice(0, 10));
+addSection('Siblings:', siblings);
 
 const totalFiles = tests.length + types.length + Math.min(importers.length, 10) + siblings.length;
 if (totalFiles === 0) {
-  console.log('\n  No related files found.');
+  out.add('  No related files found.');
+  out.blank();
 }
 
 // Summary
-const totalTokens = [...tests, ...types, ...importers.slice(0, 10), ...siblings]
-  .reduce((sum, f) => sum + estimateTokens(f), 0);
+const allFiles = [...tests, ...types, ...importers.slice(0, 10), ...siblings];
+const totalTokens = allFiles.reduce((sum, f) => sum + getFileInfo(f).tokens, 0);
 
-console.log(`\n📊 Total: ${totalFiles} related files, ~${formatTokens(totalTokens)} tokens`);
+out.setData('totalFiles', totalFiles);
+out.setData('totalTokens', totalTokens);
+
+out.header(`Total: ${totalFiles} related files, ~${formatTokens(totalTokens)} tokens`);
 
 if (importers.length > 10) {
-  console.log(`   (${importers.length - 10} more importers not shown)`);
+  out.header(`(${importers.length - 10} more importers not shown)`);
 }
-console.log();
+
+out.print();

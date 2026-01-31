@@ -1,15 +1,50 @@
 #!/usr/bin/env node
 
 /**
- * Claude Diff - Token-efficient git diff summary
+ * tl-diff - Token-efficient git diff summary
  *
  * Summarizes git changes without outputting full diff content.
  * Great for understanding what changed before diving into details.
  *
- * Usage: claude-diff [ref] [--staged] [--stat-only]
+ * Usage: tl-diff [ref] [--staged] [--stat-only]
  */
 
+// Prompt info for tl-prompt
+if (process.argv.includes('--prompt')) {
+  console.log(JSON.stringify({
+    name: 'tl-diff',
+    desc: 'Summarize git changes with token estimates',
+    when: 'search',
+    example: 'tl-diff --staged'
+  }));
+  process.exit(0);
+}
+
 import { execSync } from 'child_process';
+import {
+  createOutput,
+  parseCommonArgs,
+  formatTokens,
+  COMMON_OPTIONS_HELP
+} from '../src/output.mjs';
+
+const HELP = `
+tl-diff - Token-efficient git diff summary
+
+Usage: tl-diff [ref] [options]
+
+Options:
+  --staged             Show staged changes only
+  --stat-only          Show just the summary (no file list)
+${COMMON_OPTIONS_HELP}
+
+Examples:
+  tl-diff                     # Working directory changes
+  tl-diff --staged            # Staged changes
+  tl-diff HEAD~3              # Last 3 commits
+  tl-diff main                # Changes vs main branch
+  tl-diff -j                  # JSON output
+`;
 
 function run(cmd) {
   try {
@@ -17,15 +52,6 @@ function run(cmd) {
   } catch (e) {
     return e.stdout || '';
   }
-}
-
-function estimateTokens(content) {
-  return Math.ceil(content.length / 4);
-}
-
-function formatTokens(tokens) {
-  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k`;
-  return String(tokens);
 }
 
 function parseDiffStat(stat) {
@@ -85,64 +111,28 @@ function categorizeChanges(files) {
   return categories;
 }
 
-function printSummary(files, categories, options) {
-  const totalChanges = files.reduce((sum, f) => sum + f.changes, 0);
-  const totalAdditions = files.reduce((sum, f) => sum + f.additions, 0);
-  const totalDeletions = files.reduce((sum, f) => sum + f.deletions, 0);
-
-  console.log(`\n📊 Diff Summary`);
-  console.log(`   ${files.length} files changed, ~${formatTokens(totalChanges * 4)} tokens of changes`);
-  console.log(`   +${totalAdditions} additions, -${totalDeletions} deletions\n`);
-
-  const order = ['components', 'hooks', 'store', 'types', 'manuscripts', 'tests', 'config', 'other'];
-  const labels = {
-    components: '🧩 Components',
-    hooks: '🪝 Hooks',
-    store: '📦 Store',
-    types: '📝 Types',
-    manuscripts: '📖 Manuscripts',
-    tests: '🧪 Tests',
-    config: '⚙️  Config',
-    other: '📄 Other'
-  };
-
-  for (const cat of order) {
-    const catFiles = categories[cat];
-    if (catFiles.length === 0) continue;
-
-    console.log(`${labels[cat]} (${catFiles.length})`);
-
-    // Sort by changes descending
-    catFiles.sort((a, b) => b.changes - a.changes);
-
-    for (const f of catFiles.slice(0, 10)) {
-      const bar = '+'.repeat(Math.min(f.additions, 20)) + '-'.repeat(Math.min(f.deletions, 20));
-      console.log(`  ${f.path}`);
-      console.log(`    ${f.changes} changes ${bar}`);
-    }
-
-    if (catFiles.length > 10) {
-      console.log(`  ... and ${catFiles.length - 10} more`);
-    }
-
-    console.log();
-  }
-}
-
 // Main
 const args = process.argv.slice(2);
+const options = parseCommonArgs(args);
+
+// Parse tool-specific options
 let ref = '';
 let staged = false;
 let statOnly = false;
 
-for (let i = 0; i < args.length; i++) {
-  if (args[i] === '--staged') {
+for (const arg of options.remaining) {
+  if (arg === '--staged') {
     staged = true;
-  } else if (args[i] === '--stat-only') {
+  } else if (arg === '--stat-only') {
     statOnly = true;
-  } else if (!args[i].startsWith('-')) {
-    ref = args[i];
+  } else if (!arg.startsWith('-')) {
+    ref = arg;
   }
+}
+
+if (options.help) {
+  console.log(HELP);
+  process.exit(0);
 }
 
 // Build git diff command
@@ -156,17 +146,71 @@ diffCmd += ' --stat=200';
 
 const stat = run(diffCmd);
 
+const out = createOutput(options);
+
 if (!stat.trim()) {
-  console.log('\n✨ No changes detected\n');
+  out.header('No changes detected');
+  out.print();
   process.exit(0);
 }
 
 const files = parseDiffStat(stat);
 const categories = categorizeChanges(files);
 
-printSummary(files, categories, { statOnly });
+const totalChanges = files.reduce((sum, f) => sum + f.changes, 0);
+const totalAdditions = files.reduce((sum, f) => sum + f.additions, 0);
+const totalDeletions = files.reduce((sum, f) => sum + f.deletions, 0);
+
+// Set JSON data
+out.setData('files', files);
+out.setData('categories', categories);
+out.setData('totalFiles', files.length);
+out.setData('totalChanges', totalChanges);
+out.setData('estimatedTokens', totalChanges * 4);
+
+// Summary header
+out.header('Diff Summary');
+out.header(`${files.length} files changed, ~${formatTokens(totalChanges * 4)} tokens of changes`);
+out.header(`+${totalAdditions} additions, -${totalDeletions} deletions`);
+out.blank();
 
 if (!statOnly) {
-  console.log('💡 Tip: Use --stat-only for just the summary, or check specific files with:');
-  console.log('   git diff [ref] -- path/to/file.ts\n');
+  const order = ['components', 'hooks', 'store', 'types', 'manuscripts', 'tests', 'config', 'other'];
+  const labels = {
+    components: 'Components',
+    hooks: 'Hooks',
+    store: 'Store',
+    types: 'Types',
+    manuscripts: 'Manuscripts',
+    tests: 'Tests',
+    config: 'Config',
+    other: 'Other'
+  };
+
+  for (const cat of order) {
+    const catFiles = categories[cat];
+    if (catFiles.length === 0) continue;
+
+    out.add(`${labels[cat]} (${catFiles.length})`);
+
+    // Sort by changes descending
+    catFiles.sort((a, b) => b.changes - a.changes);
+
+    for (const f of catFiles.slice(0, 10)) {
+      const bar = '+'.repeat(Math.min(f.additions, 20)) + '-'.repeat(Math.min(f.deletions, 20));
+      out.add(`  ${f.path}`);
+      out.add(`    ${f.changes} changes ${bar}`);
+    }
+
+    if (catFiles.length > 10) {
+      out.add(`  ... and ${catFiles.length - 10} more`);
+    }
+
+    out.blank();
+  }
+
+  out.header('Tip: Use --stat-only for just the summary, or check specific files with:');
+  out.header('   git diff [ref] -- path/to/file.ts');
 }
+
+out.print();
