@@ -29,6 +29,7 @@ import {
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot, shouldSkip, isCodeFile } from '../src/project.mjs';
+import { withCache } from '../src/cache.mjs';
 
 const HELP = `
 tl-unused - Find potentially unused exports and unreferenced files
@@ -221,26 +222,35 @@ function extractImports(content) {
 }
 
 function findReferencesWithGrep(name, projectRoot, excludeFile) {
-  // Use ripgrep for fast reference counting
-  const args = [
-    '-l',  // Files only
-    '--type', 'js',
-    '--type', 'ts',
-    '-w',  // Word boundary
-    name,
-    '.'
-  ];
+  // Use ripgrep for fast reference counting (with caching)
+  const cacheKey = { op: 'rg-ref-count', name, types: 'js,ts' };
 
-  const result = spawnSync('rg', args, {
-    cwd: projectRoot,
-    encoding: 'utf-8'
-  });
+  const files = withCache(
+    cacheKey,
+    () => {
+      const args = [
+        '-l',  // Files only
+        '--type', 'js',
+        '--type', 'ts',
+        '-w',  // Word boundary
+        name,
+        '.'
+      ];
 
-  if (result.error || result.status !== 0) {
-    return 0;
-  }
+      const result = spawnSync('rg', args, {
+        cwd: projectRoot,
+        encoding: 'utf-8'
+      });
 
-  const files = result.stdout.trim().split('\n').filter(Boolean);
+      if (result.error || result.status !== 0) {
+        return [];
+      }
+
+      return result.stdout.trim().split('\n').filter(Boolean);
+    },
+    { projectRoot }
+  );
+
   // Exclude the file that exports it
   const relExclude = relative(projectRoot, excludeFile);
   const otherFiles = files.filter(f => f !== relExclude && !f.includes(relExclude));

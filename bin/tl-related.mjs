@@ -32,6 +32,7 @@ import {
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot } from '../src/project.mjs';
+import { withCache } from '../src/cache.mjs';
 
 const HELP = `
 tl-related - Find related files (tests, types, usages)
@@ -120,11 +121,16 @@ function findImporters(filePath, projectRoot) {
   const name = basename(filePath, extname(filePath));
   const importers = new Set();
 
-  // Search for files that might import this module
+  // Search for files that might import this module (with caching)
   try {
-    const result = execSync(
-      `rg -l -g "*.{js,mjs,ts,tsx,jsx}" -e "${shellEscape(name)}" "${shellEscape(projectRoot)}" 2>/dev/null || true`,
-      { encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024 }
+    const cacheKey = { op: 'rg-find-importers', module: name, glob: '*.{js,mjs,ts,tsx,jsx}' };
+    const result = withCache(
+      cacheKey,
+      () => execSync(
+        `rg -l -g "*.{js,mjs,ts,tsx,jsx}" -e "${shellEscape(name)}" "${shellEscape(projectRoot)}" 2>/dev/null || true`,
+        { encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024 }
+      ),
+      { projectRoot }
     );
 
     for (const line of result.trim().split('\n')) {

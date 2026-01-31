@@ -30,6 +30,7 @@ import {
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot } from '../src/project.mjs';
+import { withCache } from '../src/cache.mjs';
 
 const HELP = `
 tl-entry - Find entry points in a codebase
@@ -130,7 +131,12 @@ function findEntryPoints(searchPath, projectRoot, filterType) {
     for (const { pattern, desc } of config.patterns) {
       try {
         const cmd = `rg -n -g "*.{ts,tsx,js,jsx,mjs}" --no-heading -e "${shellEscape(pattern)}" "${shellEscape(searchPath)}" 2>/dev/null || true`;
-        const output = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+        const cacheKey = { op: 'rg-entry-pattern', pattern, path: searchPath };
+        const output = withCache(
+          cacheKey,
+          () => execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }),
+          { projectRoot }
+        );
 
         for (const line of output.trim().split('\n')) {
           if (!line) continue;

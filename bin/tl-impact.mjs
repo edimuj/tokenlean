@@ -33,6 +33,7 @@ import {
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot, categorizeFile } from '../src/project.mjs';
+import { withCache } from '../src/cache.mjs';
 
 const HELP = `
 tl-impact - Analyze the blast radius of changing a file
@@ -79,8 +80,15 @@ function findDirectImporters(filePath, projectRoot) {
   const patterns = searchTerms.map(t => `-e "${rgEscape(t)}"`).join(' ');
 
   try {
-    const rgCommand = `rg -l --type-add 'code:*.{js,jsx,ts,tsx,mjs,mts,cjs}' -t code ${patterns} "${projectRoot}" 2>/dev/null || true`;
-    const result = execSync(rgCommand, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+    const cacheKey = { op: 'rg-find-candidates', terms: searchTerms.sort() };
+    const result = withCache(
+      cacheKey,
+      () => {
+        const rgCommand = `rg -l --type-add 'code:*.{js,jsx,ts,tsx,mjs,mts,cjs}' -t code ${patterns} "${projectRoot}" 2>/dev/null || true`;
+        return execSync(rgCommand, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+      },
+      { projectRoot }
+    );
     const candidates = result.trim().split('\n').filter(Boolean);
 
     for (const candidate of candidates) {

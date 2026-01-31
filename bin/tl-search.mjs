@@ -28,6 +28,7 @@ import {
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { loadConfig, CONFIG_FILENAME } from '../src/config.mjs';
+import { withCache } from '../src/cache.mjs';
 
 const HELP = `
 tl-search - Run pre-defined search patterns
@@ -165,10 +166,15 @@ function runSearch(name, config, rootDir, jsonMode) {
 
   if (jsonMode) {
     try {
-      const result = execSync(`rg ${args.map(a => `"${a}"`).join(' ')} 2>/dev/null || true`, {
-        encoding: 'utf-8',
-        maxBuffer: 10 * 1024 * 1024
-      });
+      const cacheKey = { op: 'rg-search-pattern', name, pattern: config.pattern, glob: config.glob };
+      const result = withCache(
+        cacheKey,
+        () => execSync(`rg ${args.map(a => `"${a}"`).join(' ')} 2>/dev/null || true`, {
+          encoding: 'utf-8',
+          maxBuffer: 10 * 1024 * 1024
+        }),
+        { projectRoot: rootDir }
+      );
       const matches = result.trim().split('\n')
         .filter(line => line.startsWith('{'))
         .map(line => {

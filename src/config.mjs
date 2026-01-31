@@ -81,6 +81,12 @@ const DEFAULT_CONFIG = {
   },
   impact: {
     depth: 2
+  },
+  cache: {
+    enabled: true,           // Enable/disable caching
+    ttl: 300,                // Max age in seconds (fallback for non-git)
+    maxSize: '100MB',        // Max cache directory size
+    location: null           // Override ~/.tokenlean/cache
   }
 };
 

@@ -18,7 +18,7 @@ the API surface.
 
 ## The Solution
 
-tokenlean provides **25 specialized CLI tools** that give you (or your AI agent) exactly the information needed - no
+tokenlean provides **26 specialized CLI tools** that give you (or your AI agent) exactly the information needed - no
 more, no less. Each tool is designed to answer a specific question about your codebase with minimal token overhead.
 
 Instead of reading a 500-line file to understand its exports, run `tl-exports` (~50 tokens). Instead of reading all your
@@ -128,6 +128,7 @@ Search and discover code patterns.
 
 | Tool        | Description                    | Example               |
 |-------------|--------------------------------|-----------------------|
+| `tl-cache`  | Manage ripgrep result cache    | `tl-cache stats`      |
 | `tl-config` | Show/manage configuration      | `tl-config --init`    |
 | `tl-prompt` | Generate AI agent instructions | `tl-prompt --minimal` |
 
@@ -189,6 +190,48 @@ Project config overrides global config. Both are optional.
 ```
 
 Config values extend built-in defaults (they don't replace them).
+
+## Caching
+
+tokenlean caches expensive ripgrep operations to speed up repeated searches. The cache uses **git-based invalidation** - it automatically invalidates when you make commits or modify files.
+
+```bash
+tl-cache stats      # View cache statistics
+tl-cache clear      # Clear cache for current project
+tl-cache clear-all  # Clear all cached data
+```
+
+Cache is stored in `~/.tokenlean/cache/` and is enabled by default.
+
+### Cache Configuration
+
+```json
+{
+  "cache": {
+    "enabled": true,
+    "ttl": 300,
+    "maxSize": "100MB",
+    "location": null
+  }
+}
+```
+
+| Option     | Default            | Description                                |
+|------------|--------------------|--------------------------------------------|
+| `enabled`  | `true`             | Enable/disable caching                     |
+| `ttl`      | `300`              | Max age in seconds (fallback for non-git)  |
+| `maxSize`  | `"100MB"`          | Max cache size per project                 |
+| `location` | `null`             | Override default `~/.tokenlean/cache`      |
+
+### Disable Caching
+
+```bash
+# Disable for a single command
+TOKENLEAN_CACHE=0 tl-search hooks
+
+# Disable in config
+echo '{"cache":{"enabled":false}}' > .tokenleanrc.json
+```
 
 ## Example Workflows
 

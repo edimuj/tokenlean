@@ -32,6 +32,7 @@ import {
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot, shouldSkip, SKIP_DIRS } from '../src/project.mjs';
+import { withCache } from '../src/cache.mjs';
 
 const HELP = `
 tl-todo - Extract TODOs, FIXMEs, and other markers from codebase
@@ -102,7 +103,13 @@ function findTodos(searchPath, projectRoot) {
     // Require : or ( after marker to avoid false positives like "Todo Extraction"
     const commentPattern = `(${commentPrefixes.join('|')})\\s*(${markerPattern})[:(]`;
     const cmd = `rg -n --no-heading -i "${commentPattern}" "${shellEscape(searchPath)}" ${excludes} 2>/dev/null || true`;
-    const output = execSync(cmd, { encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024 });
+
+    const cacheKey = { op: 'rg-todo-markers', pattern: commentPattern, path: searchPath };
+    const output = withCache(
+      cacheKey,
+      () => execSync(cmd, { encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024 }),
+      { projectRoot }
+    );
 
     if (!output.trim()) {
       return todos;
