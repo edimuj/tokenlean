@@ -18,7 +18,7 @@ the API surface.
 
 ## The Solution
 
-tokenlean provides **30 specialized CLI tools** that give you (or your AI agent) exactly the information needed - no
+tokenlean provides **31 specialized CLI tools** that give you (or your AI agent) exactly the information needed - no
 more, no less. Each tool is designed to answer a specific question about your codebase with minimal token overhead.
 
 Instead of reading a 500-line file to understand its exports, run `tl-exports` (~50 tokens). Instead of reading all your
@@ -107,11 +107,12 @@ Track changes and authorship efficiently.
 
 | Tool          | Description                      | Example                 |
 |---------------|----------------------------------|-------------------------|
-| `tl-diff`     | Token-efficient git diff summary | `tl-diff --staged`      |
-| `tl-history`  | Recent commits for a file        | `tl-history src/api.ts` |
-| `tl-blame`    | Compact per-line authorship      | `tl-blame src/api.ts`   |
-| `tl-hotspots` | Frequently changed files (churn) | `tl-hotspots --days 30` |
-| `tl-pr`       | Summarize PR/branch for review   | `tl-pr feature-branch`  |
+| `tl-diff`      | Token-efficient git diff summary | `tl-diff --staged`       |
+| `tl-history`   | Recent commits for a file        | `tl-history src/api.ts`  |
+| `tl-blame`     | Compact per-line authorship      | `tl-blame src/api.ts`    |
+| `tl-hotspots`  | Frequently changed files (churn) | `tl-hotspots --days 30`  |
+| `tl-pr`        | Summarize PR/branch for review   | `tl-pr feature-branch`   |
+| `tl-changelog` | Generate changelog from commits  | `tl-changelog --from v1` |
 
 ### Finding Things
 
@@ -309,6 +310,15 @@ tl-pr feature-branch               # Summary of branch changes
 tl-pr 123                          # GitHub PR #123 (needs gh CLI)
 tl-pr --full                       # Include files, stats, commits
 tl-pr --base develop               # Compare against develop
+```
+
+### Preparing a release
+
+```bash
+tl-changelog --unreleased          # What's new since last tag
+tl-changelog v0.1.0..v0.2.0        # Between versions
+tl-changelog --format compact      # Quick summary
+tl-changelog --with-author         # Include contributors
 ```
 
 ## Dependencies

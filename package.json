@@ -23,6 +23,7 @@
     "tl-api": "bin/tl-api.mjs",
     "tl-blame": "bin/tl-blame.mjs",
     "tl-cache": "bin/tl-cache.mjs",
+    "tl-changelog": "bin/tl-changelog.mjs",
     "tl-config": "bin/tl-config.mjs",
     "tl-context": "bin/tl-context.mjs",
     "tl-coverage": "bin/tl-coverage.mjs",
