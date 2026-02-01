@@ -18,7 +18,7 @@ the API surface.
 
 ## The Solution
 
-tokenlean provides **31 specialized CLI tools** that give you (or your AI agent) exactly the information needed - no
+tokenlean provides **32 specialized CLI tools** that give you (or your AI agent) exactly the information needed - no
 more, no less. Each tool is designed to answer a specific question about your codebase with minimal token overhead.
 
 Instead of reading a 500-line file to understand its exports, run `tl-exports` (~50 tokens). Instead of reading all your
@@ -85,6 +85,7 @@ These tools help you understand code structure without reading full implementati
 | `tl-types`     | Full TypeScript type definitions         | `tl-types src/types/`     |
 | `tl-exports`   | Public API surface of a module           | `tl-exports src/lib/`     |
 | `tl-component` | React component analyzer (props, hooks)  | `tl-component Button.tsx` |
+| `tl-docs`      | Extract JSDoc/TSDoc documentation        | `tl-docs src/utils/`      |
 | `tl-entry`     | Find entry points and main files         | `tl-entry src/`           |
 | `tl-schema`    | Extract DB schema from ORMs/migrations   | `tl-schema`               |
 
@@ -246,6 +247,7 @@ echo '{"cache":{"enabled":false}}' > .tokenleanrc.json
 tl-structure                    # Get the lay of the land
 tl-entry                        # Find entry points
 tl-exports src/lib/             # Understand the public API
+tl-docs src/utils/              # Read documentation, not code
 tl-types src/types/             # Understand data shapes
 tl-schema                       # Understand the database
 ```
