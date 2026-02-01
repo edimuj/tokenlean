@@ -38,6 +38,7 @@
     "tl-hotspots": "bin/tl-hotspots.mjs",
     "tl-impact": "bin/tl-impact.mjs",
     "tl-name": "bin/tl-name.mjs",
+    "tl-pr": "bin/tl-pr.mjs",
     "tl-prompt": "bin/tl-prompt.mjs",
     "tl-related": "bin/tl-related.mjs",
     "tl-routes": "bin/tl-routes.mjs",
