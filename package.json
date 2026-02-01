@@ -41,6 +41,7 @@
     "tl-prompt": "bin/tl-prompt.mjs",
     "tl-related": "bin/tl-related.mjs",
     "tl-routes": "bin/tl-routes.mjs",
+    "tl-schema": "bin/tl-schema.mjs",
     "tl-search": "bin/tl-search.mjs",
     "tl-structure": "bin/tl-structure.mjs",
     "tl-symbols": "bin/tl-symbols.mjs",

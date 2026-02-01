@@ -18,7 +18,7 @@ the API surface.
 
 ## The Solution
 
-tokenlean provides **27 specialized CLI tools** that give you (or your AI agent) exactly the information needed - no
+tokenlean provides **28 specialized CLI tools** that give you (or your AI agent) exactly the information needed - no
 more, no less. Each tool is designed to answer a specific question about your codebase with minimal token overhead.
 
 Instead of reading a 500-line file to understand its exports, run `tl-exports` (~50 tokens). Instead of reading all your
@@ -86,6 +86,7 @@ These tools help you understand code structure without reading full implementati
 | `tl-exports`   | Public API surface of a module           | `tl-exports src/lib/`     |
 | `tl-component` | React component analyzer (props, hooks)  | `tl-component Button.tsx` |
 | `tl-entry`     | Find entry points and main files         | `tl-entry src/`           |
+| `tl-schema`    | Extract DB schema from ORMs/migrations   | `tl-schema`               |
 
 ### Before Modifying Files
 
@@ -243,6 +244,7 @@ tl-structure                    # Get the lay of the land
 tl-entry                        # Find entry points
 tl-exports src/lib/             # Understand the public API
 tl-types src/types/             # Understand data shapes
+tl-schema                       # Understand the database
 ```
 
 ### Before refactoring a file
@@ -279,6 +281,15 @@ tl-hotspots                        # Frequently changed (unstable?)
 tl-name coolproject awesomelib     # Check npm, GitHub, domains
 tl-name myapp -s                   # Suggest variations if taken
 tl-name myapp --tld io             # Check .io domain
+```
+
+### Understanding the database
+
+```bash
+tl-schema                          # Auto-detect and show schema
+tl-schema -r                       # Show relationships only
+tl-schema --format detailed        # Show full column details
+tl-schema prisma/schema.prisma     # Specific schema file
 ```
 
 ## Dependencies
