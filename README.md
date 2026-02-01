@@ -18,7 +18,7 @@ the API surface.
 
 ## The Solution
 
-tokenlean provides **26 specialized CLI tools** that give you (or your AI agent) exactly the information needed - no
+tokenlean provides **27 specialized CLI tools** that give you (or your AI agent) exactly the information needed - no
 more, no less. Each tool is designed to answer a specific question about your codebase with minimal token overhead.
 
 Instead of reading a 500-line file to understand its exports, run `tl-exports` (~50 tokens). Instead of reading all your
@@ -126,11 +126,12 @@ Search and discover code patterns.
 
 ### Configuration & Utilities
 
-| Tool        | Description                    | Example               |
-|-------------|--------------------------------|-----------------------|
-| `tl-cache`  | Manage ripgrep result cache    | `tl-cache stats`      |
-| `tl-config` | Show/manage configuration      | `tl-config --init`    |
-| `tl-prompt` | Generate AI agent instructions | `tl-prompt --minimal` |
+| Tool        | Description                      | Example                 |
+|-------------|----------------------------------|-------------------------|
+| `tl-cache`  | Manage ripgrep result cache      | `tl-cache stats`        |
+| `tl-config` | Show/manage configuration        | `tl-config --init`      |
+| `tl-name`   | Check name availability (npm/GH) | `tl-name myproject -s`  |
+| `tl-prompt` | Generate AI agent instructions   | `tl-prompt --minimal`   |
 
 ## Common Options
 
@@ -270,6 +271,14 @@ tl-complexity src/ --threshold 15  # Complex functions
 tl-unused src/                     # Dead code
 tl-todo                            # Outstanding TODOs
 tl-hotspots                        # Frequently changed (unstable?)
+```
+
+### Starting a new project
+
+```bash
+tl-name coolproject awesomelib     # Check npm, GitHub, domains
+tl-name myapp -s                   # Suggest variations if taken
+tl-name myapp --tld io             # Check .io domain
 ```
 
 ## Dependencies
