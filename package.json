@@ -1,6 +1,6 @@
 {
   "name": "tokenlean",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Lean CLI tools for AI agents and developers - reduce context, save tokens",
   "type": "module",
   "engines": {
