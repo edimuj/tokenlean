@@ -43,6 +43,7 @@
     "tl-routes": "bin/tl-routes.mjs",
     "tl-schema": "bin/tl-schema.mjs",
     "tl-search": "bin/tl-search.mjs",
+    "tl-secrets": "bin/tl-secrets.mjs",
     "tl-structure": "bin/tl-structure.mjs",
     "tl-symbols": "bin/tl-symbols.mjs",
     "tl-todo": "bin/tl-todo.mjs",

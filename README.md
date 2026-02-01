@@ -18,7 +18,7 @@ the API surface.
 
 ## The Solution
 
-tokenlean provides **28 specialized CLI tools** that give you (or your AI agent) exactly the information needed - no
+tokenlean provides **29 specialized CLI tools** that give you (or your AI agent) exactly the information needed - no
 more, no less. Each tool is designed to answer a specific question about your codebase with minimal token overhead.
 
 Instead of reading a 500-line file to understand its exports, run `tl-exports` (~50 tokens). Instead of reading all your
@@ -118,8 +118,9 @@ Search and discover code patterns.
 
 | Tool        | Description                        | Example                  |
 |-------------|------------------------------------|--------------------------|
-| `tl-search` | Run pre-defined search patterns    | `tl-search hooks`        |
-| `tl-todo`   | Find TODOs/FIXMEs in codebase      | `tl-todo src/`           |
+| `tl-search`  | Run pre-defined search patterns    | `tl-search hooks`        |
+| `tl-secrets` | Find hardcoded secrets & API keys  | `tl-secrets --staged`    |
+| `tl-todo`    | Find TODOs/FIXMEs in codebase      | `tl-todo src/`           |
 | `tl-env`    | Find environment variables used    | `tl-env --required-only` |
 | `tl-unused` | Find unused exports/files          | `tl-unused src/`         |
 | `tl-api`    | Extract REST/GraphQL endpoints     | `tl-api src/routes/`     |
@@ -290,6 +291,14 @@ tl-schema                          # Auto-detect and show schema
 tl-schema -r                       # Show relationships only
 tl-schema --format detailed        # Show full column details
 tl-schema prisma/schema.prisma     # Specific schema file
+```
+
+### Security check before committing
+
+```bash
+tl-secrets                         # Scan for hardcoded secrets
+tl-secrets --staged                # Only check staged files
+tl-secrets --min-severity high     # Only high severity issues
 ```
 
 ## Dependencies
