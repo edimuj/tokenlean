@@ -1,29 +1,49 @@
-# tokenlean
+<p align="center">
+  <img src="assets/tokenlean-mascot-200.png" alt="Tokenlean mascot - a squirrel collecting tokens" />
+</p>
 
-Lean CLI tools for AI agents and developers. Reduce context usage, save tokens, improve workflow efficiency.
+<h1 align="center">tokenlean</h1>
 
-## The Problem
+<p align="center">
+  <strong>Lean CLI tools for AI agents — maximum insight, minimum tokens</strong>
+</p>
 
-AI coding assistants are powerful, but they have a fundamental constraint: **context windows**. Every file you read,
-every search result, every piece of context consumes tokens. This matters because:
+<p align="center">
+  <a href="https://www.npmjs.com/package/tokenlean"><img src="https://img.shields.io/npm/v/tokenlean.svg" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/tokenlean"><img src="https://img.shields.io/npm/dm/tokenlean.svg" alt="npm downloads"></a>
+  <a href="https://github.com/edimuj/tokenlean/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/tokenlean.svg" alt="license"></a>
+  <a href="https://github.com/edimuj/tokenlean"><img src="https://img.shields.io/github/stars/edimuj/tokenlean.svg?style=social" alt="GitHub stars"></a>
+</p>
 
-- **Cost**: More tokens = higher API costs
-- **Quality**: Overstuffed context leads to worse responses
-- **Speed**: Larger contexts take longer to process
-- **Limits**: Hit the ceiling and the AI loses important information
+<p align="center">
+  <a href="#installation">Installation</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#tools-reference">Tools</a> •
+  <a href="#ai-agent-integration">AI Integration</a> •
+  <a href="#configuration">Configuration</a>
+</p>
 
-Most developers (and AI agents) approach codebases inefficiently - reading entire files when they only need function
-signatures, grepping repeatedly when a structured search would do, or diving into implementation before understanding
-the API surface.
+---
 
-## The Solution
+## Why tokenlean?
 
-tokenlean provides **32 specialized CLI tools** that give you (or your AI agent) exactly the information needed - no
-more, no less. Each tool is designed to answer a specific question about your codebase with minimal token overhead.
+AI coding assistants are powerful, but they have a fundamental constraint: **context windows**. Every file read, every
+search result consumes tokens. This matters because:
 
-Instead of reading a 500-line file to understand its exports, run `tl-exports` (~50 tokens). Instead of reading all your
-types to understand data shapes, run `tl-types` (~100 tokens). Instead of guessing which files might be affected by a
-change, run `tl-impact` and know for sure.
+| Problem     | Impact                                |
+|-------------|---------------------------------------|
+| **Cost**    | More tokens = higher API costs        |
+| **Quality** | Overstuffed context = worse responses |
+| **Speed**   | Larger contexts = longer processing   |
+| **Limits**  | Hit the ceiling = lost information    |
+
+**tokenlean** provides **32 specialized CLI tools** that give you exactly the information needed — no more, no less.
+
+```
+Instead of reading a 500-line file    →  tl-exports (~50 tokens)
+Instead of reading all type files     →  tl-types (~100 tokens)
+Instead of guessing impact            →  tl-impact (know for sure)
+```
 
 ## Installation
 
@@ -31,7 +51,8 @@ change, run `tl-impact` and know for sure.
 npm install -g tokenlean
 ```
 
-Or link locally for development:
+<details>
+<summary>Development setup</summary>
 
 ```bash
 git clone https://github.com/edimuj/tokenlean.git
@@ -39,13 +60,21 @@ cd tokenlean
 npm link
 ```
 
+</details>
+
+### Requirements
+
+- **Node.js** >= 18.0.0
+- **ripgrep** (`rg`) — for search-based tools
+- **git** — for history/blame/diff tools
+
 ## Quick Start
 
 ```bash
 # Get project overview
 tl-structure
 
-# Before reading a file - check its size
+# Check file sizes before reading
 tl-context src/api/
 
 # Get function signatures without bodies
@@ -75,7 +104,7 @@ The `--minimal` flag produces a compact version that uses fewer tokens.
 
 ### Before Reading Files
 
-These tools help you understand code structure without reading full implementations.
+Understand code structure without reading full implementations.
 
 | Tool           | Description                              | Example                   |
 |----------------|------------------------------------------|---------------------------|
@@ -95,10 +124,10 @@ Understand dependencies and impact before making changes.
 
 | Tool            | Description                                 | Example                             |
 |-----------------|---------------------------------------------|-------------------------------------|
-| `tl-impact`     | Blast radius - what depends on this file    | `tl-impact src/auth.ts`             |
+| `tl-impact`     | Blast radius — what depends on this file    | `tl-impact src/auth.ts`             |
 | `tl-deps`       | Show what a file imports (with tree mode)   | `tl-deps src/api.ts --tree`         |
 | `tl-related`    | Find tests, types, and importers            | `tl-related src/Button.tsx`         |
-| `tl-flow`       | Call graph - what calls this, what it calls | `tl-flow src/utils.ts`              |
+| `tl-flow`       | Call graph — what calls this, what it calls | `tl-flow src/utils.ts`              |
 | `tl-coverage`   | Test coverage info for files                | `tl-coverage src/`                  |
 | `tl-complexity` | Code complexity metrics                     | `tl-complexity src/ --threshold 10` |
 
@@ -106,8 +135,8 @@ Understand dependencies and impact before making changes.
 
 Track changes and authorship efficiently.
 
-| Tool          | Description                      | Example                 |
-|---------------|----------------------------------|-------------------------|
+| Tool           | Description                      | Example                  |
+|----------------|----------------------------------|--------------------------|
 | `tl-diff`      | Token-efficient git diff summary | `tl-diff --staged`       |
 | `tl-history`   | Recent commits for a file        | `tl-history src/api.ts`  |
 | `tl-blame`     | Compact per-line authorship      | `tl-blame src/api.ts`    |
@@ -119,24 +148,24 @@ Track changes and authorship efficiently.
 
 Search and discover code patterns.
 
-| Tool        | Description                        | Example                  |
-|-------------|------------------------------------|--------------------------|
+| Tool         | Description                        | Example                  |
+|--------------|------------------------------------|--------------------------|
 | `tl-search`  | Run pre-defined search patterns    | `tl-search hooks`        |
 | `tl-secrets` | Find hardcoded secrets & API keys  | `tl-secrets --staged`    |
 | `tl-todo`    | Find TODOs/FIXMEs in codebase      | `tl-todo src/`           |
-| `tl-env`    | Find environment variables used    | `tl-env --required-only` |
-| `tl-unused` | Find unused exports/files          | `tl-unused src/`         |
-| `tl-api`    | Extract REST/GraphQL endpoints     | `tl-api src/routes/`     |
-| `tl-routes` | Extract routes from web frameworks | `tl-routes app/`         |
+| `tl-env`     | Find environment variables used    | `tl-env --required-only` |
+| `tl-unused`  | Find unused exports/files          | `tl-unused src/`         |
+| `tl-api`     | Extract REST/GraphQL endpoints     | `tl-api src/routes/`     |
+| `tl-routes`  | Extract routes from web frameworks | `tl-routes app/`         |
 
-### Configuration & Utilities
+### Utilities
 
-| Tool        | Description                      | Example                 |
-|-------------|----------------------------------|-------------------------|
-| `tl-cache`  | Manage ripgrep result cache      | `tl-cache stats`        |
-| `tl-config` | Show/manage configuration        | `tl-config --init`      |
-| `tl-name`   | Check name availability (npm/GH) | `tl-name myproject -s`  |
-| `tl-prompt` | Generate AI agent instructions   | `tl-prompt --minimal`   |
+| Tool        | Description                      | Example                |
+|-------------|----------------------------------|------------------------|
+| `tl-cache`  | Manage ripgrep result cache      | `tl-cache stats`       |
+| `tl-config` | Show/manage configuration        | `tl-config --init`     |
+| `tl-name`   | Check name availability (npm/GH) | `tl-name myproject -s` |
+| `tl-prompt` | Generate AI agent instructions   | `tl-prompt --minimal`  |
 
 ## Common Options
 
@@ -152,12 +181,40 @@ All tools support these flags:
 
 ## Configuration
 
-tokenlean uses `.tokenleanrc.json` for configuration:
+Create `.tokenleanrc.json` in your project root or `~/.tokenleanrc.json` globally:
 
-- **Project config**: `.tokenleanrc.json` in your project root
-- **Global config**: `~/.tokenleanrc.json` in your home directory
+```json
+{
+  "output": {
+    "maxLines": 100,
+    "maxTokens": null
+  },
+  "skipDirs": [
+    "generated",
+    "vendor"
+  ],
+  "skipExtensions": [
+    ".gen.ts"
+  ],
+  "importantDirs": [
+    "domain",
+    "core"
+  ],
+  "importantFiles": [
+    "ARCHITECTURE.md"
+  ],
+  "searchPatterns": {
+    "hooks": {
+      "description": "Find React hooks",
+      "pattern": "use[A-Z]\\w+",
+      "glob": "**/*.{ts,tsx}"
+    }
+  }
+}
+```
 
-Project config overrides global config. Both are optional.
+<details>
+<summary>Full configuration reference</summary>
 
 ```json
 {
@@ -191,28 +248,7 @@ Project config overrides global config. Both are optional.
   },
   "structure": {
     "depth": 3
-  }
-}
-```
-
-Config values extend built-in defaults (they don't replace them).
-
-## Caching
-
-tokenlean caches expensive ripgrep operations to speed up repeated searches. The cache uses **git-based invalidation** - it automatically invalidates when you make commits or modify files.
-
-```bash
-tl-cache stats      # View cache statistics
-tl-cache clear      # Clear cache for current project
-tl-cache clear-all  # Clear all cached data
-```
-
-Cache is stored in `~/.tokenlean/cache/` and is enabled by default.
-
-### Cache Configuration
-
-```json
-{
+  },
   "cache": {
     "enabled": true,
     "ttl": 300,
@@ -222,26 +258,27 @@ Cache is stored in `~/.tokenlean/cache/` and is enabled by default.
 }
 ```
 
-| Option     | Default            | Description                                |
-|------------|--------------------|--------------------------------------------|
-| `enabled`  | `true`             | Enable/disable caching                     |
-| `ttl`      | `300`              | Max age in seconds (fallback for non-git)  |
-| `maxSize`  | `"100MB"`          | Max cache size per project                 |
-| `location` | `null`             | Override default `~/.tokenlean/cache`      |
+Config values extend built-in defaults (they don't replace them).
 
-### Disable Caching
+</details>
+
+## Caching
+
+tokenlean caches expensive ripgrep operations with **git-based invalidation** — automatically invalidates on commits or
+file changes.
 
 ```bash
-# Disable for a single command
-TOKENLEAN_CACHE=0 tl-search hooks
-
-# Disable in config
-echo '{"cache":{"enabled":false}}' > .tokenleanrc.json
+tl-cache stats      # View cache statistics
+tl-cache clear      # Clear cache for current project
+tl-cache clear-all  # Clear all cached data
 ```
+
+Disable with `TOKENLEAN_CACHE=0` or in config: `{"cache":{"enabled":false}}`
 
 ## Example Workflows
 
-### Starting work on an unfamiliar codebase
+<details>
+<summary><strong>Starting on an unfamiliar codebase</strong></summary>
 
 ```bash
 tl-structure                    # Get the lay of the land
@@ -252,7 +289,10 @@ tl-types src/types/             # Understand data shapes
 tl-schema                       # Understand the database
 ```
 
-### Before refactoring a file
+</details>
+
+<details>
+<summary><strong>Before refactoring a file</strong></summary>
 
 ```bash
 tl-impact src/core/auth.ts      # What would break?
@@ -262,7 +302,10 @@ tl-coverage src/core/auth.ts    # Is it well tested?
 tl-complexity src/core/auth.ts  # How complex is it?
 ```
 
-### Understanding a component
+</details>
+
+<details>
+<summary><strong>Understanding a component</strong></summary>
 
 ```bash
 tl-component src/Button.tsx     # Props, hooks, dependencies
@@ -271,7 +314,10 @@ tl-history src/Button.tsx       # Recent changes
 tl-blame src/Button.tsx         # Who wrote what
 ```
 
-### Finding technical debt
+</details>
+
+<details>
+<summary><strong>Finding technical debt</strong></summary>
 
 ```bash
 tl-complexity src/ --threshold 15  # Complex functions
@@ -280,24 +326,10 @@ tl-todo                            # Outstanding TODOs
 tl-hotspots                        # Frequently changed (unstable?)
 ```
 
-### Starting a new project
+</details>
 
-```bash
-tl-name coolproject awesomelib     # Check npm, GitHub, domains
-tl-name myapp -s                   # Suggest variations if taken
-tl-name myapp --tld io             # Check .io domain
-```
-
-### Understanding the database
-
-```bash
-tl-schema                          # Auto-detect and show schema
-tl-schema -r                       # Show relationships only
-tl-schema --format detailed        # Show full column details
-tl-schema prisma/schema.prisma     # Specific schema file
-```
-
-### Security check before committing
+<details>
+<summary><strong>Security check before committing</strong></summary>
 
 ```bash
 tl-secrets                         # Scan for hardcoded secrets
@@ -305,38 +337,62 @@ tl-secrets --staged                # Only check staged files
 tl-secrets --min-severity high     # Only high severity issues
 ```
 
-### Reviewing a PR
+</details>
+
+<details>
+<summary><strong>Reviewing a PR</strong></summary>
 
 ```bash
 tl-pr feature-branch               # Summary of branch changes
 tl-pr 123                          # GitHub PR #123 (needs gh CLI)
 tl-pr --full                       # Include files, stats, commits
-tl-pr --base develop               # Compare against develop
 ```
 
-### Preparing a release
+</details>
+
+<details>
+<summary><strong>Preparing a release</strong></summary>
 
 ```bash
 tl-changelog --unreleased          # What's new since last tag
 tl-changelog v0.1.0..v0.2.0        # Between versions
 tl-changelog --format compact      # Quick summary
-tl-changelog --with-author         # Include contributors
 ```
 
-## Dependencies
+</details>
 
-- **ripgrep** (`rg`): Required for search-based tools
-- **git**: Required for history/blame/diff tools
+<details>
+<summary><strong>Starting a new project</strong></summary>
+
+```bash
+tl-name coolproject awesomelib     # Check npm, GitHub, domains
+tl-name myapp -s                   # Suggest variations if taken
+tl-name myapp --tld io             # Check .io domain
+```
+
+</details>
 
 ## Design Principles
 
-1. **Single purpose**: Each tool does one thing well
-2. **Minimal output**: Show only what's needed, nothing more
-3. **Token-conscious**: Every tool is designed to save context tokens
-4. **Composable**: Tools work together and support JSON output for piping
-5. **Fast**: No heavy parsing or external services - just regex and file operations
-6. **Universal**: Works with any JavaScript/TypeScript project, most tools support Python/Go too
+1. **Single purpose** — Each tool does one thing well
+2. **Minimal output** — Show only what's needed
+3. **Token-conscious** — Every tool saves context tokens
+4. **Composable** — Tools work together with JSON output for piping
+5. **Fast** — No heavy parsing or external services
+6. **Universal** — Works with JS/TS projects, most tools support Python/Go too
+
+## Other tools for Claude Code
+
+| Project                                                                | Description                                                                    |
+|------------------------------------------------------------------------|--------------------------------------------------------------------------------|
+| [claude-mneme](https://github.com/edimuj/claude-mneme)                 | Persistent memory for Claude Code — remember context across sessions           |
+| [claude-simple-status](https://github.com/edimuj/claude-simple-status) | Minimal statusline showing model, context usage, and quota                     |
+| [vexscan-claude-code](https://github.com/edimuj/vexscan-claude-code)   | Security scanner protecting against untrusted plugins, skills, MCPs, and hooks |
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-MIT
+[MIT](LICENSE) © [Edin Mujkanovic](https://github.com/edimuj)
