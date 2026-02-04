@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/tokenlean-mascot-200.png" alt="Tokenlean mascot - a squirrel collecting tokens" />
+  <img src="https://raw.githubusercontent.com/edimuj/tokenlean/main/assets/tokenlean-mascot-200.png" alt="Tokenlean mascot - a squirrel collecting tokens" />
 </p>
 
 <h1 align="center">tokenlean</h1>
