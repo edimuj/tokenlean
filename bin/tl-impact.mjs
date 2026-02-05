@@ -20,21 +20,18 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { execSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
-import { basename, dirname, extname, relative, resolve } from 'path';
+import { basename, dirname, extname, join, relative, resolve } from 'path';
 import {
   createOutput,
   parseCommonArgs,
   estimateTokens,
   formatTokens,
-  shellEscape,
-  rgEscape,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot, categorizeFile } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
-import { ensureRipgrep } from '../src/traverse.mjs';
+import { ensureRipgrep, listFilesWithRipgrep } from '../src/traverse.mjs';
 
 ensureRipgrep();
 
@@ -60,63 +57,56 @@ Output shows:
 `;
 
 // ─────────────────────────────────────────────────────────────
-// Import Detection
+// Import Detection — single-pass reverse import map
 // ─────────────────────────────────────────────────────────────
 
-// Use rgEscape from output.mjs for shell-safe regex patterns
+const CODE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.mts', '.cjs']);
+const RESOLVE_SUFFIXES = ['', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.mts', '.cjs', '/index.js', '/index.ts', '/index.tsx', '/index.mjs'];
 
-function findDirectImporters(filePath, projectRoot) {
-  const ext = extname(filePath);
-  const baseName = basename(filePath, ext);
-  const importers = new Map();
+/**
+ * Resolve an import specifier to an absolute path.
+ * Returns null if the specifier is a bare module (npm package) or unresolvable.
+ */
+function resolveImportSpecifier(spec, importerDir) {
+  if (!spec.startsWith('.') && !spec.startsWith('/')) return null;
 
-  // Search for the baseName in import/require statements
-  // Use simple pattern to find candidates, then verify in JS
-  const searchTerms = [baseName];
-
-  if (baseName === 'index') {
-    const parentDir = basename(dirname(filePath));
-    searchTerms.push(parentDir);
+  const base = resolve(importerDir, spec);
+  for (const suffix of RESOLVE_SUFFIXES) {
+    const candidate = base + suffix;
+    if (existsSync(candidate)) return candidate;
   }
-
-  // Use -e for multiple patterns, simpler matching
-  const patterns = searchTerms.map(t => `-e "${rgEscape(t)}"`).join(' ');
-
-  try {
-    const cacheKey = { op: 'rg-find-candidates', terms: searchTerms.sort() };
-    const result = withCache(
-      cacheKey,
-      () => {
-        const rgCommand = `rg -l --type-add 'code:*.{js,jsx,ts,tsx,mjs,mts,cjs}' -t code ${patterns} "${projectRoot}" 2>/dev/null || true`;
-        return execSync(rgCommand, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
-      },
-      { projectRoot }
-    );
-    const candidates = result.trim().split('\n').filter(Boolean);
-
-    for (const candidate of candidates) {
-      if (candidate === filePath) continue;
-      if (!existsSync(candidate)) continue;
-
-      const verification = verifyImport(candidate, filePath, projectRoot);
-      if (verification) {
-        importers.set(candidate, verification);
-      }
-    }
-  } catch (e) {
-    // ripgrep error
-  }
-
-  return importers;
+  return null;
 }
 
-function verifyImport(importerPath, targetPath, projectRoot) {
-  try {
-    const content = readFileSync(importerPath, 'utf-8');
+/**
+ * Build a reverse import map for the entire project in a single pass.
+ * Returns { [targetAbsPath]: [ { importer, line, importType, statement }, ... ] }
+ */
+function buildReverseImportMap(projectRoot) {
+  const files = listFilesWithRipgrep(projectRoot);
+  if (!files) return Object.create(null);
+
+  // Filter to code files only
+  const codeFiles = [];
+  for (const relPath of files) {
+    const ext = extname(relPath).toLowerCase();
+    if (CODE_EXTENSIONS.has(ext)) {
+      codeFiles.push(join(projectRoot, relPath));
+    }
+  }
+
+  const reverseMap = Object.create(null);
+
+  for (const filePath of codeFiles) {
+    let content;
+    try {
+      content = readFileSync(filePath, 'utf-8');
+    } catch {
+      continue;
+    }
+
+    const importerDir = dirname(filePath);
     const lines = content.split('\n');
-    const targetDir = dirname(targetPath);
-    const targetName = basename(targetPath).replace(/\.[^.]+$/, '');
-    const importerDir = dirname(importerPath);
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -129,54 +119,51 @@ function verifyImport(importerPath, targetPath, projectRoot) {
       ];
 
       for (const match of importMatches) {
-        const importPath = match[1];
+        const resolved = resolveImportSpecifier(match[1], importerDir);
+        if (!resolved) continue;
 
-        if (resolveImportPath(importPath, importerDir, targetPath, projectRoot)) {
-          let importType = 'import';
-          if (line.includes('require(')) importType = 'require';
-          if (line.includes('import(')) importType = 'dynamic import';
-          if (line.match(/import\s+type/)) importType = 'type import';
+        let importType = 'import';
+        if (line.includes('require(')) importType = 'require';
+        if (line.includes('import(')) importType = 'dynamic import';
+        if (line.match(/import\s+type/)) importType = 'type import';
 
-          return { line: i + 1, importType, statement: line.trim().substring(0, 80) };
-        }
+        if (!reverseMap[resolved]) reverseMap[resolved] = [];
+        reverseMap[resolved].push({
+          importer: filePath,
+          line: i + 1,
+          importType,
+          statement: line.trim().substring(0, 80)
+        });
       }
     }
-  } catch (e) {
-    // File read error
   }
 
-  return null;
+  return reverseMap;
 }
 
-function resolveImportPath(importPath, importerDir, targetPath, projectRoot) {
-  const targetExt = extname(targetPath);
-  const targetName = basename(targetPath, targetExt);
-  const targetDir = dirname(targetPath);
+/**
+ * Look up direct importers from the reverse map.
+ * Deduplicates by importer path (first match wins), skips self-imports.
+ */
+function findDirectImporters(filePath, reverseMap) {
+  const importers = new Map();
+  const entries = reverseMap[filePath];
+  if (!entries) return importers;
 
-  if (!importPath.startsWith('.') && !importPath.startsWith('/')) {
-    return false;
+  for (const entry of entries) {
+    if (entry.importer === filePath) continue;
+    if (importers.has(entry.importer)) continue;
+    importers.set(entry.importer, {
+      line: entry.line,
+      importType: entry.importType,
+      statement: entry.statement
+    });
   }
 
-  let resolvedPath = resolve(importerDir, importPath);
-  const extensions = ['', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.mts', '/index.js', '/index.ts', '/index.tsx'];
-
-  for (const ext of extensions) {
-    const tryPath = resolvedPath + ext;
-    if (tryPath === targetPath || resolve(tryPath) === resolve(targetPath)) {
-      return true;
-    }
-  }
-
-  if (targetName === 'index') {
-    if (resolvedPath === targetDir || resolve(resolvedPath) === resolve(targetDir)) {
-      return true;
-    }
-  }
-
-  return false;
+  return importers;
 }
 
-function findTransitiveImporters(directImporters, targetPath, projectRoot, maxDepth = 2) {
+function findTransitiveImporters(directImporters, targetPath, reverseMap, maxDepth = 2) {
   const allImporters = new Map(directImporters);
   const processed = new Set([targetPath]);
   let currentLevel = [...directImporters.keys()];
@@ -188,7 +175,7 @@ function findTransitiveImporters(directImporters, targetPath, projectRoot, maxDe
       if (processed.has(filePath)) continue;
       processed.add(filePath);
 
-      const importers = findDirectImporters(filePath, projectRoot);
+      const importers = findDirectImporters(filePath, reverseMap);
 
       for (const [path, info] of importers) {
         if (!allImporters.has(path) && !processed.has(path)) {
@@ -213,7 +200,8 @@ function buildResults(importers, projectRoot) {
   const categories = { source: [], test: [], story: [], mock: [] };
 
   for (const [path, info] of importers) {
-    const category = categorizeFile(path, projectRoot);
+    let category = categorizeFile(path, projectRoot);
+    if (!categories[category]) category = 'source';
     const tokens = estimateTokens(readFileSync(path, 'utf-8'));
     categories[category].push({
       path,
@@ -297,10 +285,16 @@ if (maxDepth > 1) {
 }
 out.blank();
 
-const directImporters = findDirectImporters(resolvedPath, projectRoot);
+const reverseMap = withCache(
+  { op: 'reverse-import-map' },
+  () => buildReverseImportMap(projectRoot),
+  { projectRoot }
+);
+
+const directImporters = findDirectImporters(resolvedPath, reverseMap);
 let importers = directImporters;
 if (maxDepth > 1) {
-  importers = findTransitiveImporters(directImporters, resolvedPath, projectRoot, maxDepth);
+  importers = findTransitiveImporters(directImporters, resolvedPath, reverseMap, maxDepth);
 }
 
 // Set JSON data
