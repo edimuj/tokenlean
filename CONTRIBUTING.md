@@ -137,8 +137,8 @@ We practice what we preach — keep it lean:
 
 - No TypeScript (we're a CLI tool, not a library)
 - No test framework (test manually, keep it simple)
-- Prefer `execSync`/`spawnSync` with proper escaping (`shellEscape` from `output.mjs`)
-- Use `spawnSync` with array args when building commands from user input (no shell injection)
+- Use `gitCommand()`/`rgCommand()` from `src/shell.mjs` for all git/rg calls (safe `spawnSync` with array args, no shell)
+- Only use `execSync` for pipe commands or non-git/rg tools where `shell.mjs` doesn't apply
 - Handle errors gracefully — a tool should never crash with an unhandled exception
 
 ## Submitting Changes

@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `tl-snippet` — Extract function/class body by name (supports `Class.method` and `file:method` syntax)
 
 ### Fixed
-- Shell injection in `tl-diff`, `tl-pr`, `tl-search` (now uses `shellEscape` / `spawnSync`)
+- Shell injection eliminated across all git/rg calls via `src/shell.mjs` (`gitCommand`/`rgCommand` wrappers using `spawnSync` with array args)
+- Unescaped `filePath` in `tl-analyze` subprocess invocation
 - `tl-hotspots` days parameter validated as integer
 - `tl-flow` now supports `Class.method` and `file:method` qualified name syntax
 - `tl-flow` single-file search fixed (rg `-H` flag)
