@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `tl-analyze` — Composite file profile: chains symbols + deps + impact + complexity + related into one compact view
 - `tl-snippet` — Extract function/class body by name (supports `Class.method` and `file:method` syntax)
 
 ### Fixed

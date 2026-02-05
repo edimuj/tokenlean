@@ -120,6 +120,7 @@ Add tokenlean instructions to your AI tool's config with a single command:
 
 | Tool           | Description                              | Example                   |
 |----------------|------------------------------------------|---------------------------|
+| `tl-analyze`   | Composite file profile (5 tools in 1)   | `tl-analyze src/auth.ts`  |
 | `tl-structure` | Project overview with token estimates    | `tl-structure src/`       |
 | `tl-context`   | Estimate token usage for files/dirs      | `tl-context src/api/`     |
 | `tl-symbols`   | Function/class signatures without bodies | `tl-symbols src/utils.ts` |

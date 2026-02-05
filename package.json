@@ -20,6 +20,7 @@
     "README.md"
   ],
   "bin": {
+    "tl-analyze": "bin/tl-analyze.mjs",
     "tl-api": "bin/tl-api.mjs",
     "tl-blame": "bin/tl-blame.mjs",
     "tl-cache": "bin/tl-cache.mjs",
