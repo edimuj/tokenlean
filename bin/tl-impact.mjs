@@ -34,6 +34,9 @@ import {
 } from '../src/output.mjs';
 import { findProjectRoot, categorizeFile } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
+import { ensureRipgrep } from '../src/traverse.mjs';
+
+ensureRipgrep();
 
 const HELP = `
 tl-impact - Analyze the blast radius of changing a file

@@ -33,6 +33,9 @@ import {
 } from '../src/output.mjs';
 import { findProjectRoot, shouldSkip, SKIP_DIRS } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
+import { ensureRipgrep } from '../src/traverse.mjs';
+
+ensureRipgrep();
 
 const HELP = `
 tl-todo - Extract TODOs, FIXMEs, and other markers from codebase

@@ -47,6 +47,17 @@ export function isRipgrepAvailable() {
 }
 
 /**
+ * Ensure ripgrep is available, exit with a friendly error if not.
+ */
+export function ensureRipgrep() {
+  if (!isRipgrepAvailable()) {
+    console.error('Error: ripgrep (rg) is required but not found.');
+    console.error('Install: brew install ripgrep  (or see https://github.com/BurntSushi/ripgrep#installation)');
+    process.exit(1);
+  }
+}
+
+/**
  * Get all files using ripgrep (much faster than fs.readdir recursion)
  * Returns array of relative paths
  */

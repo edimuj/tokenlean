@@ -232,12 +232,22 @@ const consumedIndices = new Set();
 for (let i = 0; i < options.remaining.length; i++) {
   const arg = options.remaining[i];
   if ((arg === '--days' || arg === '-d') && options.remaining[i + 1]) {
-    days = Math.max(1, parseInt(options.remaining[i + 1], 10) || 90);
+    const parsed = parseInt(options.remaining[i + 1], 10);
+    if (isNaN(parsed) || parsed < 1) {
+      console.error(`Error: --days requires a positive integer, got "${options.remaining[i + 1]}"`);
+      process.exit(1);
+    }
+    days = parsed;
     consumedIndices.add(i);
     consumedIndices.add(i + 1);
     i++;
   } else if ((arg === '--top' || arg === '-n') && options.remaining[i + 1]) {
-    topN = parseInt(options.remaining[i + 1], 10);
+    const parsedTop = parseInt(options.remaining[i + 1], 10);
+    if (isNaN(parsedTop) || parsedTop < 1) {
+      console.error(`Error: --top requires a positive integer, got "${options.remaining[i + 1]}"`);
+      process.exit(1);
+    }
+    topN = parsedTop;
     consumedIndices.add(i);
     consumedIndices.add(i + 1);
     i++;

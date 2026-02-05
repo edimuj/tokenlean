@@ -33,6 +33,9 @@ import {
 } from '../src/output.mjs';
 import { findProjectRoot } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
+import { ensureRipgrep } from '../src/traverse.mjs';
+
+ensureRipgrep();
 
 const HELP = `
 tl-related - Find related files (tests, types, usages)
@@ -45,14 +48,6 @@ Examples:
   tl-related src/api.ts -j         # JSON output
   tl-related src/utils.ts -q       # Quiet (file paths only)
 `;
-
-// Check for ripgrep
-try {
-  execSync('which rg', { stdio: 'ignore' });
-} catch {
-  console.error('ripgrep (rg) not found. Install: brew install ripgrep');
-  process.exit(1);
-}
 
 function findTestFiles(filePath) {
   const dir = dirname(filePath);

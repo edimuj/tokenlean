@@ -30,6 +30,9 @@ import {
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot } from '../src/project.mjs';
+import { ensureRipgrep } from '../src/traverse.mjs';
+
+ensureRipgrep();
 
 const HELP = `
 tl-flow - Show call graph for a function

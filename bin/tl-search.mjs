@@ -29,6 +29,9 @@ import {
 } from '../src/output.mjs';
 import { loadConfig, CONFIG_FILENAME } from '../src/config.mjs';
 import { withCache } from '../src/cache.mjs';
+import { ensureRipgrep } from '../src/traverse.mjs';
+
+ensureRipgrep();
 
 const HELP = `
 tl-search - Run pre-defined search patterns
@@ -52,14 +55,6 @@ Examples:
   tl-search hooks            # Run the "hooks" pattern
   tl-search todos -j         # JSON output
 `;
-
-// Check for ripgrep
-try {
-  execSync('which rg', { stdio: 'ignore' });
-} catch {
-  console.error('ripgrep (rg) not found. Install: brew install ripgrep');
-  process.exit(1);
-}
 
 function showPatterns(patterns, out) {
   const names = Object.keys(patterns);

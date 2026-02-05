@@ -335,11 +335,7 @@ export function setCached(key, data, projectRoot) {
   };
 
   try {
-    // Ensure directory exists
-    const dir = dirname(filePath);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
+    mkdirSync(dirname(filePath), { recursive: true });
 
     writeFileSync(filePath, JSON.stringify(cacheEntry));
 

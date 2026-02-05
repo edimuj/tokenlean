@@ -31,6 +31,9 @@ import {
 } from '../src/output.mjs';
 import { findProjectRoot } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
+import { ensureRipgrep } from '../src/traverse.mjs';
+
+ensureRipgrep();
 
 const HELP = `
 tl-entry - Find entry points in a codebase
