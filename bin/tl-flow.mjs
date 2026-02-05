@@ -54,6 +54,22 @@ Examples:
 `;
 
 // ─────────────────────────────────────────────────────────────
+// File Content Cache (avoids redundant readFileSync calls)
+// ─────────────────────────────────────────────────────────────
+
+const fileCache = new Map();
+
+function readFileCached(filePath) {
+  let entry = fileCache.get(filePath);
+  if (!entry) {
+    const content = readFileSync(filePath, 'utf-8');
+    entry = { content, lines: content.split('\n') };
+    fileCache.set(filePath, entry);
+  }
+  return entry;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Function Finding
 // ─────────────────────────────────────────────────────────────
 
@@ -150,8 +166,7 @@ function findCallers(name, projectRoot, excludeFile) {
 
 function findContainingFunction(file, lineNum) {
   try {
-    const content = readFileSync(file, 'utf-8');
-    const lines = content.split('\n');
+    const { lines } = readFileCached(file);
 
     // Look backwards for function definition
     for (let i = lineNum - 1; i >= 0; i--) {
@@ -180,8 +195,7 @@ function findCallees(file, fnName, lineNum) {
   const callees = [];
 
   try {
-    const content = readFileSync(file, 'utf-8');
-    const lines = content.split('\n');
+    const { lines } = readFileCached(file);
 
     // Find the function body
     let braceCount = 0;
@@ -311,7 +325,7 @@ if (className && definitions.length > 0) {
       return true;
     }
     try {
-      const content = readFileSync(def.file, 'utf-8');
+      const { content } = readFileCached(def.file);
       return content.includes(`class ${className}`) ||
              content.includes(`interface ${className}`) ||
              content.includes(`const ${className}`) ||

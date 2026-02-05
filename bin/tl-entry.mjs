@@ -31,7 +31,7 @@ import {
 } from '../src/output.mjs';
 import { findProjectRoot } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
-import { ensureRipgrep } from '../src/traverse.mjs';
+import { ensureRipgrep, batchRipgrep } from '../src/traverse.mjs';
 
 ensureRipgrep();
 
@@ -118,69 +118,77 @@ const PATTERNS = {
 
 function findEntryPoints(searchPath, projectRoot, filterType) {
   const results = {};
-
   const types = filterType ? [filterType] : Object.keys(PATTERNS);
 
+  // Initialise result buckets
   for (const type of types) {
     const config = PATTERNS[type];
     if (!config) continue;
+    results[type] = { label: config.label, entries: [] };
+  }
 
-    results[type] = {
-      label: config.label,
-      entries: []
-    };
-
-    // Search by patterns
+  // Collect all patterns with metadata for a single batch call
+  const allPatterns = [];
+  const patternMeta = Object.create(null); // pattern → {type, desc}
+  for (const type of types) {
+    const config = PATTERNS[type];
+    if (!config) continue;
     for (const { pattern, desc } of config.patterns) {
+      allPatterns.push(pattern);
+      patternMeta[pattern] = { type, desc };
+    }
+  }
+
+  // Single batchRipgrep call (replaces ~22 individual rg spawns)
+  if (allPatterns.length > 0) {
+    const cacheKey = { op: 'rg-entry-batch', patterns: allPatterns, path: searchPath };
+    const batchResult = withCache(
+      cacheKey,
+      () => batchRipgrep(allPatterns, searchPath, {
+        globs: ['*.{ts,tsx,js,jsx,mjs}']
+      }),
+      { projectRoot }
+    );
+
+    for (const [pattern, matches] of Object.entries(batchResult)) {
+      const meta = patternMeta[pattern];
+      if (!meta) continue;
+
+      for (const m of matches) {
+        if (m.file.includes('node_modules')) continue;
+        if (m.file.includes('.test.') || m.file.includes('.spec.')) continue;
+
+        results[meta.type].entries.push({
+          file: relative(projectRoot, m.file),
+          line: m.line,
+          desc: meta.desc,
+          content: (m.content || '').trim().slice(0, 60)
+        });
+      }
+    }
+  }
+
+  // Search for special files (unchanged — uses find)
+  for (const type of types) {
+    const config = PATTERNS[type];
+    if (!config || !config.files) continue;
+
+    for (const fileName of config.files) {
       try {
-        const cmd = `rg -n -g "*.{ts,tsx,js,jsx,mjs}" --no-heading -e "${shellEscape(pattern)}" "${shellEscape(searchPath)}" 2>/dev/null || true`;
-        const cacheKey = { op: 'rg-entry-pattern', pattern, path: searchPath };
-        const output = withCache(
-          cacheKey,
-          () => execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }),
-          { projectRoot }
-        );
+        const cmd = `find "${shellEscape(searchPath)}" -name "${fileName}" -not -path "*/node_modules/*" 2>/dev/null || true`;
+        const output = execSync(cmd, { encoding: 'utf-8' });
 
-        for (const line of output.trim().split('\n')) {
-          if (!line) continue;
-          const match = line.match(/^([^:]+):(\d+):(.*)$/);
-          if (!match) continue;
-
-          const [, file, lineNum, content] = match;
-          if (file.includes('node_modules')) continue;
-          if (file.includes('.test.') || file.includes('.spec.')) continue;
-
+        for (const file of output.trim().split('\n')) {
+          if (!file) continue;
           results[type].entries.push({
             file: relative(projectRoot, file),
-            line: parseInt(lineNum, 10),
-            desc,
-            content: content.trim().slice(0, 60)
+            line: 1,
+            desc: 'Entry file',
+            content: fileName
           });
         }
       } catch (e) {
-        // rg error
-      }
-    }
-
-    // Search for special files
-    if (config.files) {
-      for (const fileName of config.files) {
-        try {
-          const cmd = `find "${shellEscape(searchPath)}" -name "${fileName}" -not -path "*/node_modules/*" 2>/dev/null || true`;
-          const output = execSync(cmd, { encoding: 'utf-8' });
-
-          for (const file of output.trim().split('\n')) {
-            if (!file) continue;
-            results[type].entries.push({
-              file: relative(projectRoot, file),
-              line: 1,
-              desc: 'Entry file',
-              content: fileName
-            });
-          }
-        } catch (e) {
-          // find error
-        }
+        // find error
       }
     }
 

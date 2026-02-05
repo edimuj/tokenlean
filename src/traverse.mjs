@@ -12,7 +12,7 @@
 
 import { readdirSync, statSync, lstatSync, existsSync, realpathSync } from 'fs';
 import { join, relative, basename, extname } from 'path';
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import { getSkipDirs, getSkipExtensions, getImportantDirs, getImportantFiles, shouldSkip } from './project.mjs';
 
 // ─────────────────────────────────────────────────────────────
@@ -374,4 +374,148 @@ export function getDirectoryStats(dir) {
     totalSize: tree.totalSize,
     totalTokens: tree.totalTokens
   };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Batch Ripgrep — single rg process for multiple patterns
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Search for multiple patterns in a single rg invocation.
+ *
+ * Uses `rg --json` with multiple `-e` flags and attributes each match
+ * back to its originating pattern via `submatches[].match.text`.
+ *
+ * @param {string[]} patterns   Regex patterns to search for
+ * @param {string}   searchPath Directory (or file) to search
+ * @param {Object}   options
+ * @param {string}   [options.cwd]           Working directory for rg
+ * @param {string[]} [options.globs]         Glob filters (--glob)
+ * @param {string[]} [options.types]         Type filters (--type)
+ * @param {boolean}  [options.wordBoundary=false] Use -w flag
+ * @param {boolean}  [options.filesOnly=false]    Return only file paths (like -l)
+ * @param {number}   [options.maxBuffer=10*1024*1024]
+ * @returns {Object.<string, Array<{file: string, line?: number, content?: string}>>}
+ *   Plain object keyed by pattern → array of matches.
+ */
+export function batchRipgrep(patterns, searchPath, options = {}) {
+  const {
+    cwd,
+    globs = [],
+    types = [],
+    wordBoundary = false,
+    filesOnly = false,
+    maxBuffer = 10 * 1024 * 1024
+  } = options;
+
+  // Initialise result with all keys so callers can safely iterate
+  const result = Object.create(null);
+  for (const p of patterns) result[p] = [];
+
+  if (patterns.length === 0) return result;
+
+  // Build args
+  const args = ['--json', '--no-heading'];
+  if (wordBoundary) args.push('-w');
+  for (const g of globs) { args.push('--glob', g); }
+  for (const t of types) { args.push('--type', t); }
+  for (const p of patterns) { args.push('-e', p); }
+  args.push('--', searchPath);
+
+  const spawnOpts = { encoding: 'utf-8', maxBuffer };
+  if (cwd) spawnOpts.cwd = cwd;
+
+  const proc = spawnSync('rg', args, spawnOpts);
+
+  // Exit 1 = no matches, exit 2+ = error
+  if (proc.status >= 2 || proc.error) {
+    if (proc.stderr) process.stderr.write(proc.stderr);
+    return result;
+  }
+
+  if (!proc.stdout) return result;
+
+  // Pre-compile patterns for attribution
+  let compiled;
+  if (wordBoundary) {
+    // In word-boundary mode patterns are plain words — exact match is enough
+    compiled = null;
+  } else {
+    compiled = patterns.map(p => {
+      try { return new RegExp(p); } catch { return null; }
+    });
+  }
+
+  // Dedupe sets for filesOnly mode
+  const seenFiles = filesOnly ? Object.create(null) : null;
+  if (filesOnly) {
+    for (const p of patterns) seenFiles[p] = new Set();
+  }
+
+  const lines = proc.stdout.split('\n');
+  for (const raw of lines) {
+    if (!raw) continue;
+
+    let record;
+    try { record = JSON.parse(raw); } catch { continue; }
+    if (record.type !== 'match') continue;
+
+    const data = record.data;
+    const file = data.path ? data.path.text : '';
+    const lineNum = data.line_number;
+    const lineText = data.lines ? data.lines.text.replace(/\n$/, '') : '';
+
+    // Attribute: which pattern(s) produced this match?
+    const matchedPatterns = new Set();
+
+    if (data.submatches && data.submatches.length > 0) {
+      for (const sm of data.submatches) {
+        const text = sm.match ? sm.match.text : '';
+        if (wordBoundary) {
+          // Exact word comparison
+          for (const p of patterns) {
+            if (text === p) matchedPatterns.add(p);
+          }
+        } else {
+          for (let i = 0; i < patterns.length; i++) {
+            const re = compiled[i];
+            if (re && re.test(text)) {
+              matchedPatterns.add(patterns[i]);
+            }
+          }
+        }
+      }
+    }
+
+    // Fallback: test full line against each pattern
+    if (matchedPatterns.size === 0) {
+      if (wordBoundary) {
+        for (const p of patterns) {
+          if (new RegExp(`\\b${p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(lineText)) {
+            matchedPatterns.add(p);
+          }
+        }
+      } else {
+        for (let i = 0; i < patterns.length; i++) {
+          const re = compiled[i];
+          if (re && re.test(lineText)) {
+            matchedPatterns.add(patterns[i]);
+          }
+        }
+      }
+    }
+
+    for (const p of matchedPatterns) {
+      if (filesOnly) {
+        if (!seenFiles[p].has(file)) {
+          seenFiles[p].add(file);
+          result[p].push({ file });
+        }
+      } else {
+        result[p].push({ file, line: lineNum, content: lineText });
+      }
+    }
+  }
+
+  return result;
 }

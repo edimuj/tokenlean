@@ -22,7 +22,6 @@ if (process.argv.includes('--prompt')) {
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join, relative, dirname, basename, extname, resolve } from 'path';
-import { spawnSync } from 'child_process';
 import {
   createOutput,
   parseCommonArgs,
@@ -30,7 +29,7 @@ import {
 } from '../src/output.mjs';
 import { findProjectRoot, shouldSkip } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
-import { ensureRipgrep } from '../src/traverse.mjs';
+import { ensureRipgrep, batchRipgrep } from '../src/traverse.mjs';
 
 ensureRipgrep();
 
@@ -223,43 +222,6 @@ function extractImports(content) {
   return imports;
 }
 
-function findReferencesWithGrep(name, projectRoot, excludeFile) {
-  // Use ripgrep for fast reference counting (with caching)
-  const cacheKey = { op: 'rg-ref-count', name, types: 'js,ts' };
-
-  const files = withCache(
-    cacheKey,
-    () => {
-      const args = [
-        '-l',  // Files only
-        '--type', 'js',
-        '--type', 'ts',
-        '-w',  // Word boundary
-        name,
-        '.'
-      ];
-
-      const result = spawnSync('rg', args, {
-        cwd: projectRoot,
-        encoding: 'utf-8'
-      });
-
-      if (result.error || result.status !== 0) {
-        return [];
-      }
-
-      return result.stdout.trim().split('\n').filter(Boolean);
-    },
-    { projectRoot }
-  );
-
-  // Exclude the file that exports it
-  const relExclude = relative(projectRoot, excludeFile);
-  const otherFiles = files.filter(f => f !== relExclude && !f.includes(relExclude));
-
-  return otherFiles.length;
-}
-
 // ─────────────────────────────────────────────────────────────
 // Analysis
 // ─────────────────────────────────────────────────────────────
@@ -271,7 +233,7 @@ function analyzeUnusedExports(files, projectRoot, targetFiles = null) {
     files: new Set()
   };
 
-  // First pass: collect all imports
+  // Phase 1: collect all imports
   for (const file of files) {
     const content = readFileSync(file, 'utf-8');
     const imports = extractImports(content);
@@ -280,11 +242,11 @@ function analyzeUnusedExports(files, projectRoot, targetFiles = null) {
     imports.files.forEach(f => allImports.files.add(f));
   }
 
-  // Check if namespace imports are used (means everything is potentially used)
   const hasWildcardImport = allImports.named.has('*');
 
-  // Second pass: find unused exports
-  const unused = [];
+  // Phase 2: collect candidates that need grep verification vs directly unused
+  const candidates = [];  // Need grep confirmation
+  const directUnused = []; // Definitely unused
 
   for (const file of checkFiles) {
     const content = readFileSync(file, 'utf-8');
@@ -292,37 +254,60 @@ function analyzeUnusedExports(files, projectRoot, targetFiles = null) {
     const relPath = relative(projectRoot, file);
 
     for (const exp of exports) {
-      // Skip default exports (often intentionally exported)
       if (exp.name === 'default') continue;
 
-      // If there's a wildcard import somewhere, we can't be sure it's unused
       if (hasWildcardImport) {
-        // Do a more thorough grep-based check
-        const refs = findReferencesWithGrep(exp.name, projectRoot, file);
-        if (refs === 0) {
-          unused.push({
+        // All exports need grep verification when wildcard imports exist
+        candidates.push({ name: exp.name, file, relPath, exp });
+      } else if (!allImports.named.has(exp.name)) {
+        // Not in static imports — short/capitalized names need grep confirmation
+        if (exp.name.length <= 3 || /^[A-Z]/.test(exp.name)) {
+          candidates.push({ name: exp.name, file, relPath, exp });
+        } else {
+          directUnused.push({
             file: relPath,
             name: exp.name,
             line: exp.line,
             isType: exp.isType
           });
         }
-      } else {
-        // Simple check: is the name in our imports set?
-        if (!allImports.named.has(exp.name)) {
-          // Double-check with grep for common names
-          if (exp.name.length <= 3 || /^[A-Z]/.test(exp.name)) {
-            const refs = findReferencesWithGrep(exp.name, projectRoot, file);
-            if (refs > 0) continue;
-          }
+      }
+    }
+  }
 
-          unused.push({
-            file: relPath,
-            name: exp.name,
-            line: exp.line,
-            isType: exp.isType
-          });
-        }
+  // Phase 3: single batch search for all candidate names
+  const unused = [...directUnused];
+
+  if (candidates.length > 0) {
+    const uniqueNames = [...new Set(candidates.map(c => c.name))];
+    const sortedNames = uniqueNames.slice().sort();
+
+    const batchResult = withCache(
+      { op: 'rg-ref-batch', names: sortedNames },
+      () => batchRipgrep(uniqueNames, '.', {
+        cwd: projectRoot,
+        types: ['js', 'ts'],
+        wordBoundary: true,
+        filesOnly: true
+      }),
+      { projectRoot }
+    );
+
+    // Phase 4: resolve candidates using batch results
+    for (const cand of candidates) {
+      const matches = batchResult[cand.name] || [];
+      const relExclude = relative(projectRoot, cand.file);
+      const otherFiles = matches.filter(m =>
+        m.file !== relExclude && !m.file.includes(relExclude)
+      );
+
+      if (otherFiles.length === 0) {
+        unused.push({
+          file: cand.relPath,
+          name: cand.name,
+          line: cand.exp.line,
+          isType: cand.exp.isType
+        });
       }
     }
   }
@@ -334,16 +319,14 @@ function analyzeUnreferencedFiles(files, projectRoot, targetFiles = null) {
   const checkFiles = targetFiles || files;
   const importedPaths = new Set();
 
-  // Collect all imported paths
+  // Phase 1: collect all imported paths
   for (const file of files) {
     const content = readFileSync(file, 'utf-8');
     const imports = extractImports(content);
 
     for (const importPath of imports.files) {
-      // Resolve relative imports
       if (importPath.startsWith('.')) {
         const resolved = join(dirname(file), importPath);
-        // Try with various extensions
         const extensions = ['', '.ts', '.tsx', '.js', '.jsx', '.mjs', '/index.ts', '/index.tsx', '/index.js'];
         for (const ext of extensions) {
           importedPaths.add(resolved + ext);
@@ -352,31 +335,54 @@ function analyzeUnreferencedFiles(files, projectRoot, targetFiles = null) {
     }
   }
 
-  // Find unreferenced files
-  const unreferenced = [];
+  // Phase 2: collect basenames of files not in imported paths
   const entryPatterns = ['index.', 'main.', 'app.', 'server.', 'cli.', 'bin/'];
+  const candidateFiles = []; // {file, relPath, name}
 
   for (const file of checkFiles) {
     const relPath = relative(projectRoot, file);
 
-    // Skip likely entry points
-    if (entryPatterns.some(p => relPath.includes(p))) {
-      continue;
-    }
+    if (entryPatterns.some(p => relPath.includes(p))) continue;
 
-    // Check if this file is imported
-    const isImported = [...importedPaths].some(p => {
-      return file.startsWith(p) || file === p;
-    });
+    const isImported = [...importedPaths].some(p =>
+      file.startsWith(p) || file === p
+    );
 
     if (!isImported) {
-      // Double-check: look for any reference to the file basename
       const name = basename(file, extname(file));
-      const refs = findReferencesWithGrep(name, projectRoot, file);
+      candidateFiles.push({ file, relPath, name });
+    }
+  }
 
-      if (refs === 0) {
-        unreferenced.push(relPath);
-      }
+  if (candidateFiles.length === 0) return [];
+
+  // Phase 3: single batch search for all candidate basenames
+  const uniqueNames = [...new Set(candidateFiles.map(c => c.name))];
+  const sortedNames = uniqueNames.slice().sort();
+
+  const batchResult = withCache(
+    { op: 'rg-unref-batch', names: sortedNames },
+    () => batchRipgrep(uniqueNames, '.', {
+      cwd: projectRoot,
+      types: ['js', 'ts'],
+      wordBoundary: true,
+      filesOnly: true
+    }),
+    { projectRoot }
+  );
+
+  // Phase 4: filter truly unreferenced
+  const unreferenced = [];
+
+  for (const cand of candidateFiles) {
+    const matches = batchResult[cand.name] || [];
+    const relExclude = relative(projectRoot, cand.file);
+    const otherFiles = matches.filter(m =>
+      m.file !== relExclude && !m.file.includes(relExclude)
+    );
+
+    if (otherFiles.length === 0) {
+      unreferenced.push(cand.relPath);
     }
   }
 
