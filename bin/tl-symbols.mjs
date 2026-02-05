@@ -184,8 +184,11 @@ function extractJsSymbols(content, exportsOnly = false) {
           currentClassMethods.push(extractSignatureLine(trimmed));
         }
         else if (trimmed.match(/^(?:public\s+|private\s+|protected\s+)?(?:static\s+)?(?:async\s+)?(?:get\s+|set\s+)?(\w+)\s*[(<]/)) {
-          if (!trimmed.includes('=') || trimmed.includes('=>')) {
-            currentClassMethods.push(extractSignatureLine(trimmed));
+          const methodName = trimmed.match(/^(?:public\s+|private\s+|protected\s+)?(?:static\s+)?(?:async\s+)?(?:get\s+|set\s+)?(\w+)/)?.[1];
+          if (methodName && !['if', 'for', 'while', 'switch', 'catch', 'return', 'throw', 'new', 'typeof', 'delete', 'void', 'yield', 'await'].includes(methodName)) {
+            if (!trimmed.includes('=') || trimmed.includes('=>')) {
+              currentClassMethods.push(extractSignatureLine(trimmed));
+            }
           }
         }
       }
