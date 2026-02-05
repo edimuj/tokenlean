@@ -25,9 +25,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, unlinkSync, rmSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
-import { execSync } from 'child_process';
 import { createHash } from 'crypto';
 import { loadConfig } from './config.mjs';
+import { gitCommand } from './shell.mjs';
 
 // ─────────────────────────────────────────────────────────────
 // Constants
@@ -113,12 +113,7 @@ function getCacheKeyHash(key) {
  * Check if directory is a git repository
  */
 function isGitRepo(dir) {
-  try {
-    execSync('git rev-parse --git-dir', { cwd: dir, stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
+  return gitCommand(['rev-parse', '--git-dir'], { cwd: dir }) !== null;
 }
 
 /**
@@ -132,16 +127,11 @@ export function getGitState(projectRoot) {
 
   try {
     // Get HEAD commit
-    const head = execSync('git rev-parse HEAD', {
-      cwd: projectRoot,
-      encoding: 'utf-8'
-    }).trim();
+    const head = gitCommand(['rev-parse', 'HEAD'], { cwd: projectRoot });
+    if (!head) return null;
 
     // Get list of modified/untracked files (sorted for consistency)
-    const status = execSync('git status --porcelain', {
-      cwd: projectRoot,
-      encoding: 'utf-8'
-    });
+    const status = gitCommand(['status', '--porcelain'], { cwd: projectRoot }) || '';
 
     const dirtyFiles = status
       .split('\n')

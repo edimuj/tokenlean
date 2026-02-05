@@ -21,17 +21,16 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { execSync } from 'child_process';
 import { readFileSync } from 'fs';
 import { resolve, relative, dirname, basename, extname } from 'path';
 import {
   createOutput,
   parseCommonArgs,
-  COMMON_OPTIONS_HELP,
-  shellEscape
+  COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot } from '../src/project.mjs';
 import { listFiles, isRipgrepAvailable } from '../src/traverse.mjs';
+import { rgCommand } from '../src/shell.mjs';
 
 const HELP = `
 tl-example - Find diverse, representative usage examples
@@ -106,23 +105,18 @@ function matchesGlob(fileName, glob) {
 function searchWithRg(pattern, dir, options = {}) {
   const { glob, type } = options;
 
-  let cmd = `rg -n --no-heading --max-count 5 --max-columns 300`;
-  if (glob) cmd += ` --glob "${shellEscape(glob)}"`;
-  if (type) cmd += ` --type ${type}`;
-  cmd += ` --glob "!node_modules" --glob "!.git" --glob "!dist" --glob "!build"`;
-  cmd += ` --glob "!coverage" --glob "!*.min.*" --glob "!*.map" --glob "!*.lock"`;
-  cmd += ` "${shellEscape(pattern)}" "${shellEscape(dir)}"`;
+  const args = ['-n', '--no-heading', '--max-count', '5', '--max-columns', '300'];
+  if (glob) args.push('--glob', glob);
+  if (type) args.push('--type', type);
+  args.push('--glob', '!node_modules', '--glob', '!.git', '--glob', '!dist', '--glob', '!build');
+  args.push('--glob', '!coverage', '--glob', '!*.min.*', '--glob', '!*.map', '--glob', '!*.lock');
+  args.push('-e', pattern, dir);
 
-  try {
-    const output = execSync(cmd, {
-      encoding: 'utf-8',
-      maxBuffer: 50 * 1024 * 1024,
-      stdio: ['pipe', 'pipe', 'ignore']
-    });
-    return output.trim().split('\n').filter(Boolean);
-  } catch {
-    return null; // null signals fallback needed (vs [] = no matches)
-  }
+  const output = rgCommand(args, { maxBuffer: 50 * 1024 * 1024 });
+  if (output === null) return null; // null signals fallback needed
+  if (output === '') return [];
+
+  return output.split('\n').filter(Boolean);
 }
 
 function searchWithNode(pattern, dir, options = {}) {

@@ -20,17 +20,16 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { execSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { basename, dirname, relative, resolve, extname } from 'path';
 import {
   createOutput,
   parseCommonArgs,
-  shellEscape,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot } from '../src/project.mjs';
 import { ensureRipgrep } from '../src/traverse.mjs';
+import { rgCommand } from '../src/shell.mjs';
 
 ensureRipgrep();
 
@@ -77,38 +76,34 @@ function findFunctionDefinitions(name, projectRoot, limitPath) {
   const searchPath = limitPath || projectRoot;
   const definitions = [];
 
-  try {
-    // Pattern to find function definitions
-    const patterns = [
-      `function ${name}\\s*\\(`,           // function name(
-      `(const|let|var)\\s+${name}\\s*=`,   // const name =
-      `${name}\\s*:\\s*\\(`,               // name: ( (object method)
-      `${name}\\s*\\([^)]*\\)\\s*\\{`,     // name() { (class method)
-      `async\\s+${name}\\s*\\(`,           // async name(
-    ];
+  // Pattern to find function definitions
+  const patterns = [
+    `function ${name}\\s*\\(`,           // function name(
+    `(const|let|var)\\s+${name}\\s*=`,   // const name =
+    `${name}\\s*:\\s*\\(`,               // name: ( (object method)
+    `${name}\\s*\\([^)]*\\)\\s*\\{`,     // name() { (class method)
+    `async\\s+${name}\\s*\\(`,           // async name(
+  ];
 
-    const pattern = `(${patterns.join('|')})`;
-    const cmd = `rg -n -H -g "*.{ts,tsx,js,jsx,mjs}" --no-heading -e "${shellEscape(pattern)}" "${shellEscape(searchPath)}" 2>/dev/null || true`;
+  const pattern = `(${patterns.join('|')})`;
+  const result = rgCommand(['-n', '-H', '--glob', '*.{ts,tsx,js,jsx,mjs}', '--no-heading', '-e', pattern, searchPath]);
 
-    const result = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+  if (!result) return definitions;
 
-    for (const line of result.trim().split('\n')) {
-      if (!line) continue;
-      const match = line.match(/^([^:]+):(\d+):(.*)$/);
-      if (!match) continue;
+  for (const line of result.split('\n')) {
+    if (!line) continue;
+    const match = line.match(/^([^:]+):(\d+):(.*)$/);
+    if (!match) continue;
 
-      const [, file, lineNum, content] = match;
-      if (file.includes('node_modules')) continue;
-      if (file.includes('.test.') || file.includes('.spec.')) continue;
+    const [, file, lineNum, content] = match;
+    if (file.includes('node_modules')) continue;
+    if (file.includes('.test.') || file.includes('.spec.')) continue;
 
-      definitions.push({
-        file,
-        line: parseInt(lineNum, 10),
-        content: content.trim()
-      });
-    }
-  } catch (e) {
-    // rg error
+    definitions.push({
+      file,
+      line: parseInt(lineNum, 10),
+      content: content.trim()
+    });
   }
 
   return definitions;
@@ -117,14 +112,12 @@ function findFunctionDefinitions(name, projectRoot, limitPath) {
 function findCallers(name, projectRoot, excludeFile) {
   const callers = [];
 
-  try {
-    // Find calls to the function
-    const pattern = `${name}\\s*\\(`;
-    const cmd = `rg -n -g "*.{ts,tsx,js,jsx,mjs}" --no-heading -e "${shellEscape(pattern)}" "${shellEscape(projectRoot)}" 2>/dev/null || true`;
+  // Find calls to the function
+  const pattern = `${name}\\s*\\(`;
+  const result = rgCommand(['-n', '--glob', '*.{ts,tsx,js,jsx,mjs}', '--no-heading', '-e', pattern, projectRoot]);
 
-    const result = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
-
-    for (const line of result.trim().split('\n')) {
+  if (result) {
+    for (const line of result.split('\n')) {
       if (!line) continue;
       const match = line.match(/^([^:]+):(\d+):(.*)$/);
       if (!match) continue;
@@ -150,8 +143,6 @@ function findCallers(name, projectRoot, excludeFile) {
         caller: containingFn
       });
     }
-  } catch (e) {
-    // rg error
   }
 
   // Dedupe by file+caller

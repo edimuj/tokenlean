@@ -20,14 +20,13 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { execSync } from 'child_process';
 import {
   createOutput,
   parseCommonArgs,
   formatTokens,
-  shellEscape,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
+import { gitCommand } from '../src/shell.mjs';
 
 const HELP = `
 tl-diff - Token-efficient git diff summary
@@ -47,12 +46,8 @@ Examples:
   tl-diff -j                  # JSON output
 `;
 
-function run(cmd) {
-  try {
-    return execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
-  } catch (e) {
-    return e.stdout || '';
-  }
+function run(args) {
+  return gitCommand(args) || '';
 }
 
 function parseDiffStat(stat) {
@@ -136,16 +131,16 @@ if (options.help) {
   process.exit(0);
 }
 
-// Build git diff command
-let diffCmd = 'git diff';
+// Build git diff args
+const diffArgs = ['diff'];
 if (staged) {
-  diffCmd += ' --cached';
+  diffArgs.push('--cached');
 } else if (ref) {
-  diffCmd += ` ${shellEscape(ref)}`;
+  diffArgs.push(ref);
 }
-diffCmd += ' --stat=200';
+diffArgs.push('--stat=200');
 
-const stat = run(diffCmd);
+const stat = run(diffArgs);
 
 const out = createOutput(options);
 

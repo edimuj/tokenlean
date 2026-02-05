@@ -22,18 +22,17 @@ if (process.argv.includes('--prompt')) {
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join, dirname, basename, relative, extname } from 'path';
-import { execSync } from 'child_process';
 import {
   createOutput,
   parseCommonArgs,
   estimateTokens,
   formatTokens,
-  shellEscape,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
 import { ensureRipgrep } from '../src/traverse.mjs';
+import { rgCommand } from '../src/shell.mjs';
 
 ensureRipgrep();
 
@@ -121,10 +120,7 @@ function findImporters(filePath, projectRoot) {
     const cacheKey = { op: 'rg-find-importers', module: name, glob: '*.{js,mjs,ts,tsx,jsx}' };
     const result = withCache(
       cacheKey,
-      () => execSync(
-        `rg -l -g "*.{js,mjs,ts,tsx,jsx}" -e "${shellEscape(name)}" "${shellEscape(projectRoot)}" 2>/dev/null || true`,
-        { encoding: 'utf-8', maxBuffer: 5 * 1024 * 1024 }
-      ),
+      () => rgCommand(['-l', '--glob', '*.{js,mjs,ts,tsx,jsx}', '-e', name, projectRoot], { maxBuffer: 5 * 1024 * 1024 }) || '',
       { projectRoot }
     );
 

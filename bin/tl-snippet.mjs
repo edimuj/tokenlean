@@ -22,16 +22,15 @@ if (process.argv.includes('--prompt')) {
 
 import { readFileSync } from 'fs';
 import { basename, extname, relative } from 'path';
-import { execSync } from 'child_process';
 import {
   createOutput,
   parseCommonArgs,
   estimateTokens,
   formatTokens,
-  shellEscape,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot } from '../src/project.mjs';
+import { rgCommand } from '../src/shell.mjs';
 
 const HELP = `
 tl-snippet - Extract a function/class body by name
@@ -77,11 +76,10 @@ function findDefinitions(name, searchPath) {
   const pattern = `(${patterns.join('|')})`;
   const defs = [];
 
-  try {
-    const cmd = `rg -n -H -g "*.{ts,tsx,js,jsx,mjs,cjs,py,go}" --no-heading -e "${shellEscape(pattern)}" "${shellEscape(searchPath)}" 2>/dev/null || true`;
-    const result = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+  const result = rgCommand(['-n', '-H', '--glob', '*.{ts,tsx,js,jsx,mjs,cjs,py,go}', '--no-heading', '-e', pattern, searchPath]);
 
-    for (const line of result.trim().split('\n')) {
+  if (result) {
+    for (const line of result.split('\n')) {
       if (!line) continue;
       const match = line.match(/^([^:]+):(\d+):(.*)$/);
       if (!match) continue;
@@ -101,8 +99,6 @@ function findDefinitions(name, searchPath) {
         content: trimmed
       });
     }
-  } catch {
-    // rg error
   }
 
   return defs;

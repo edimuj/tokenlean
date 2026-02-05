@@ -16,16 +16,6 @@ export function shellEscape(str) {
   return str.replace(/[`$"\\!]/g, '\\$&');
 }
 
-/**
- * Escape a string for use as a ripgrep pattern (regex escaping + shell escaping)
- */
-export function rgEscape(str) {
-  // First escape regex special chars
-  const regexEscaped = str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  // Then escape shell special chars
-  return shellEscape(regexEscaped);
-}
-
 // ─────────────────────────────────────────────────────────────
 // Token Estimation
 // ─────────────────────────────────────────────────────────────

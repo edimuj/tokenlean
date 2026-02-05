@@ -20,7 +20,6 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { execSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { basename, dirname, relative, resolve } from 'path';
 import {
@@ -28,12 +27,12 @@ import {
   parseCommonArgs,
   estimateTokens,
   formatTokens,
-  shellEscape,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot, shouldSkip, SKIP_DIRS } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
 import { ensureRipgrep } from '../src/traverse.mjs';
+import { rgCommand } from '../src/shell.mjs';
 
 ensureRipgrep();
 
@@ -99,18 +98,17 @@ function findTodos(searchPath, projectRoot) {
 
   try {
     // Build exclude patterns for ripgrep
-    const excludes = [...SKIP_DIRS].map(d => `--glob=!${d}`).join(' ');
+    const excludeArgs = [...SKIP_DIRS].flatMap(d => ['--glob', `!${d}`]);
 
     // Search for markers that look like they're in comments
     // Pattern: comment prefix followed by optional whitespace, then marker with colon/parens
     // Require : or ( after marker to avoid false positives like "Todo Extraction"
     const commentPattern = `(${commentPrefixes.join('|')})\\s*(${markerPattern})[:(]`;
-    const cmd = `rg -n --no-heading -i "${commentPattern}" "${shellEscape(searchPath)}" ${excludes} 2>/dev/null || true`;
 
     const cacheKey = { op: 'rg-todo-markers', pattern: commentPattern, path: searchPath };
     const output = withCache(
       cacheKey,
-      () => execSync(cmd, { encoding: 'utf-8', maxBuffer: 50 * 1024 * 1024 }),
+      () => rgCommand(['-n', '--no-heading', '-i', ...excludeArgs, '-e', commentPattern, searchPath], { maxBuffer: 50 * 1024 * 1024 }) || '',
       { projectRoot }
     );
 

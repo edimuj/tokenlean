@@ -21,7 +21,6 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { execSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { basename, relative, resolve } from 'path';
 import {
@@ -29,11 +28,11 @@ import {
   parseCommonArgs,
   estimateTokens,
   formatTokens,
-  shellEscape,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot, shouldSkip, isCodeFile } from '../src/project.mjs';
 import { getConfig } from '../src/config.mjs';
+import { gitCommand } from '../src/shell.mjs';
 
 const HELP = `
 tl-hotspots - Find frequently changed files (git churn analysis)
@@ -65,19 +64,14 @@ Output shows:
 // ─────────────────────────────────────────────────────────────
 
 function getGitLog(path, days, projectRoot) {
-  try {
-    // Single quotes around format to prevent shell interpretation of %
-    const cmd = `git -C "${shellEscape(projectRoot)}" log --since="${days} days ago" --format='%H|%an|%ad|%s' --date=short --name-only -- "${shellEscape(path)}"`;
+  const output = gitCommand(
+    ['log', `--since=${days} days ago`, '--format=%H|%an|%ad|%s', '--date=short', '--name-only', '--', path],
+    { cwd: projectRoot, maxBuffer: 50 * 1024 * 1024 }
+  );
 
-    const output = execSync(cmd, {
-      encoding: 'utf-8',
-      maxBuffer: 50 * 1024 * 1024
-    });
+  if (!output) return { commits: [], fileChanges: new Map(), authorChanges: new Map() };
 
-    return parseGitLog(output);
-  } catch (e) {
-    return { commits: [], fileChanges: new Map(), authorChanges: new Map() };
-  }
+  return parseGitLog(output);
 }
 
 function parseGitLog(output) {
@@ -272,9 +266,7 @@ const resolvedPath = resolve(targetPath);
 const relPath = relative(projectRoot, resolvedPath) || '.';
 
 // Check if we're in a git repo
-try {
-  execSync(`git -C "${shellEscape(projectRoot)}" rev-parse --git-dir`, { encoding: 'utf-8', stdio: 'pipe' });
-} catch {
+if (gitCommand(['rev-parse', '--git-dir'], { cwd: projectRoot }) === null) {
   console.error('Error: Not in a git repository');
   process.exit(1);
 }

@@ -20,13 +20,13 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { execSync } from 'child_process';
 import {
   createOutput,
   parseCommonArgs,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot } from '../src/project.mjs';
+import { gitCommand } from '../src/shell.mjs';
 
 const HELP = `
 tl-changelog - Generate changelog from git commits
@@ -70,20 +70,12 @@ Breaking changes: feat!: or BREAKING CHANGE in body
 // Git Helpers
 // ─────────────────────────────────────────────────────────────
 
-function exec(cmd) {
-  try {
-    return execSync(cmd, { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-  } catch {
-    return null;
-  }
-}
-
 function getLastTag() {
-  return exec('git describe --tags --abbrev=0 2>/dev/null');
+  return gitCommand(['describe', '--tags', '--abbrev=0']);
 }
 
 function getAllTags() {
-  const tags = exec('git tag --sort=-version:refname');
+  const tags = gitCommand(['tag', '--sort=-version:refname']);
   return tags ? tags.split('\n').filter(Boolean) : [];
 }
 
@@ -93,7 +85,7 @@ function getCommits(from, to = 'HEAD') {
   // Get detailed commit info
   // Format: hash|author|date|subject|body
   const format = '%H|%an|%ai|%s|%b%x00';
-  const log = exec(`git log ${range} --format="${format}"`);
+  const log = gitCommand(['log', range, `--format=${format}`]);
 
   if (!log) return [];
 
@@ -417,7 +409,7 @@ if (!fromRef && !range) {
   fromRef = getLastTag();
   if (!fromRef) {
     // No tags, get all commits
-    fromRef = exec('git rev-list --max-parents=0 HEAD'); // First commit
+    fromRef = gitCommand(['rev-list', '--max-parents=0', 'HEAD']); // First commit
   }
 }
 

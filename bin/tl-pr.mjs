@@ -27,10 +27,10 @@ import {
   createOutput,
   parseCommonArgs,
   formatTokens,
-  shellEscape,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot, categorizeFile, detectLanguage } from '../src/project.mjs';
+import { gitCommand } from '../src/shell.mjs';
 
 const HELP = `
 tl-pr - Summarize PR/branch changes for code review
@@ -77,12 +77,12 @@ function exec(cmd, options = {}) {
 }
 
 function getDefaultBranch() {
-  // Try to get default branch from git
+  // Try to get default branch from git (pipe command — keep as execSync)
   const remote = exec('git remote show origin 2>/dev/null | grep "HEAD branch" | cut -d: -f2');
   if (remote) return remote.trim();
 
   // Check common names
-  const branches = exec('git branch -a');
+  const branches = gitCommand(['branch', '-a']);
   if (branches?.includes('main')) return 'main';
   if (branches?.includes('master')) return 'master';
 
@@ -90,22 +90,22 @@ function getDefaultBranch() {
 }
 
 function getCurrentBranch() {
-  return exec('git branch --show-current') || exec('git rev-parse --abbrev-ref HEAD');
+  return gitCommand(['branch', '--show-current']) || gitCommand(['rev-parse', '--abbrev-ref', 'HEAD']);
 }
 
 function branchExists(branch) {
-  return exec(`git rev-parse --verify "${shellEscape(branch)}" 2>/dev/null`) !== null;
+  return gitCommand(['rev-parse', '--verify', branch]) !== null;
 }
 
 function getMergeBase(branch, base) {
-  return exec(`git merge-base "${shellEscape(base)}" "${shellEscape(branch)}"`);
+  return gitCommand(['merge-base', base, branch]);
 }
 
 function getCommits(branch, base) {
   const mergeBase = getMergeBase(branch, base);
   if (!mergeBase) return [];
 
-  const log = exec(`git log --oneline ${mergeBase}..${shellEscape(branch)}`);
+  const log = gitCommand(['log', '--oneline', `${mergeBase}..${branch}`]);
   if (!log) return [];
 
   return log.split('\n').filter(Boolean).map(line => {
@@ -118,8 +118,8 @@ function getDiffStats(branch, base) {
   const mergeBase = getMergeBase(branch, base);
   if (!mergeBase) return null;
 
-  const stat = exec(`git diff --stat ${mergeBase}..${shellEscape(branch)}`);
-  const numstat = exec(`git diff --numstat ${mergeBase}..${shellEscape(branch)}`);
+  const stat = gitCommand(['diff', '--stat', `${mergeBase}..${branch}`]);
+  const numstat = gitCommand(['diff', '--numstat', `${mergeBase}..${branch}`]);
 
   if (!numstat) return null;
 
@@ -142,7 +142,7 @@ function getChangedFiles(branch, base) {
   const mergeBase = getMergeBase(branch, base);
   if (!mergeBase) return { added: [], modified: [], deleted: [], renamed: [] };
 
-  const diff = exec(`git diff --name-status ${mergeBase}..${shellEscape(branch)}`);
+  const diff = gitCommand(['diff', '--name-status', `${mergeBase}..${branch}`]);
   if (!diff) return { added: [], modified: [], deleted: [], renamed: [] };
 
   const result = { added: [], modified: [], deleted: [], renamed: [] };

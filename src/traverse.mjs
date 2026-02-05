@@ -12,8 +12,9 @@
 
 import { readdirSync, statSync, lstatSync, existsSync, realpathSync } from 'fs';
 import { join, relative, basename, extname } from 'path';
-import { execSync, spawnSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { getSkipDirs, getSkipExtensions, getImportantDirs, getImportantFiles, shouldSkip } from './project.mjs';
+import { rgCommand } from './shell.mjs';
 
 // ─────────────────────────────────────────────────────────────
 // Token Estimation from File Size
@@ -37,12 +38,7 @@ export function estimateTokensFromSize(bytes) {
 let _rgAvailable = null;
 export function isRipgrepAvailable() {
   if (_rgAvailable !== null) return _rgAvailable;
-  try {
-    execSync('rg --version', { stdio: 'ignore' });
-    _rgAvailable = true;
-  } catch {
-    _rgAvailable = false;
-  }
+  _rgAvailable = rgCommand(['--version']) !== null;
   return _rgAvailable;
 }
 
@@ -64,37 +60,29 @@ export function ensureRipgrep() {
 export function listFilesWithRipgrep(dir, options = {}) {
   const { maxDepth } = options;
 
-  try {
-    let cmd = `rg --files --hidden`;
+  const args = ['--files', '--hidden'];
 
-    // Add depth limit if specified
-    if (maxDepth !== undefined) {
-      cmd += ` --max-depth ${maxDepth}`;
-    }
-
-    // Add ignore patterns for common skip dirs
-    const skipDirs = getSkipDirs();
-    for (const skip of skipDirs) {
-      cmd += ` --glob "!${skip}"`;
-    }
-
-    // Add ignore patterns for skip extensions
-    const skipExts = getSkipExtensions();
-    for (const ext of skipExts) {
-      cmd += ` --glob "!*${ext}"`;
-    }
-
-    const output = execSync(cmd, {
-      cwd: dir,
-      encoding: 'utf-8',
-      maxBuffer: 50 * 1024 * 1024, // 50MB buffer for large repos
-      stdio: ['pipe', 'pipe', 'ignore'] // Ignore stderr
-    });
-
-    return output.trim().split('\n').filter(Boolean);
-  } catch {
-    return null; // Fall back to manual traversal
+  // Add depth limit if specified
+  if (maxDepth !== undefined) {
+    args.push('--max-depth', String(maxDepth));
   }
+
+  // Add ignore patterns for common skip dirs
+  const skipDirs = getSkipDirs();
+  for (const skip of skipDirs) {
+    args.push('--glob', `!${skip}`);
+  }
+
+  // Add ignore patterns for skip extensions
+  const skipExts = getSkipExtensions();
+  for (const ext of skipExts) {
+    args.push('--glob', `!*${ext}`);
+  }
+
+  const output = rgCommand(args, { cwd: dir, maxBuffer: 50 * 1024 * 1024 });
+  if (output === null || output === '') return null;
+
+  return output.split('\n').filter(Boolean);
 }
 
 // ─────────────────────────────────────────────────────────────

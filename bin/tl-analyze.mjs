@@ -20,9 +20,10 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
-import { basename, extname, relative, resolve } from 'path';
+import { basename, dirname, extname, join, relative, resolve } from 'path';
+import { fileURLToPath } from 'url';
 import {
   createOutput,
   parseCommonArgs,
@@ -31,6 +32,9 @@ import {
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot } from '../src/project.mjs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const HELP = `
 tl-analyze - Composite file profile
@@ -62,13 +66,15 @@ Examples:
 
 function runSubTool(toolName, filePath) {
   try {
-    const result = execSync(`tl-${toolName} "${filePath}" --json`, {
+    const toolPath = join(__dirname, `tl-${toolName}.mjs`);
+    const proc = spawnSync(process.execPath, [toolPath, filePath, '--json'], {
       encoding: 'utf-8',
       maxBuffer: 5 * 1024 * 1024,
       timeout: 15000,
       stdio: ['pipe', 'pipe', 'pipe']
     });
-    return JSON.parse(result);
+    if (proc.error || proc.status !== 0) return null;
+    return JSON.parse(proc.stdout);
   } catch {
     return null;
   }
