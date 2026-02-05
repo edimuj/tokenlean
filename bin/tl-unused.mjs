@@ -21,14 +21,14 @@ if (process.argv.includes('--prompt')) {
 }
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
-import { join, relative, dirname, basename, extname } from 'path';
+import { join, relative, dirname, basename, extname, resolve } from 'path';
 import { spawnSync } from 'child_process';
 import {
   createOutput,
   parseCommonArgs,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
-import { findProjectRoot, shouldSkip, isCodeFile } from '../src/project.mjs';
+import { findProjectRoot, shouldSkip } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
 
 const HELP = `
@@ -104,7 +104,7 @@ function findCodeFiles(dir, files = [], options = {}) {
 // Export Extraction
 // ─────────────────────────────────────────────────────────────
 
-function extractExports(content, filePath) {
+function extractExports(content) {
   const exports = [];
   const lines = content.split('\n');
 
@@ -152,7 +152,6 @@ function extractExports(content, filePath) {
     const abstractMatch = trimmed.match(/^export\s+abstract\s+class\s+(\w+)/);
     if (abstractMatch) {
       exports.push({ name: abstractMatch[1], line: i + 1 });
-      continue;
     }
   }
 
@@ -262,7 +261,8 @@ function findReferencesWithGrep(name, projectRoot, excludeFile) {
 // Analysis
 // ─────────────────────────────────────────────────────────────
 
-function analyzeUnusedExports(files, projectRoot) {
+function analyzeUnusedExports(files, projectRoot, targetFiles = null) {
+  const checkFiles = targetFiles || files;
   const allImports = {
     named: new Set(),
     files: new Set()
@@ -283,9 +283,9 @@ function analyzeUnusedExports(files, projectRoot) {
   // Second pass: find unused exports
   const unused = [];
 
-  for (const file of files) {
+  for (const file of checkFiles) {
     const content = readFileSync(file, 'utf-8');
-    const exports = extractExports(content, file);
+    const exports = extractExports(content);
     const relPath = relative(projectRoot, file);
 
     for (const exp of exports) {
@@ -327,7 +327,8 @@ function analyzeUnusedExports(files, projectRoot) {
   return unused;
 }
 
-function analyzeUnreferencedFiles(files, projectRoot) {
+function analyzeUnreferencedFiles(files, projectRoot, targetFiles = null) {
+  const checkFiles = targetFiles || files;
   const importedPaths = new Set();
 
   // Collect all imported paths
@@ -352,7 +353,7 @@ function analyzeUnreferencedFiles(files, projectRoot) {
   const unreferenced = [];
   const entryPatterns = ['index.', 'main.', 'app.', 'server.', 'cli.', 'bin/'];
 
-  for (const file of files) {
+  for (const file of checkFiles) {
     const relPath = relative(projectRoot, file);
 
     // Skip likely entry points
@@ -417,22 +418,35 @@ if (options.help) {
 }
 
 if (!existsSync(targetDir)) {
-  console.error(`Directory not found: ${targetDir}`);
+  console.error(`Not found: ${targetDir}`);
   process.exit(1);
 }
 
 const projectRoot = findProjectRoot();
 const out = createOutput(options);
 
-// Find all code files
-const files = findCodeFiles(targetDir, [], { includeTests, ignorePatterns });
+// Handle single file vs directory
+const targetStat = statSync(targetDir);
+let files;
+let allProjectFiles;
 
-if (files.length === 0) {
-  console.error('No code files found');
-  process.exit(1);
+if (targetStat.isFile()) {
+  if (!isCodeExtension(targetDir)) {
+    console.error(`Not a code file: ${targetDir}`);
+    process.exit(1);
+  }
+  files = [resolve(targetDir)];
+  allProjectFiles = findCodeFiles(projectRoot, [], { includeTests, ignorePatterns });
+  out.header(`🔍 Analyzing exports of ${relative(projectRoot, files[0])} against ${allProjectFiles.length} project files...`);
+} else {
+  files = findCodeFiles(targetDir, [], { includeTests, ignorePatterns });
+  allProjectFiles = files;
+  if (files.length === 0) {
+    console.error('No code files found');
+    process.exit(1);
+  }
+  out.header(`🔍 Analyzing ${files.length} files for unused code...`);
 }
-
-out.header(`🔍 Analyzing ${files.length} files for unused code...`);
 out.blank();
 
 const results = {
@@ -442,7 +456,7 @@ const results = {
 
 // Analyze unused exports
 if (!filesOnly) {
-  results.unusedExports = analyzeUnusedExports(files, projectRoot);
+  results.unusedExports = analyzeUnusedExports(allProjectFiles, projectRoot, files);
 
   if (results.unusedExports.length > 0) {
     out.add(`Potentially unused exports (${results.unusedExports.length}):`);
@@ -470,7 +484,7 @@ if (!filesOnly) {
 
 // Analyze unreferenced files
 if (!exportsOnly) {
-  results.unreferencedFiles = analyzeUnreferencedFiles(files, projectRoot);
+  results.unreferencedFiles = analyzeUnreferencedFiles(allProjectFiles, projectRoot, files);
 
   if (results.unreferencedFiles.length > 0) {
     out.add(`Potentially unreferenced files (${results.unreferencedFiles.length}):`);

@@ -10,7 +10,7 @@
  * Token estimation: ~4 chars per token (same as reading content)
  */
 
-import { readdirSync, statSync, existsSync } from 'fs';
+import { readdirSync, statSync, lstatSync, existsSync, realpathSync } from 'fs';
 import { join, relative, basename, extname } from 'path';
 import { execSync } from 'child_process';
 import { getSkipDirs, getSkipExtensions, getImportantDirs, getImportantFiles, shouldSkip } from './project.mjs';
@@ -135,6 +135,8 @@ export function traverseDirectory(rootDir, options = {}) {
   const importantDirs = getImportantDirs();
   const importantFiles = getImportantFiles();
 
+  const visitedDirs = new Set();
+
   function traverse(dirPath, depth) {
     const name = basename(dirPath);
     const isImportant = importantDirs.has(name);
@@ -152,6 +154,15 @@ export function traverseDirectory(rootDir, options = {}) {
 
     if (depth > maxDepth) {
       return result;
+    }
+
+    // Guard against symlink loops by tracking real paths
+    try {
+      const realPath = realpathSync(dirPath);
+      if (visitedDirs.has(realPath)) return result;
+      visitedDirs.add(realPath);
+    } catch {
+      return result; // Broken symlink
     }
 
     let entries;
@@ -178,6 +189,7 @@ export function traverseDirectory(rootDir, options = {}) {
 
       if (entry.isDirectory()) {
         if (skipDirs.has(entry.name)) continue;
+        if (entry.isSymbolicLink()) continue; // Skip symlinked dirs
 
         const childDir = traverse(fullPath, depth + 1);
         result.children.push(childDir);

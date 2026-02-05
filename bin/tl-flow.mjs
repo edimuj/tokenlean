@@ -69,7 +69,7 @@ function findFunctionDefinitions(name, projectRoot, limitPath) {
     ];
 
     const pattern = `(${patterns.join('|')})`;
-    const cmd = `rg -n -g "*.{ts,tsx,js,jsx,mjs}" --no-heading -e "${shellEscape(pattern)}" "${shellEscape(searchPath)}" 2>/dev/null || true`;
+    const cmd = `rg -n -H -g "*.{ts,tsx,js,jsx,mjs}" --no-heading -e "${shellEscape(pattern)}" "${shellEscape(searchPath)}" 2>/dev/null || true`;
 
     const result = execSync(cmd, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
 
@@ -264,16 +264,62 @@ if (!fnName) {
   process.exit(1);
 }
 
+// Parse qualified names: file:method or Class.method syntax
+let parsedFnName = fnName;
+let className = null;
+
+// Handle file:method syntax (e.g., SaveManager.ts:save, src/utils.js:parse)
+const colonIdx = fnName.lastIndexOf(':');
+if (colonIdx > 0) {
+  const possibleFile = fnName.substring(0, colonIdx);
+  const possibleMethod = fnName.substring(colonIdx + 1);
+  if (possibleFile && possibleMethod) {
+    if (!targetFile) targetFile = possibleFile;
+    parsedFnName = possibleMethod;
+  }
+}
+
+// Handle Class.method / object.method syntax (e.g., SaveManager.save)
+const KNOWN_EXTS = new Set(['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'mts', 'json', 'md', 'css', 'html', 'vue', 'svelte']);
+if (parsedFnName === fnName && fnName.includes('.')) {
+  const dotIdx = fnName.lastIndexOf('.');
+  const possibleOwner = fnName.substring(0, dotIdx);
+  const possibleMethod = fnName.substring(dotIdx + 1);
+  if (possibleOwner && possibleMethod && !KNOWN_EXTS.has(possibleMethod.toLowerCase())) {
+    className = possibleOwner;
+    parsedFnName = possibleMethod;
+  }
+}
+
 const projectRoot = findProjectRoot();
 const out = createOutput(options);
 
-out.header(`\n🔀 Call flow: ${fnName}`);
+const displayName = className ? `${className}.${parsedFnName}` : parsedFnName;
+out.header(`\n🔀 Call flow: ${displayName}`);
 
 // Find function definitions
-const definitions = findFunctionDefinitions(fnName, projectRoot, targetFile);
+let definitions = findFunctionDefinitions(parsedFnName, projectRoot, targetFile);
+
+// If class/object name specified, prefer definitions in matching files
+if (className && definitions.length > 0) {
+  const filtered = definitions.filter(def => {
+    const fileName = basename(def.file, extname(def.file));
+    if (fileName === className || fileName.toLowerCase() === className.toLowerCase()) {
+      return true;
+    }
+    try {
+      const content = readFileSync(def.file, 'utf-8');
+      return content.includes(`class ${className}`) ||
+             content.includes(`interface ${className}`) ||
+             content.includes(`const ${className}`) ||
+             content.includes(`${className}.prototype`);
+    } catch { return false; }
+  });
+  if (filtered.length > 0) definitions = filtered;
+}
 
 if (definitions.length === 0) {
-  out.add(`\n  No definition found for "${fnName}"`);
+  out.add(`\n  No definition found for "${displayName}"`);
   out.print();
   process.exit(0);
 }
@@ -287,7 +333,7 @@ for (const def of definitions.slice(0, 5)) {
 
 // Show callers
 if (showCallers) {
-  const callers = findCallers(fnName, projectRoot);
+  const callers = findCallers(parsedFnName, projectRoot);
 
   if (callers.length > 0) {
     out.add('\n⬅️  Called by:');
@@ -307,7 +353,7 @@ if (showCallers) {
 // Show callees
 if (showCallees && definitions.length > 0) {
   const def = definitions[0];
-  const callees = findCallees(def.file, fnName, def.line);
+  const callees = findCallees(def.file, parsedFnName, def.line);
 
   if (callees.length > 0) {
     out.add('\n➡️  Calls:');

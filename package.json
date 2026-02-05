@@ -51,6 +51,7 @@
     "tl-routes": "bin/tl-routes.mjs",
     "tl-schema": "bin/tl-schema.mjs",
     "tl-search": "bin/tl-search.mjs",
+    "tl-snippet": "bin/tl-snippet.mjs",
     "tl-secrets": "bin/tl-secrets.mjs",
     "tl-stack": "bin/tl-stack.mjs",
     "tl-style": "bin/tl-style.mjs",

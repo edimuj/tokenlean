@@ -21,7 +21,7 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { spawn, execSync } from 'child_process';
+import { spawn, execSync, spawnSync } from 'child_process';
 import {
   createOutput,
   parseCommonArgs,
@@ -122,10 +122,8 @@ function runSearch(name, config, rootDir, jsonMode) {
     if (jsonMode) {
       // Capture output for JSON
       try {
-        const result = execSync(`rg ${args.map(a => `"${a}"`).join(' ')}`, {
-          encoding: 'utf-8',
-          cwd: rootDir
-        });
+        const proc = spawnSync('rg', args, { encoding: 'utf-8', cwd: rootDir });
+        const result = proc.stdout || '';
         const files = result.trim().split('\n').filter(Boolean);
         console.log(JSON.stringify({
           pattern: name,
@@ -169,10 +167,10 @@ function runSearch(name, config, rootDir, jsonMode) {
       const cacheKey = { op: 'rg-search-pattern', name, pattern: config.pattern, glob: config.glob };
       const result = withCache(
         cacheKey,
-        () => execSync(`rg ${args.map(a => `"${a}"`).join(' ')} 2>/dev/null || true`, {
-          encoding: 'utf-8',
-          maxBuffer: 10 * 1024 * 1024
-        }),
+        () => {
+          const proc = spawnSync('rg', args, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
+          return proc.stdout || '';
+        },
         { projectRoot: rootDir }
       );
       const matches = result.trim().split('\n')

@@ -5,7 +5,7 @@
 <h1 align="center">tokenlean</h1>
 
 <p align="center">
-  <strong>Lean CLI tools for AI agents — maximum insight, minimum tokens</strong>
+  <strong>39 CLI tools that let AI agents understand codebases without burning tokens</strong>
 </p>
 
 <p align="center">
@@ -16,40 +16,53 @@
 </p>
 
 <p align="center">
-  <a href="#installation">Installation</a> •
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#tools-reference">Tools</a> •
+  <a href="#install">Install</a> •
+  <a href="#quick-reference">Quick Reference</a> •
+  <a href="#all-tools">All Tools</a> •
   <a href="#ai-agent-integration">AI Integration</a> •
-  <a href="#configuration">Configuration</a>
+  <a href="#workflows">Workflows</a> •
+  <a href="#changelog">Changelog</a>
 </p>
 
 ---
 
-## Why tokenlean?
+**Zero dependencies** — only Node.js built-ins, installs in seconds
+&nbsp;&middot;&nbsp;
+**Token-conscious** — every tool outputs only what's needed, nothing more
+&nbsp;&middot;&nbsp;
+**Fast** — ripgrep-powered search with disk caching
+&nbsp;&middot;&nbsp;
+**Universal** — JS/TS first, most tools work with Python and Go too
 
-AI coding assistants are powerful, but they have a fundamental constraint: **context windows**. Every file read, every
-search result consumes tokens. This matters because:
+---
 
-| Problem     | Impact                                |
-|-------------|---------------------------------------|
-| **Cost**    | More tokens = higher API costs        |
-| **Quality** | Overstuffed context = worse responses |
-| **Speed**   | Larger contexts = longer processing   |
-| **Limits**  | Hit the ceiling = lost information    |
+## The Problem
 
-**tokenlean** provides **39 specialized CLI tools** that give you exactly the information needed — no more, no less.
+AI coding assistants are powerful, but every file read and every search result eats context window tokens. That means
+higher costs, worse responses, slower processing, and hitting limits sooner.
 
-```
-Instead of reading a 500-line file    →  tl-exports (~50 tokens)
-Instead of reading all type files     →  tl-types (~100 tokens)
-Instead of guessing impact            →  tl-impact (know for sure)
-```
+tokenlean fixes this:
 
-## Installation
+| Instead of...                             | Use                 | Savings               |
+|-------------------------------------------|---------------------|-----------------------|
+| Reading a 500-line file for signatures    | `tl-symbols`        | **~90% fewer tokens** |
+| Reading all files to find exports         | `tl-exports`        | **~95% fewer tokens** |
+| Guessing what a change might break        | `tl-impact`         | **Know for sure**     |
+| Reading a file to extract one function    | `tl-snippet`        | **~85% fewer tokens** |
+| Running `npm test` and reading all output | `tl-run "npm test"` | **Errors only**       |
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/edimuj/tokenlean/main/assets/demo.gif" alt="tokenlean demo — tl-structure, tl-symbols, and tl-exports in action" width="800" />
+</p>
+
+## Install
 
 ```bash
 npm install -g tokenlean
 ```
+
+Requires **Node.js >= 18**, **[ripgrep](https://github.com/BurntSushi/ripgrep)** for search tools, and **git** for
+history tools.
 
 <details>
 <summary>Development setup</summary>
@@ -62,55 +75,55 @@ npm link
 
 </details>
 
-### Requirements
-
-- **Node.js** >= 18.0.0
-- **ripgrep** (`rg`) — for search-based tools
-- **git** — for history/blame/diff tools
-
-## Quick Start
+## Quick Reference
 
 ```bash
-# Get project overview
-tl-structure
+# EXPLORE — before you read a file
+tl-structure                  # Project overview with token estimates
+tl-context src/api/           # How many tokens will this cost?
+tl-symbols src/utils.ts       # Just the signatures, skip the bodies
+tl-exports src/lib/           # What does it export?
+tl-snippet handleSubmit       # Extract just one function's code
 
-# Check file sizes before reading
-tl-context src/api/
+# ASSESS — before you change a file
+tl-impact src/core/auth.ts    # What depends on this?
+tl-related src/Button.tsx     # Where are the tests?
+tl-complexity src/            # How hairy is it?
 
-# Get function signatures without bodies
-tl-symbols src/utils.ts
+# FIND — search without reading everything
+tl-example useAuth            # Real usage examples
+tl-todo                       # Outstanding TODOs/FIXMEs
+tl-secrets --staged           # Catch secrets before committing
 
-# Understand what a module exports
-tl-exports src/lib/
-
-# Check what would break if you change a file
-tl-impact src/core/auth.ts
+# REVIEW — understand what changed
+tl-diff --staged              # Token-efficient diff summary
+tl-pr feature-branch          # Summarize a branch for review
 ```
+
+Every tool supports `-l N` (limit lines), `-t N` (limit tokens), `-j` (JSON output), `-q` (quiet), and `-h` (help).
 
 ## AI Agent Integration
 
-Add tokenlean instructions to your AI tool's config:
+Add tokenlean instructions to your AI tool's config with a single command:
 
-| AI Tool        | Config File                       | Command                                        |
-|----------------|-----------------------------------|------------------------------------------------|
-| Claude Code    | `CLAUDE.md`                       | `tl-prompt >> CLAUDE.md`                       |
-| Cursor         | `.cursorrules`                    | `tl-prompt --minimal >> .cursorrules`          |
-| GitHub Copilot | `.github/copilot-instructions.md` | `tl-prompt >> .github/copilot-instructions.md` |
-| Windsurf       | `.windsurfrules`                  | `tl-prompt --minimal >> .windsurfrules`        |
+| AI Tool        | Command                                        |
+|----------------|------------------------------------------------|
+| Claude Code    | `tl-prompt >> CLAUDE.md`                       |
+| Cursor         | `tl-prompt --minimal >> .cursorrules`          |
+| GitHub Copilot | `tl-prompt >> .github/copilot-instructions.md` |
+| Windsurf       | `tl-prompt --minimal >> .windsurfrules`        |
 
-The `--minimal` flag produces a compact version that uses fewer tokens.
+## All Tools
 
-## Tools Reference
-
-### Before Reading Files
-
-Understand code structure without reading full implementations.
+<details open>
+<summary><strong>Before Reading Files</strong> — understand structure without reading implementations</summary>
 
 | Tool           | Description                              | Example                   |
 |----------------|------------------------------------------|---------------------------|
 | `tl-structure` | Project overview with token estimates    | `tl-structure src/`       |
 | `tl-context`   | Estimate token usage for files/dirs      | `tl-context src/api/`     |
 | `tl-symbols`   | Function/class signatures without bodies | `tl-symbols src/utils.ts` |
+| `tl-snippet`   | Extract function/class body by name      | `tl-snippet handleSubmit` |
 | `tl-types`     | Full TypeScript type definitions         | `tl-types src/types/`     |
 | `tl-exports`   | Public API surface of a module           | `tl-exports src/lib/`     |
 | `tl-component` | React component analyzer (props, hooks)  | `tl-component Button.tsx` |
@@ -119,9 +132,10 @@ Understand code structure without reading full implementations.
 | `tl-schema`    | Extract DB schema from ORMs/migrations   | `tl-schema`               |
 | `tl-stack`     | Auto-detect project technology stack     | `tl-stack`                |
 
-### Before Modifying Files
+</details>
 
-Understand dependencies and impact before making changes.
+<details>
+<summary><strong>Before Modifying Files</strong> — understand dependencies and impact</summary>
 
 | Tool            | Description                                 | Example                             |
 |-----------------|---------------------------------------------|-------------------------------------|
@@ -133,9 +147,10 @@ Understand dependencies and impact before making changes.
 | `tl-complexity` | Code complexity metrics                     | `tl-complexity src/ --threshold 10` |
 | `tl-style`      | Detect coding conventions from code         | `tl-style src/`                     |
 
-### Understanding History
+</details>
 
-Track changes and authorship efficiently.
+<details>
+<summary><strong>Understanding History</strong> — track changes and authorship</summary>
 
 | Tool           | Description                      | Example                  |
 |----------------|----------------------------------|--------------------------|
@@ -146,9 +161,10 @@ Track changes and authorship efficiently.
 | `tl-pr`        | Summarize PR/branch for review   | `tl-pr feature-branch`   |
 | `tl-changelog` | Generate changelog from commits  | `tl-changelog --from v1` |
 
-### Finding Things
+</details>
 
-Search and discover code patterns.
+<details>
+<summary><strong>Finding Things</strong> — search and discover code patterns</summary>
 
 | Tool         | Description                        | Example                  |
 |--------------|------------------------------------|--------------------------|
@@ -162,7 +178,10 @@ Search and discover code patterns.
 | `tl-routes`  | Extract routes from web frameworks | `tl-routes app/`         |
 | `tl-npm`     | Quick npm package lookup/compare   | `tl-npm express fastify` |
 
-### Utilities
+</details>
+
+<details>
+<summary><strong>Utilities</strong></summary>
 
 | Tool            | Description                              | Example                     |
 |-----------------|------------------------------------------|-----------------------------|
@@ -170,59 +189,16 @@ Search and discover code patterns.
 | `tl-config`     | Show/manage configuration                | `tl-config --init`          |
 | `tl-context7`   | Look up library docs via Context7 API    | `tl-context7 react "hooks"` |
 | `tl-name`       | Check name availability (npm/GH/domains) | `tl-name myproject -s`      |
-| `tl-npm`        | Quick npm package lookup/compare         | `tl-npm express fastify`    |
 | `tl-playwright` | Headless browser content extraction      | `tl-playwright example.com` |
 | `tl-prompt`     | Generate AI agent instructions           | `tl-prompt --minimal`       |
 | `tl-run`        | Smart command runner with summaries      | `tl-run "npm test"`         |
 
-## Common Options
-
-All tools support these flags:
-
-```
--l N, --max-lines N    Limit output to N lines
--t N, --max-tokens N   Limit output to ~N tokens
--j, --json             Output as JSON (for piping)
--q, --quiet            Minimal output (no headers/stats)
--h, --help             Show help
-```
+</details>
 
 ## Configuration
 
-Create `.tokenleanrc.json` in your project root or `~/.tokenleanrc.json` globally:
-
-```json
-{
-  "output": {
-    "maxLines": 100,
-    "maxTokens": null
-  },
-  "skipDirs": [
-    "generated",
-    "vendor"
-  ],
-  "skipExtensions": [
-    ".gen.ts"
-  ],
-  "importantDirs": [
-    "domain",
-    "core"
-  ],
-  "importantFiles": [
-    "ARCHITECTURE.md"
-  ],
-  "searchPatterns": {
-    "hooks": {
-      "description": "Find React hooks",
-      "pattern": "use[A-Z]\\w+",
-      "glob": "**/*.{ts,tsx}"
-    }
-  }
-}
-```
-
 <details>
-<summary>Full configuration reference</summary>
+<summary>Create <code>.tokenleanrc.json</code> in your project root or <code>~/.tokenleanrc.json</code> globally</summary>
 
 ```json
 {
@@ -270,7 +246,8 @@ Config values extend built-in defaults (they don't replace them).
 
 </details>
 
-## Caching
+<details>
+<summary>Caching</summary>
 
 tokenlean caches expensive ripgrep operations with **git-based invalidation** — automatically invalidates on commits or
 file changes.
@@ -283,7 +260,9 @@ tl-cache clear-all  # Clear all cached data
 
 Disable with `TOKENLEAN_CACHE=0` or in config: `{"cache":{"enabled":false}}`
 
-## Example Workflows
+</details>
+
+## Workflows
 
 <details>
 <summary><strong>Starting on an unfamiliar codebase</strong></summary>
@@ -363,7 +342,7 @@ tl-pr --full                       # Include files, stats, commits
 
 ```bash
 tl-changelog --unreleased          # What's new since last tag
-tl-changelog v0.1.0..v0.2.0        # Between versions
+tl-changelog v0.1.0..v0.2.0       # Between versions
 tl-changelog --format compact      # Quick summary
 ```
 
@@ -398,7 +377,6 @@ tl-run "npm test" -j               # Structured JSON output
 ```bash
 tl-context7 react "useEffect"      # Look up React docs
 tl-context7 nextjs "app router"    # Next.js docs
-tl-context7 express -s             # Search for library
 tl-npm lodash --deps               # Check package dependencies
 tl-npm chalk --versions            # Version history
 ```
@@ -426,7 +404,7 @@ tl-playwright example.com --eval "title"  # Evaluate JS expression
 5. **Fast** — No heavy parsing or external services
 6. **Universal** — Works with JS/TS projects, most tools support Python/Go too
 
-## Other tools for Claude Code
+## Other Tools for Claude Code
 
 | Project                                                                | Description                                                                    |
 |------------------------------------------------------------------------|--------------------------------------------------------------------------------|
@@ -434,9 +412,14 @@ tl-playwright example.com --eval "title"  # Evaluate JS expression
 | [claude-simple-status](https://github.com/edimuj/claude-simple-status) | Minimal statusline showing model, context usage, and quota                     |
 | [vexscan-claude-code](https://github.com/edimuj/vexscan-claude-code)   | Security scanner protecting against untrusted plugins, skills, MCPs, and hooks |
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for a full list of changes in each release.
+
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on adding tools, code style, and
+submitting PRs.
 
 ## License
 

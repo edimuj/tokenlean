@@ -25,6 +25,7 @@ import {
   createOutput,
   parseCommonArgs,
   formatTokens,
+  shellEscape,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 
@@ -140,7 +141,7 @@ let diffCmd = 'git diff';
 if (staged) {
   diffCmd += ' --cached';
 } else if (ref) {
-  diffCmd += ` ${ref}`;
+  diffCmd += ` ${shellEscape(ref)}`;
 }
 diffCmd += ' --stat=200';
 

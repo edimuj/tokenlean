@@ -232,7 +232,7 @@ const consumedIndices = new Set();
 for (let i = 0; i < options.remaining.length; i++) {
   const arg = options.remaining[i];
   if ((arg === '--days' || arg === '-d') && options.remaining[i + 1]) {
-    days = parseInt(options.remaining[i + 1], 10);
+    days = Math.max(1, parseInt(options.remaining[i + 1], 10) || 90);
     consumedIndices.add(i);
     consumedIndices.add(i + 1);
     i++;
