@@ -37,7 +37,7 @@ search result consumes tokens. This matters because:
 | **Speed**   | Larger contexts = longer processing   |
 | **Limits**  | Hit the ceiling = lost information    |
 
-**tokenlean** provides **32 specialized CLI tools** that give you exactly the information needed — no more, no less.
+**tokenlean** provides **39 specialized CLI tools** that give you exactly the information needed — no more, no less.
 
 ```
 Instead of reading a 500-line file    →  tl-exports (~50 tokens)
@@ -117,6 +117,7 @@ Understand code structure without reading full implementations.
 | `tl-docs`      | Extract JSDoc/TSDoc documentation        | `tl-docs src/utils/`      |
 | `tl-entry`     | Find entry points and main files         | `tl-entry src/`           |
 | `tl-schema`    | Extract DB schema from ORMs/migrations   | `tl-schema`               |
+| `tl-stack`     | Auto-detect project technology stack     | `tl-stack`                |
 
 ### Before Modifying Files
 
@@ -130,6 +131,7 @@ Understand dependencies and impact before making changes.
 | `tl-flow`       | Call graph — what calls this, what it calls | `tl-flow src/utils.ts`              |
 | `tl-coverage`   | Test coverage info for files                | `tl-coverage src/`                  |
 | `tl-complexity` | Code complexity metrics                     | `tl-complexity src/ --threshold 10` |
+| `tl-style`      | Detect coding conventions from code         | `tl-style src/`                     |
 
 ### Understanding History
 
@@ -150,6 +152,7 @@ Search and discover code patterns.
 
 | Tool         | Description                        | Example                  |
 |--------------|------------------------------------|--------------------------|
+| `tl-example` | Find diverse usage examples        | `tl-example useAuth`     |
 | `tl-search`  | Run pre-defined search patterns    | `tl-search hooks`        |
 | `tl-secrets` | Find hardcoded secrets & API keys  | `tl-secrets --staged`    |
 | `tl-todo`    | Find TODOs/FIXMEs in codebase      | `tl-todo src/`           |
@@ -157,15 +160,20 @@ Search and discover code patterns.
 | `tl-unused`  | Find unused exports/files          | `tl-unused src/`         |
 | `tl-api`     | Extract REST/GraphQL endpoints     | `tl-api src/routes/`     |
 | `tl-routes`  | Extract routes from web frameworks | `tl-routes app/`         |
+| `tl-npm`     | Quick npm package lookup/compare   | `tl-npm express fastify` |
 
 ### Utilities
 
-| Tool        | Description                      | Example                |
-|-------------|----------------------------------|------------------------|
-| `tl-cache`  | Manage ripgrep result cache      | `tl-cache stats`       |
-| `tl-config` | Show/manage configuration        | `tl-config --init`     |
-| `tl-name`   | Check name availability (npm/GH) | `tl-name myproject -s` |
-| `tl-prompt` | Generate AI agent instructions   | `tl-prompt --minimal`  |
+| Tool            | Description                              | Example                     |
+|-----------------|------------------------------------------|-----------------------------|
+| `tl-cache`      | Manage ripgrep result cache              | `tl-cache stats`            |
+| `tl-config`     | Show/manage configuration                | `tl-config --init`          |
+| `tl-context7`   | Look up library docs via Context7 API    | `tl-context7 react "hooks"` |
+| `tl-name`       | Check name availability (npm/GH/domains) | `tl-name myproject -s`      |
+| `tl-npm`        | Quick npm package lookup/compare         | `tl-npm express fastify`    |
+| `tl-playwright` | Headless browser content extraction      | `tl-playwright example.com` |
+| `tl-prompt`     | Generate AI agent instructions           | `tl-prompt --minimal`       |
+| `tl-run`        | Smart command runner with summaries      | `tl-run "npm test"`         |
 
 ## Common Options
 
@@ -367,7 +375,44 @@ tl-changelog --format compact      # Quick summary
 ```bash
 tl-name coolproject awesomelib     # Check npm, GitHub, domains
 tl-name myapp -s                   # Suggest variations if taken
-tl-name myapp --tld io             # Check .io domain
+tl-npm express fastify koa         # Compare framework options
+```
+
+</details>
+
+<details>
+<summary><strong>Running commands efficiently</strong></summary>
+
+```bash
+tl-run "npm test"                  # Summarize test results
+tl-run "npm run build"             # Extract build errors only
+tl-run "eslint src/"               # Summarize lint violations
+tl-run "npm test" -j               # Structured JSON output
+```
+
+</details>
+
+<details>
+<summary><strong>Looking up documentation</strong></summary>
+
+```bash
+tl-context7 react "useEffect"      # Look up React docs
+tl-context7 nextjs "app router"    # Next.js docs
+tl-context7 express -s             # Search for library
+tl-npm lodash --deps               # Check package dependencies
+tl-npm chalk --versions            # Version history
+```
+
+</details>
+
+<details>
+<summary><strong>Extracting web content</strong></summary>
+
+```bash
+tl-playwright example.com                 # Extract page text
+tl-playwright example.com -s "h1,h2,h3"  # Extract headings only
+tl-playwright example.com --screenshot p  # Save screenshot
+tl-playwright example.com --eval "title"  # Evaluate JS expression
 ```
 
 </details>
