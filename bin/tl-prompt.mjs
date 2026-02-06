@@ -95,12 +95,19 @@ Use these tools to explore the codebase efficiently and save context tokens.
   }
 
   output += `
+### Rules
+
+- **Before reading a source file**, run \`tl-symbols <file>\` first to see signatures. Only read the full file if you need implementation details.
+- **Before modifying a file**, run \`tl-impact <file>\` to understand what depends on it and what might break.
+- **Before committing**, run \`tl-guard\` to catch secrets, new TODOs, unused exports, and circular dependencies.
+- **When running tests, builds, or linters**, wrap with \`tl-run "<command>"\` instead of running directly — it extracts only errors and key output.
+- **When exploring an unfamiliar codebase**, start with \`tl-structure\` then \`tl-stack\` before diving into files.
+- **Before reading a large file**, check \`tl-context <file>\` — if it's over 1000 tokens, use \`tl-symbols\` or \`tl-snippet <name>\` instead.
+
 ### Tips
 
-- Prefer \`tl-symbols\` over reading entire files when you only need signatures
-- Use \`tl-impact\` before refactoring to understand dependencies
-- Check \`tl-context\` to avoid reading unnecessarily large files
-- All tools support \`--help\` for more options
+- All tools support \`-j\` (JSON), \`-q\` (quiet), \`-l N\` (limit lines), \`-t N\` (limit tokens), and \`--help\`
+- Use \`tl-analyze <file>\` for a composite profile (symbols + deps + impact + complexity + related) in one call
 `;
 
   return output;
@@ -120,7 +127,13 @@ function generateMinimal(tools) {
   }
 
   lines.push('');
-  lines.push('Prefer `tl-symbols` over reading full files. Use `--help` on any command.');
+  lines.push('Rules:');
+  lines.push('- Before reading a source file, run `tl-symbols <file>` first. Only read the full file if you need implementation details.');
+  lines.push('- Before modifying a file, run `tl-impact <file>` to check what depends on it.');
+  lines.push('- Before committing, run `tl-guard` to catch secrets, TODOs, unused exports, and circular deps.');
+  lines.push('- Wrap test/build/lint commands with `tl-run "<cmd>"` for token-efficient output.');
+  lines.push('- For large files (>1000 tokens), use `tl-symbols` or `tl-snippet <name>` instead of reading.');
+  lines.push('- All tools support `-j` (JSON), `-q` (quiet), `-l N` (limit lines), `--help`.');
 
   return lines.join('\n');
 }

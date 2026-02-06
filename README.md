@@ -19,6 +19,7 @@
   <a href="#install">Install</a> •
   <a href="#quick-reference">Quick Reference</a> •
   <a href="#all-tools">All Tools</a> •
+  <a href="#language-support">Language Support</a> •
   <a href="#ai-agent-integration">AI Integration</a> •
   <a href="#workflows">Workflows</a> •
   <a href="#changelog">Changelog</a>
@@ -78,26 +79,20 @@ npm link
 ## Quick Reference
 
 ```bash
-# EXPLORE — before you read a file
-tl-structure                  # Project overview with token estimates
-tl-context src/api/           # How many tokens will this cost?
-tl-symbols src/utils.ts       # Just the signatures, skip the bodies
-tl-exports src/lib/           # What does it export?
-tl-snippet handleSubmit       # Extract just one function's code
+# What's in this file?           tl-symbols src/auth.ts
+# Extract just one function      tl-snippet handleSubmit
+# What does this module export?  tl-exports src/lib/
+# How many tokens will this cost? tl-context src/api/
+# What's the project shape?      tl-structure
 
-# ASSESS — before you change a file
-tl-impact src/core/auth.ts    # What depends on this?
-tl-related src/Button.tsx     # Where are the tests?
-tl-complexity src/            # How hairy is it?
+# What depends on this file?     tl-impact src/auth.ts
+# How complex is this code?      tl-complexity src/auth.ts
+# Where are the tests?           tl-related src/Button.tsx
 
-# FIND — search without reading everything
-tl-example useAuth            # Real usage examples
-tl-todo                       # Outstanding TODOs/FIXMEs
-tl-secrets --staged           # Catch secrets before committing
-
-# REVIEW — understand what changed
-tl-diff --staged              # Token-efficient diff summary
-tl-pr feature-branch          # Summarize a branch for review
+# What changed recently?         tl-diff --staged
+# Is it safe to commit?          tl-guard
+# Find real usage examples       tl-example useAuth
+# What's the tech stack?         tl-stack
 ```
 
 Every tool supports `-l N` (limit lines), `-t N` (limit tokens), `-j` (JSON output), `-q` (quiet), and `-h` (help).
@@ -195,6 +190,29 @@ Add tokenlean instructions to your AI tool's config with a single command:
 | `tl-run`        | Smart command runner with summaries      | `tl-run "npm test"`         |
 
 </details>
+
+## Language Support
+
+Code analysis tools are JS/TS-first, but many work across languages. Git-based and search tools work with any language.
+
+|                 | JS/TS | Python | Go | Any language |
+|-----------------|:-----:|:------:|:--:|:------------:|
+| `tl-symbols`    |   ✓   |   ✓    | ✓  |      ◐       |
+| `tl-snippet`    |   ✓   |   ✓    | ✓  |      ◐       |
+| `tl-exports`    |   ✓   |   ◐    | ◐  |      -       |
+| `tl-deps`       |   ✓   |   ✓    | ✓  |      -       |
+| `tl-impact`     |   ✓   |   ✓    | ✓  |      -       |
+| `tl-complexity` |   ✓   |   ✓    | ✓  |      -       |
+| `tl-flow`       |   ✓   |   ◐    | ◐  |      -       |
+| `tl-docs`       |   ✓   |   ◐    | ◐  |      -       |
+| `tl-types`      |   ✓   |   -    | -  |      -       |
+| `tl-component`  |   ✓   |   -    | -  |      -       |
+| `tl-style`      |   ✓   |   -    | -  |      -       |
+| `tl-routes`     |   ✓   |   ◐    | -  |      -       |
+
+**✓** full support &nbsp; **◐** partial (basic patterns, may miss language-specific constructs) &nbsp; **-** not supported
+
+Tools not listed (tl-structure, tl-search, tl-diff, tl-todo, tl-secrets, tl-guard, tl-blame, tl-history, tl-hotspots, tl-example, tl-env, tl-run, etc.) are language-agnostic and work with any codebase.
 
 ## Configuration
 
@@ -404,6 +422,12 @@ tl-playwright example.com --eval "title"  # Evaluate JS expression
 4. **Composable** — Tools work together with JSON output for piping
 5. **Fast** — No heavy parsing or external services
 6. **Universal** — Works with JS/TS projects, most tools support Python/Go too
+
+## When NOT to Use tokenlean
+
+- **Non-AI workflows** — if you're not constrained by context windows, standard tools work fine
+- **Very small codebases** (<5K LOC) — you can read everything directly without token pressure
+- **Languages beyond JS/TS/Python/Go** — code analysis tools are JS/TS-first; git/search tools still work everywhere, but `tl-symbols`, `tl-deps`, etc. may miss language-specific constructs (see [Language Support](#language-support))
 
 ## Other Tools for Claude Code
 
