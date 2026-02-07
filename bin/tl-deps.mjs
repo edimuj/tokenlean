@@ -31,6 +31,7 @@ import {
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot, detectLanguage } from '../src/project.mjs';
+import { extractGenericImports } from '../src/generic-lang.mjs';
 
 const HELP = `
 tl-deps - Show what a file imports/depends on
@@ -54,6 +55,8 @@ Categories:
   📁 local     - relative imports (./file, ../file)
   🔧 builtin   - Node.js built-in modules
   🎨 assets    - CSS, images, etc.
+
+Other languages: generic regex-based import extraction (flat list, no categorization)
 `;
 
 // Node.js built-in modules
@@ -431,15 +434,37 @@ const projectRoot = findProjectRoot();
 const relPath = relative(projectRoot, resolvedPath);
 const content = readFileSync(resolvedPath, 'utf-8');
 const lang = detectLanguage(resolvedPath);
-
-if (!lang) {
-  console.error(`Unsupported file type: ${extname(resolvedPath)}`);
-  process.exit(1);
-}
+const isGeneric = !lang || !['javascript', 'typescript', 'python', 'go'].includes(lang);
 
 const out = createOutput(options);
 
-if (treeMode) {
+if (isGeneric) {
+  // Generic fallback — flat import list, no categorization, no tree
+  const { imports } = extractGenericImports(content);
+
+  if (treeMode) {
+    out.add('Tree mode not available for generic extraction.');
+    out.blank();
+  }
+
+  out.header(`\n⚠ Generic extraction (no dedicated ${extname(resolvedPath)} parser)`);
+  out.header(`\n📥 Dependencies: ${relPath}`);
+  out.header(`   ${imports.length} imports found`);
+  out.blank();
+
+  if (imports.length > 0) {
+    out.add(`Imports (${imports.length}):`);
+    for (const imp of imports) {
+      out.add(`   ${imp.spec} :${imp.line}`);
+    }
+    out.blank();
+  }
+
+  out.setData('file', relPath);
+  out.setData('imports', imports);
+  out.setData('totalImports', imports.length);
+  out.setData('generic', true);
+} else if (treeMode) {
   // Tree mode
   out.header(`\n🌳 Dependency tree: ${relPath}`);
   out.header(`   Max depth: ${maxDepth}`);

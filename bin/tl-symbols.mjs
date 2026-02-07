@@ -30,6 +30,7 @@ import {
   formatTokens,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
+import { extractGenericSymbols } from '../src/generic-lang.mjs';
 
 const HELP = `
 tl-symbols - Extract function/class/type signatures without bodies
@@ -50,6 +51,7 @@ Supported languages:
   JavaScript/TypeScript (.js, .ts, .jsx, .tsx, .mjs)
   Python (.py)
   Go (.go)
+  Other languages: generic regex-based extraction (best-effort)
 `;
 
 // ─────────────────────────────────────────────────────────────
@@ -355,6 +357,40 @@ function formatSymbols(symbols, lang, out) {
       symbols.functions.forEach(f => out.add('  ' + f));
       out.blank();
     }
+  } else {
+    // Generic fallback format
+    if (symbols.modules?.length > 0) {
+      out.add('Modules:');
+      symbols.modules.forEach(m => out.add('  ' + m));
+      out.blank();
+    }
+
+    if (symbols.classes?.length > 0) {
+      out.add('Classes/Structs:');
+      for (const cls of symbols.classes) {
+        out.add('  ' + cls.signature);
+        cls.methods.forEach(m => out.add('    ' + m));
+      }
+      out.blank();
+    }
+
+    if (symbols.functions?.length > 0) {
+      out.add('Functions:');
+      symbols.functions.forEach(f => out.add('  ' + f));
+      out.blank();
+    }
+
+    if (symbols.types?.length > 0) {
+      out.add('Types:');
+      symbols.types.forEach(t => out.add('  ' + t));
+      out.blank();
+    }
+
+    if (symbols.constants?.length > 0) {
+      out.add('Constants:');
+      symbols.constants.forEach(c => out.add('  ' + c));
+      out.blank();
+    }
   }
 }
 
@@ -368,6 +404,7 @@ function countSymbols(symbols) {
   if (symbols.functions) count += symbols.functions.length;
   if (symbols.types) count += symbols.types.length;
   if (symbols.constants) count += symbols.constants.length;
+  if (symbols.modules) count += symbols.modules.length;
   return count;
 }
 
@@ -391,16 +428,12 @@ if (!existsSync(filePath)) {
 }
 
 const lang = detectLanguage(filePath);
-if (!lang) {
-  console.error(`Unsupported file type: ${extname(filePath)}`);
-  console.error('Supported: .js, .ts, .jsx, .tsx, .mjs, .py, .go');
-  process.exit(1);
-}
 
 const content = readFileSync(filePath, 'utf-8');
 const fullFileTokens = estimateTokens(content);
 
 let symbols;
+let isGeneric = false;
 switch (lang) {
   case 'js':
     symbols = extractJsSymbols(content, exportsOnly);
@@ -411,6 +444,10 @@ switch (lang) {
   case 'go':
     symbols = extractGoSymbols(content);
     break;
+  default:
+    symbols = extractGenericSymbols(content);
+    isGeneric = true;
+    break;
 }
 
 const symbolCount = countSymbols(symbols);
@@ -418,16 +455,20 @@ const out = createOutput(options);
 
 // Set JSON data
 out.setData('file', basename(filePath));
-out.setData('language', lang);
+out.setData('language', lang || 'generic');
 out.setData('symbolCount', symbolCount);
 out.setData('fullFileTokens', fullFileTokens);
 out.setData('symbols', symbols);
+if (isGeneric) out.setData('generic', true);
 
 // Build text output
+if (isGeneric) {
+  out.header(`\n⚠ Generic extraction (no dedicated ${extname(filePath)} parser)`);
+}
 out.header(`\n📦 ${basename(filePath)} (${symbolCount} symbols)`);
 out.header(`   Full file: ~${formatTokens(fullFileTokens)} tokens → Symbols only: ~${formatTokens(Math.ceil(symbolCount * 15))} tokens`);
 out.blank();
 
-formatSymbols(symbols, lang, out);
+formatSymbols(symbols, isGeneric ? 'generic' : lang, out);
 
 out.print();

@@ -71,12 +71,19 @@ function findDefinitions(name, searchPath) {
     `(?:export\\s+)?interface\\s+${name}`,       // interface Name
     `(?:export\\s+)?type\\s+${name}\\s*[=<]`,    // type Name =
     `(?:export\\s+)?enum\\s+${name}`,            // enum Name
+    `(?:pub(?:\\([^)]*\\))?\\s+)?fn\\s+${name}\\s*[(<]`,  // Rust: fn name( / pub fn name(
+    `def\\s+${name}\\s*[(<]`,                    // Ruby/Python: def name(
+    `(?:pub(?:\\([^)]*\\))?\\s+)?struct\\s+${name}`,  // Rust: struct Name
+    `(?:pub(?:\\([^)]*\\))?\\s+)?trait\\s+${name}`,   // Rust: trait Name
+    `impl(?:\\s+\\w+\\s+for)?\\s+${name}`,       // Rust: impl Name / impl Trait for Name
+    `(?:public|private|protected)?\\s*(?:static\\s+)?(?:class|interface)\\s+${name}`, // Java/C#/Kotlin
+    `func\\s+${name}\\s*[(<]`,                   // Go/Swift: func name(
   ];
 
   const pattern = `(${patterns.join('|')})`;
   const defs = [];
 
-  const result = rgCommand(['-n', '-H', '--glob', '*.{ts,tsx,js,jsx,mjs,cjs,py,go}', '--no-heading', '-e', pattern, searchPath]);
+  const result = rgCommand(['-n', '-H', '--glob', '*.{ts,tsx,js,jsx,mjs,cjs,py,go,rs,rb,java,kt,swift,c,cpp,h,hpp,cs,php,scala,ex,exs,lua,zig,nim}', '--no-heading', '-e', pattern, searchPath]);
 
   if (result) {
     for (const line of result.split('\n')) {

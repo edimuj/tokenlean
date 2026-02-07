@@ -30,6 +30,7 @@ import {
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot, shouldSkip } from '../src/project.mjs';
+import { extractGenericSymbols } from '../src/generic-lang.mjs';
 
 const HELP = `
 tl-exports - Show public API surface of a module
@@ -51,6 +52,7 @@ Examples:
   tl-exports src/ -j               # JSON output
 
 Supported: JavaScript, TypeScript, Python, Go
+Other languages: generic extraction of pub/export/public symbols (best-effort)
 `;
 
 // ─────────────────────────────────────────────────────────────
@@ -315,6 +317,51 @@ function extractGoExports(content) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Generic Export Extraction (from generic symbols)
+// ─────────────────────────────────────────────────────────────
+
+function extractGenericExports(symbols) {
+  const EXPORT_RE = /^(?:pub(?:\([^)]*\))?\s+|export\s+|public\s+)/;
+
+  const exports = {
+    types: [],
+    functions: [],
+    classes: [],
+    constants: []
+  };
+
+  for (const cls of symbols.classes || []) {
+    if (EXPORT_RE.test(cls.signature)) {
+      const name = cls.signature.match(/(?:class|struct|interface|trait|enum|union|impl)\s+(\w+)/)?.[1] || cls.signature;
+      exports.classes.push({ name, signature: cls.signature });
+    }
+  }
+
+  for (const fn of symbols.functions || []) {
+    if (EXPORT_RE.test(fn)) {
+      const name = fn.match(/(?:fn|func|function|def|fun)\s+(\w+)/)?.[1] || fn;
+      exports.functions.push({ name, signature: fn });
+    }
+  }
+
+  for (const t of symbols.types || []) {
+    if (EXPORT_RE.test(t)) {
+      const name = t.match(/(?:type|typedef|using|newtype|typealias)\s+(\w+)/)?.[1] || t;
+      exports.types.push({ name, kind: 'type', signature: t });
+    }
+  }
+
+  for (const c of symbols.constants || []) {
+    if (EXPORT_RE.test(c)) {
+      const name = c.match(/(?:const|static|val)\s+(\w+)/)?.[1] || c;
+      exports.constants.push({ name });
+    }
+  }
+
+  return exports;
+}
+
+// ─────────────────────────────────────────────────────────────
 // File Discovery
 // ─────────────────────────────────────────────────────────────
 
@@ -522,6 +569,7 @@ for (const filePath of files) {
   const relPath = relative(projectRoot, filePath);
 
   let exports;
+  let isGeneric = false;
   switch (lang) {
     case 'js':
       exports = extractJsExports(content, withSignatures);
@@ -532,8 +580,15 @@ for (const filePath of files) {
     case 'go':
       exports = extractGoExports(content);
       break;
-    default:
-      continue;
+    default: {
+      // For directories, silently skip unsupported files
+      if (files.length > 1) continue;
+      // For single-file mode, fall back to generic extraction
+      const syms = extractGenericSymbols(content);
+      exports = extractGenericExports(syms);
+      isGeneric = true;
+      break;
+    }
   }
 
   // Count exports
@@ -546,10 +601,10 @@ for (const filePath of files) {
   count += exports.variables?.length || 0;
   exports.reexports?.forEach(r => count += r.names.length);
 
-  if (count === 0) continue;
+  if (count === 0 && !isGeneric) continue;
 
   totalExports += count;
-  allFileExports.push({ file: relPath, exports, count });
+  allFileExports.push({ file: relPath, exports, count, isGeneric });
 }
 
 // Set JSON data
@@ -562,7 +617,11 @@ if (treeMode) {
   out.blank();
   formatAsTree(allFileExports, out, projectRoot);
 } else {
-  for (const { file, exports, count } of allFileExports) {
+  for (const { file, exports, count, isGeneric: gen } of allFileExports) {
+    if (gen) {
+      out.header(`⚠ Generic extraction (no dedicated ${extname(file)} parser) — showing pub/export/public symbols`);
+      out.blank();
+    }
     if (allFileExports.length > 1) {
       out.add(`📦 ${file} (${count} exports)`);
     } else {
