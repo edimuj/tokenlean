@@ -593,6 +593,30 @@ function main() {
     out.addLines(summary.lines);
   }
 
+  // Fallback: when exit != 0 and the summarizer extracted no details,
+  // show raw stderr/output so the agent can diagnose the actual error.
+  if (result.exitCode !== 0 && type !== 'generic') {
+    const hasDetails = (type === 'test' && summary.failures.length > 0) ||
+                       (type === 'build' && summary.errors.length > 0) ||
+                       (type === 'lint' && summary.violations.length > 0);
+
+    if (!hasDetails) {
+      const stderrLines = result.stderr.trim().split('\n').filter(l => l.trim());
+      const stdoutLines = result.stdout.trim().split('\n').filter(l => l.trim());
+
+      out.blank();
+      if (stderrLines.length > 0) {
+        out.add('stderr:');
+        out.addLines(stderrLines.slice(-30));
+        if (stderrLines.length > 30) out.add(`... ${stderrLines.length - 30} earlier lines omitted`);
+      }
+      if (stdoutLines.length > 0 && stderrLines.length < 5) {
+        out.add('output (last lines):');
+        out.addLines(stdoutLines.slice(-20));
+      }
+    }
+  }
+
   // JSON output data
   if (opts.json) {
     out.setData('command', command);
