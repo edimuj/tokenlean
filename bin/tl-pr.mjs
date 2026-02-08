@@ -430,33 +430,33 @@ if (isPR && prInfo) {
   out.header(`PR #${target}: ${prInfo.title}`);
   out.add(`Author: ${prInfo.author?.login || 'unknown'} | State: ${prInfo.state}`);
 } else {
-  out.header(`${branch} → ${baseBranch}`);
+  out.header(`${branch} -> ${baseBranch}`);
 }
 out.blank();
 
 // Summary
-out.add(`📊 Summary`);
+out.add(`Summary`);
 out.add(`   ${commits.length} commits | ${allFiles.length} files | +${totalAdditions} -${totalDeletions} lines`);
 out.add(`   Review size: ~${formatTokens(reviewTokens)} tokens`);
 out.blank();
 
 // Change types
 const typeLabels = [];
-if (changeTypes.breaking) typeLabels.push('⚠️ BREAKING');
-if (changeTypes.feature) typeLabels.push('✨ Feature');
-if (changeTypes.fix) typeLabels.push('🐛 Fix');
-if (changeTypes.refactor) typeLabels.push('♻️ Refactor');
-if (changeTypes.docs) typeLabels.push('📝 Docs');
-if (changeTypes.test) typeLabels.push('🧪 Tests');
-if (changeTypes.chore) typeLabels.push('🔧 Chore');
+if (changeTypes.breaking) typeLabels.push('! BREAKING');
+if (changeTypes.feature) typeLabels.push('Feature');
+if (changeTypes.fix) typeLabels.push('Fix');
+if (changeTypes.refactor) typeLabels.push('Refactor');
+if (changeTypes.docs) typeLabels.push('Docs');
+if (changeTypes.test) typeLabels.push('Tests');
+if (changeTypes.chore) typeLabels.push('Chore');
 
 if (typeLabels.length > 0) {
-  out.add(`🏷️  ${typeLabels.join(' | ')}`);
+  out.add(` ${typeLabels.join(' | ')}`);
   out.blank();
 }
 
 // File breakdown
-out.add(`📁 Files Changed`);
+out.add(`Files Changed`);
 if (changedFiles.added.length > 0) out.add(`   Added:    ${changedFiles.added.length}`);
 if (changedFiles.modified.length > 0) out.add(`   Modified: ${changedFiles.modified.length}`);
 if (changedFiles.deleted.length > 0) out.add(`   Deleted:  ${changedFiles.deleted.length}`);
@@ -464,7 +464,7 @@ if (changedFiles.renamed?.length > 0) out.add(`   Renamed:  ${changedFiles.renam
 out.blank();
 
 // Categories
-out.add(`📂 By Category`);
+out.add(`By Category`);
 if (categories.source.length > 0) out.add(`   Source:  ${categories.source.length} files`);
 if (categories.test.length > 0) out.add(`   Tests:   ${categories.test.length} files`);
 if (categories.config.length > 0) out.add(`   Config:  ${categories.config.length} files`);
@@ -475,7 +475,7 @@ out.blank();
 
 // Key files to review
 if (keyFiles.length > 0) {
-  out.add(`🔍 Key Files to Review`);
+  out.add(`Key Files to Review`);
   for (const kf of keyFiles.slice(0, 5)) {
     out.add(`   ${kf.file} (${kf.reason})`);
   }
@@ -484,7 +484,7 @@ if (keyFiles.length > 0) {
 
 // Detailed file list
 if (showFiles) {
-  out.add(`📋 All Files`);
+  out.add(`All Files`);
   for (const file of changedFiles.added) {
     out.add(`   + ${file}`);
   }
@@ -495,14 +495,14 @@ if (showFiles) {
     out.add(`   - ${file}`);
   }
   for (const renamed of changedFiles.renamed || []) {
-    out.add(`   R ${renamed.from} → ${renamed.to}`);
+    out.add(`   R ${renamed.from} -> ${renamed.to}`);
   }
   out.blank();
 }
 
 // Stat
 if (showStat && stats?.stat) {
-  out.add(`📈 Diff Stat`);
+  out.add(`Diff Stat`);
   const statLines = stats.stat.split('\n').slice(0, 20);
   for (const line of statLines) {
     out.add(`   ${line}`);
@@ -515,7 +515,7 @@ if (showStat && stats?.stat) {
 
 // Commits
 if (showCommits && commits.length > 0) {
-  out.add(`📝 Commits (${commits.length})`);
+  out.add(`Commits (${commits.length})`);
   for (const commit of commits.slice(0, 15)) {
     out.add(`   ${commit.hash} ${commit.message}`);
   }

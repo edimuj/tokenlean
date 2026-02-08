@@ -384,7 +384,7 @@ export function getDirectoryStats(dir) {
  * @param {boolean}  [options.filesOnly=false]    Return only file paths (like -l)
  * @param {number}   [options.maxBuffer=10*1024*1024]
  * @returns {Object.<string, Array<{file: string, line?: number, content?: string}>>}
- *   Plain object keyed by pattern → array of matches.
+ *   Plain object keyed by pattern -> array of matches.
  */
 export function batchRipgrep(patterns, searchPath, options = {}) {
   const {

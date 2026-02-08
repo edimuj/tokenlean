@@ -327,7 +327,7 @@ if (usedInCode.length > 0) {
 
     if (showFiles && info.files.size > 0) {
       for (const file of info.files) {
-        rows.push(['    ', `→ ${file}`]);
+        rows.push(['    ', `-> ${file}`]);
       }
     }
 

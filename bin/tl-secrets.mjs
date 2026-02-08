@@ -618,10 +618,10 @@ const mediumCount = allFindings.filter(f => f.severity === 'medium').length;
 const lowCount = allFindings.filter(f => f.severity === 'low').length;
 
 if (allFindings.length === 0) {
-  out.header('✓ No secrets found');
+  out.header('ok No secrets found');
   out.add(`Scanned ${scannedCount} files`);
 } else {
-  const icon = highCount > 0 ? '🚨' : '⚠️';
+  const icon = highCount > 0 ? '!!' : '!';
   out.header(`${icon} Found ${allFindings.length} potential secret(s)`);
   out.blank();
 
@@ -633,10 +633,10 @@ if (allFindings.length === 0) {
   }
 
   for (const [file, findings] of Object.entries(byFile)) {
-    out.add(`📄 ${file}`);
+    out.add(`${file}`);
 
     for (const f of findings) {
-      const severityIcon = f.severity === 'high' ? '🔴' : f.severity === 'medium' ? '🟡' : '⚪';
+      const severityIcon = f.severity === 'high' ? '!!' : f.severity === 'medium' ? '!' : '.';
       out.add(`   ${severityIcon} Line ${f.line}: ${f.name}`);
       out.add(`      ${f.value}`);
     }
@@ -653,7 +653,7 @@ if (allFindings.length === 0) {
 
   if (highCount > 0) {
     out.blank();
-    out.add('⚠️  High severity secrets should be removed and rotated immediately!');
+    out.add('!  High severity secrets should be removed and rotated immediately!');
   }
 }
 

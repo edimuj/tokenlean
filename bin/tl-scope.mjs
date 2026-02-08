@@ -172,10 +172,10 @@ function extractImports(lines, targetLine) {
 
 /**
  * Extract bound names from an import statement.
- * import { a, b as c } from 'x'  → ['a', 'c']
- * import d from 'x'              → ['d']
- * import * as e from 'x'         → ['e']
- * import d, { a, b } from 'x'   → ['d', 'a', 'b']
+ * import { a, b as c } from 'x'  -> ['a', 'c']
+ * import d from 'x'              -> ['d']
+ * import * as e from 'x'         -> ['e']
+ * import d, { a, b } from 'x'   -> ['d', 'a', 'b']
  */
 function extractBoundNames(stmt) {
   const names = [];
@@ -217,7 +217,7 @@ function extractBoundNames(stmt) {
       if (!trimmed) continue;
       // Skip type-only imports inside braces: type Foo
       if (trimmed.startsWith('type ')) continue;
-      // 'a as b' → use 'b'
+      // 'a as b' -> use 'b'
       const asMatch = trimmed.match(/\w+\s+as\s+(\w+)/);
       if (asMatch) {
         names.push(asMatch[1]);
@@ -233,8 +233,8 @@ function extractBoundNames(stmt) {
 
 /**
  * Extract names from a destructured require binding.
- * '{ a, b }' → ['a', 'b']
- * 'name'     → ['name']
+ * '{ a, b }' -> ['a', 'b']
+ * 'name'     -> ['name']
  */
 function extractDestructuredNames(binding) {
   const braceMatch = binding.match(/\{([^}]*)\}/);
@@ -307,12 +307,12 @@ function extractParams(signatureLines) {
   const last = current.trim();
   if (last) params.push(last);
 
-  // Clean each param: remove type annotations, defaults → keep the name/pattern
+  // Clean each param: remove type annotations, defaults -> keep the name/pattern
   return params.map(p => {
     // Strip TS type annotation (but not from destructured)
-    // For simple params: 'name: Type = default' → 'name'
-    // For destructured: '{ a, b }: Type' → '{ a, b }'
-    // For rest: '...rest: Type[]' → '...rest'
+    // For simple params: 'name: Type = default' -> 'name'
+    // For destructured: '{ a, b }: Type' -> '{ a, b }'
+    // For rest: '...rest: Type[]' -> '...rest'
     if (p.startsWith('{') || p.startsWith('[')) {
       // Destructured — find matching brace, strip the rest
       const open = p[0];
@@ -583,8 +583,8 @@ function trackDeclarations(trimmed, lineNum, scopeStack) {
 
 /**
  * Extract variable names from destructured bindings.
- * { a, b: c, ...rest } → ['a', 'c', 'rest']
- * [a, , b] → ['a', 'b']
+ * { a, b: c, ...rest } -> ['a', 'c', 'rest']
+ * [a, , b] -> ['a', 'b']
  */
 function extractDestructuredVarNames(binding) {
   const names = [];

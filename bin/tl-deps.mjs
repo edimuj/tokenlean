@@ -51,10 +51,10 @@ Examples:
   tl-deps src/app.ts -j           # JSON output
 
 Categories:
-  📦 npm       - node_modules packages
-  📁 local     - relative imports (./file, ../file)
-  🔧 builtin   - Node.js built-in modules
-  🎨 assets    - CSS, images, etc.
+  npm       - node_modules packages
+  local     - relative imports (./file, ../file)
+  builtin   - Node.js built-in modules
+  assets    - CSS, images, etc.
 
 Other languages: generic regex-based import extraction (flat list, no categorization)
 `;
@@ -352,7 +352,7 @@ function buildDependencyTree(filePath, projectRoot, maxDepth = 2, visited = new 
 function printTree(tree, out, prefix = '', isLast = true) {
   const connector = isLast ? '└── ' : '├── ';
   const tokens = tree.tokens ? ` (~${formatTokens(tree.tokens)})` : '';
-  const marker = tree.circular ? ' ⟳' : tree.error ? ' ⚠' : '';
+  const marker = tree.circular ? ' (circular)' : tree.error ? ' ! ' : '';
 
   out.add(`${prefix}${connector}${tree.file}${tokens}${marker}`);
 
@@ -360,7 +360,7 @@ function printTree(tree, out, prefix = '', isLast = true) {
 
   // Print npm deps compactly
   if (tree.npm && tree.npm.length > 0) {
-    out.add(`${newPrefix}📦 ${tree.npm.join(', ')}`);
+    out.add(`${newPrefix}${tree.npm.join(', ')}`);
   }
 
   // Print local deps recursively
@@ -378,14 +378,14 @@ function printTree(tree, out, prefix = '', isLast = true) {
 function printCategory(out, title, items, emoji, showResolved, fileDir, projectRoot) {
   if (items.length === 0) return;
 
-  out.add(`${emoji} ${title} (${items.length}):`);
+  out.add(`${emoji ? emoji + ' ' : ''}${title} (${items.length}):`);
 
   for (const item of items) {
     let line = `   ${item.spec}`;
 
     if (showResolved && item.spec.startsWith('.')) {
       const resolved = resolveLocalImport(item.spec, fileDir, projectRoot);
-      line += ` → ${resolved}`;
+      line += ` -> ${resolved}`;
     }
 
     if (item.isTypeOnly) {
@@ -447,8 +447,8 @@ if (isGeneric) {
     out.blank();
   }
 
-  out.header(`\n⚠ Generic extraction (no dedicated ${extname(resolvedPath)} parser)`);
-  out.header(`\n📥 Dependencies: ${relPath}`);
+  out.header(`\n! Generic extraction (no dedicated ${extname(resolvedPath)} parser)`);
+  out.header(`\nDependencies: ${relPath}`);
   out.header(`   ${imports.length} imports found`);
   out.blank();
 
@@ -466,7 +466,7 @@ if (isGeneric) {
   out.setData('generic', true);
 } else if (treeMode) {
   // Tree mode
-  out.header(`\n🌳 Dependency tree: ${relPath}`);
+  out.header(`\nDependency tree: ${relPath}`);
   out.header(`   Max depth: ${maxDepth}`);
   out.blank();
 
@@ -481,15 +481,15 @@ if (isGeneric) {
   const fileDir = dirname(resolvedPath);
   const totalImports = imports.npm.length + imports.local.length + imports.builtin.length + imports.assets.length + imports.dynamic.length;
 
-  out.header(`\n📥 Dependencies: ${relPath}`);
+  out.header(`\nDependencies: ${relPath}`);
   out.header(`   ${totalImports} imports found`);
   out.blank();
 
-  printCategory(out, 'npm packages', imports.npm, '📦', false, fileDir, projectRoot);
-  printCategory(out, 'Local files', imports.local, '📁', showResolved, fileDir, projectRoot);
-  printCategory(out, 'Node built-ins', imports.builtin, '🔧', false, fileDir, projectRoot);
-  printCategory(out, 'Assets', imports.assets, '🎨', false, fileDir, projectRoot);
-  printCategory(out, 'Dynamic imports', imports.dynamic, '⚡', false, fileDir, projectRoot);
+  printCategory(out, 'npm packages', imports.npm, '', false, fileDir, projectRoot);
+  printCategory(out, 'Local files', imports.local, '', showResolved, fileDir, projectRoot);
+  printCategory(out, 'Node built-ins', imports.builtin, '', false, fileDir, projectRoot);
+  printCategory(out, 'Assets', imports.assets, '', false, fileDir, projectRoot);
+  printCategory(out, 'Dynamic imports', imports.dynamic, '', false, fileDir, projectRoot);
 
   out.setData('file', relPath);
   out.setData('imports', imports);

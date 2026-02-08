@@ -303,7 +303,7 @@ const projectRoot = findProjectRoot();
 const out = createOutput(options);
 
 const displayName = className ? `${className}.${parsedFnName}` : parsedFnName;
-out.header(`\n🔀 Call flow: ${displayName}`);
+out.header(`\nCall flow: ${displayName}`);
 
 // Find function definitions
 let definitions = findFunctionDefinitions(parsedFnName, projectRoot, targetFile);
@@ -333,7 +333,7 @@ if (definitions.length === 0) {
 }
 
 // Show definitions
-out.add('\n📍 Defined in:');
+out.add('\nDefined in:');
 for (const def of definitions.slice(0, 5)) {
   const rel = relative(projectRoot, def.file);
   out.add(`   ${rel}:${def.line}`);
@@ -344,7 +344,7 @@ if (showCallers) {
   const callers = findCallers(parsedFnName, projectRoot);
 
   if (callers.length > 0) {
-    out.add('\n⬅️  Called by:');
+    out.add('\n<- Called by:');
     for (const caller of callers.slice(0, 10)) {
       const rel = relative(projectRoot, caller.file);
       const from = caller.caller ? ` (in ${caller.caller})` : '';
@@ -354,7 +354,7 @@ if (showCallers) {
       out.add(`   ... and ${callers.length - 10} more`);
     }
   } else {
-    out.add('\n⬅️  Called by: (no callers found)');
+    out.add('\n<- Called by: (no callers found)');
   }
 }
 
@@ -364,13 +364,13 @@ if (showCallees && definitions.length > 0) {
   const callees = findCallees(def.file, parsedFnName, def.line);
 
   if (callees.length > 0) {
-    out.add('\n➡️  Calls:');
+    out.add('\n-> Calls:');
     out.add(`   ${callees.slice(0, 15).join(', ')}`);
     if (callees.length > 15) {
       out.add(`   ... and ${callees.length - 15} more`);
     }
   } else {
-    out.add('\n➡️  Calls: (no function calls found)');
+    out.add('\n-> Calls: (no function calls found)');
   }
 }
 

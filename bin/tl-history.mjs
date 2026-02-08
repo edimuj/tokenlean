@@ -257,7 +257,7 @@ try {
   out.setData('totalCommits', commits.length);
 
   // Format output
-  out.header(`📜 ${relPath} - ${commits.length} recent commits`);
+  out.header(`${relPath} - ${commits.length} recent commits`);
   out.blank();
 
   for (const commit of commits) {

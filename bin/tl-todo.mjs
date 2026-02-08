@@ -56,25 +56,25 @@ Examples:
   tl-todo -c 2                     # Show 2 lines of context
 
 Markers detected:
-  🔴 FIXME  - Bugs or critical issues
-  🟡 TODO   - Tasks to complete
-  🟠 HACK   - Temporary workarounds
-  ⚪ XXX    - Warnings/concerns
-  🔵 NOTE   - Important information
+  !! FIXME  - Bugs or critical issues
+  ! TODO   - Tasks to complete
+  ~ HACK   - Temporary workarounds
+  . XXX    - Warnings/concerns
+  * NOTE   - Important information
 `;
 
 // Marker types with priority (lower = higher priority)
 const MARKERS = {
-  FIXME: { emoji: '🔴', priority: 1 },
-  FIX: { emoji: '🔴', priority: 1 },
-  BUG: { emoji: '🔴', priority: 1 },
-  TODO: { emoji: '🟡', priority: 2 },
-  HACK: { emoji: '🟠', priority: 3 },
-  WORKAROUND: { emoji: '🟠', priority: 3 },
-  XXX: { emoji: '⚪', priority: 4 },
-  WARN: { emoji: '⚪', priority: 4 },
-  NOTE: { emoji: '🔵', priority: 5 },
-  INFO: { emoji: '🔵', priority: 5 },
+  FIXME: { emoji: '!!', priority: 1 },
+  FIX: { emoji: '!!', priority: 1 },
+  BUG: { emoji: '!!', priority: 1 },
+  TODO: { emoji: '!', priority: 2 },
+  HACK: { emoji: '~', priority: 3 },
+  WORKAROUND: { emoji: '~', priority: 3 },
+  XXX: { emoji: '.', priority: 4 },
+  WARN: { emoji: '.', priority: 4 },
+  NOTE: { emoji: '*', priority: 5 },
+  INFO: { emoji: '*', priority: 5 },
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -206,7 +206,7 @@ function formatTodos(todos, out, contextLines, projectRoot) {
   }
 
   for (const [file, fileTodos] of byFile) {
-    out.add(`📄 ${file}`);
+    out.add(`${file}`);
 
     for (const todo of fileTodos) {
       const marker = MARKERS[todo.type] || MARKERS.TODO;
@@ -221,7 +221,7 @@ function formatTodos(todos, out, contextLines, projectRoot) {
         const context = getContext(file, todo.line, contextLines, projectRoot);
         if (context) {
           for (const ctx of context) {
-            const prefix = ctx.isTodo ? ' → ' : '   ';
+            const prefix = ctx.isTodo ? ' -> ' : '   ';
             out.add(`      ${ctx.num.toString().padStart(4)}${prefix}${ctx.content}`);
           }
         }
@@ -307,7 +307,7 @@ if (!existsSync(resolvedPath)) {
 
 const out = createOutput(options);
 
-out.header(`\n📋 TODOs: ${relPath === '.' ? basename(projectRoot) : relPath}`);
+out.header(`\nTODOs: ${relPath === '.' ? basename(projectRoot) : relPath}`);
 
 let todos = findTodos(resolvedPath, projectRoot);
 
@@ -327,7 +327,7 @@ if (sortByPriority) {
 }
 
 if (todos.length === 0) {
-  out.header('   No markers found! ✨');
+  out.header('   No markers found! ');
   out.print();
   process.exit(0);
 }
@@ -338,7 +338,7 @@ out.blank();
 formatTodos(todos, out, contextLines, projectRoot);
 
 out.stats('─'.repeat(50));
-out.stats(`📊 ${formatSummary(todos, out)}`);
+out.stats(`${formatSummary(todos, out)}`);
 out.blank();
 
 // JSON data

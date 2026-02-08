@@ -114,17 +114,17 @@ function getCommits(from, to = 'HEAD') {
 // ─────────────────────────────────────────────────────────────
 
 const COMMIT_TYPES = {
-  feat: { label: 'Features', emoji: '✨', order: 1 },
-  fix: { label: 'Bug Fixes', emoji: '🐛', order: 2 },
-  perf: { label: 'Performance', emoji: '⚡', order: 3 },
-  refactor: { label: 'Refactoring', emoji: '♻️', order: 4 },
-  docs: { label: 'Documentation', emoji: '📝', order: 5 },
-  test: { label: 'Tests', emoji: '🧪', order: 6 },
-  style: { label: 'Styling', emoji: '💄', order: 7 },
-  chore: { label: 'Chores', emoji: '🔧', order: 8 },
-  ci: { label: 'CI/CD', emoji: '👷', order: 9 },
-  build: { label: 'Build', emoji: '📦', order: 10 },
-  revert: { label: 'Reverts', emoji: '⏪', order: 11 },
+  feat: { label: 'Features', emoji: '', order: 1 },
+  fix: { label: 'Bug Fixes', emoji: '', order: 2 },
+  perf: { label: 'Performance', emoji: '', order: 3 },
+  refactor: { label: 'Refactoring', emoji: '', order: 4 },
+  docs: { label: 'Documentation', emoji: '', order: 5 },
+  test: { label: 'Tests', emoji: '', order: 6 },
+  style: { label: 'Styling', emoji: '', order: 7 },
+  chore: { label: 'Chores', emoji: '', order: 8 },
+  ci: { label: 'CI/CD', emoji: '', order: 9 },
+  build: { label: 'Build', emoji: '', order: 10 },
+  revert: { label: 'Reverts', emoji: '', order: 11 },
 };
 
 function parseCommit(commit) {
@@ -227,7 +227,7 @@ function formatMarkdown(groups, breaking, options = {}) {
 
   // Breaking changes first
   if (breaking.length > 0) {
-    lines.push('### ⚠️ BREAKING CHANGES');
+    lines.push('### ! BREAKING CHANGES');
     lines.push('');
     for (const commit of breaking) {
       lines.push(formatCommitMarkdown(commit, options));
@@ -237,8 +237,8 @@ function formatMarkdown(groups, breaking, options = {}) {
 
   // Regular groups
   for (const [type, commits] of groups) {
-    const typeInfo = COMMIT_TYPES[type] || { label: capitalize(type), emoji: '📌' };
-    lines.push(`### ${typeInfo.emoji} ${typeInfo.label}`);
+    const typeInfo = COMMIT_TYPES[type] || { label: capitalize(type), emoji: '' };
+    lines.push(`### ${typeInfo.emoji ? typeInfo.emoji + ' ' : ''}${typeInfo.label}`);
     lines.push('');
 
     for (const commit of commits) {
@@ -269,7 +269,7 @@ function formatCommitMarkdown(commit, options = {}) {
   }
 
   if (commit.isBreaking && !options.groupBreaking) {
-    line += ' ⚠️';
+    line += ' ! ';
   }
 
   return line;
@@ -326,12 +326,12 @@ function formatCompact(groups, breaking, options = {}) {
   const lines = [];
 
   for (const [type, commits] of groups) {
-    const typeInfo = COMMIT_TYPES[type] || { emoji: '•' };
+    const typeInfo = COMMIT_TYPES[type] || { emoji: '-' };
     for (const commit of commits) {
-      let line = `${typeInfo.emoji} `;
+      let line = typeInfo.emoji ? `${typeInfo.emoji} ` : '';
       if (commit.scope) line += `${commit.scope}: `;
       line += commit.description;
-      if (commit.isBreaking) line += ' ⚠️';
+      if (commit.isBreaking) line += ' ! ';
       lines.push(line);
     }
   }
@@ -461,7 +461,7 @@ if (options.json) {
 
   // Summary line
   const typeBreakdown = groups.map(([type, commits]) => {
-    const info = COMMIT_TYPES[type] || { emoji: '•' };
+    const info = COMMIT_TYPES[type] || { emoji: '-' };
     return `${commits.length} ${type}`;
   }).join(', ');
 

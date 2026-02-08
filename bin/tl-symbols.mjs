@@ -463,10 +463,10 @@ if (isGeneric) out.setData('generic', true);
 
 // Build text output
 if (isGeneric) {
-  out.header(`\n⚠ Generic extraction (no dedicated ${extname(filePath)} parser)`);
+  out.header(`\n! Generic extraction (no dedicated ${extname(filePath)} parser)`);
 }
-out.header(`\n📦 ${basename(filePath)} (${symbolCount} symbols)`);
-out.header(`   Full file: ~${formatTokens(fullFileTokens)} tokens → Symbols only: ~${formatTokens(Math.ceil(symbolCount * 15))} tokens`);
+out.header(`\n${basename(filePath)} (${symbolCount} symbols)`);
+out.header(`   Full file: ~${formatTokens(fullFileTokens)} tokens -> Symbols only: ~${formatTokens(Math.ceil(symbolCount * 15))} tokens`);
 out.blank();
 
 formatSymbols(symbols, isGeneric ? 'generic' : lang, out);

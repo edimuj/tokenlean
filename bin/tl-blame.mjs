@@ -290,7 +290,7 @@ try {
 
   if (summaryOnly) {
     // Just show author summary
-    out.header(`📋 ${relPath} - ${lines.length} lines`);
+    out.header(`${relPath} - ${lines.length} lines`);
     out.blank();
 
     out.add('Author Summary:');
@@ -299,7 +299,7 @@ try {
     }
   } else if (showFull) {
     // Show every line
-    out.header(`📋 ${relPath} - ${lines.length} lines`);
+    out.header(`${relPath} - ${lines.length} lines`);
     out.blank();
 
     for (const line of lines) {
@@ -312,7 +312,7 @@ try {
     // Grouped output (default)
     const groups = groupBlameLines(lines, commits);
 
-    out.header(`📋 ${relPath} - ${lines.length} lines in ${groups.length} blocks`);
+    out.header(`${relPath} - ${lines.length} lines in ${groups.length} blocks`);
     out.blank();
 
     for (const group of groups) {

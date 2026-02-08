@@ -409,7 +409,7 @@ function formatExports(exports, out, options = {}) {
 
   // Default export
   if (exports.default && !typesOnly) {
-    out.add(`  default → ${exports.default}`);
+    out.add(`  default -> ${exports.default}`);
     count++;
   }
 
@@ -475,7 +475,7 @@ function formatExports(exports, out, options = {}) {
   // Re-exports
   if (exports.reexports?.length > 0) {
     for (const r of exports.reexports) {
-      out.add(`  ↳ { ${r.names.join(', ')} } from '${r.from}'`);
+      out.add(`  > { ${r.names.join(', ')} } from '${r.from}'`);
       count += r.names.length;
     }
   }
@@ -496,7 +496,7 @@ function formatAsTree(fileExports, out, projectRoot) {
   }
 
   for (const [dir, files] of byDir) {
-    out.add(`📁 ${dir || '.'}/`);
+    out.add(`${dir || '.'}/`);
 
     for (const { file, exports } of files) {
       const allExports = [];
@@ -619,13 +619,13 @@ if (treeMode) {
 } else {
   for (const { file, exports, count, isGeneric: gen } of allFileExports) {
     if (gen) {
-      out.header(`⚠ Generic extraction (no dedicated ${extname(file)} parser) — showing pub/export/public symbols`);
+      out.header(`! Generic extraction (no dedicated ${extname(file)} parser) — showing pub/export/public symbols`);
       out.blank();
     }
     if (allFileExports.length > 1) {
-      out.add(`📦 ${file} (${count} exports)`);
+      out.add(`${file} (${count} exports)`);
     } else {
-      out.header(`📦 ${file} (${count} exports)`);
+      out.header(`${file} (${count} exports)`);
       out.blank();
     }
 

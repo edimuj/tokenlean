@@ -436,7 +436,7 @@ out.setData('totalEndpoints', allRest.length + dedupedGraphql.length);
 
 // Output REST endpoints
 if (allRest.length > 0) {
-  out.header(`🌐 REST Endpoints (${allRest.length})`);
+  out.header(`REST Endpoints (${allRest.length})`);
   out.blank();
 
   if (groupByFile) {
@@ -449,7 +449,7 @@ if (allRest.length > 0) {
     for (const [file, endpoints] of byFile) {
       out.add(`  ${file}`);
       for (const ep of endpoints) {
-        const handler = withHandlers && ep.handler ? ` → ${ep.handler}` : '';
+        const handler = withHandlers && ep.handler ? ` -> ${ep.handler}` : '';
         out.add(`    ${ep.method.padEnd(7)} ${ep.path}${handler}`);
       }
     }
@@ -468,7 +468,7 @@ if (allRest.length > 0) {
 
       out.add(`  ${method}`);
       for (const ep of endpoints) {
-        const handler = withHandlers && ep.handler ? ` → ${ep.handler}` : '';
+        const handler = withHandlers && ep.handler ? ` -> ${ep.handler}` : '';
         const location = groupByFile ? '' : ` (${ep.file}:${ep.line})`;
         out.add(`    ${ep.path}${handler}${location}`);
       }
@@ -479,7 +479,7 @@ if (allRest.length > 0) {
 
 // Output GraphQL operations
 if (dedupedGraphql.length > 0) {
-  out.header(`📊 GraphQL Operations (${dedupedGraphql.length})`);
+  out.header(`GraphQL Operations (${dedupedGraphql.length})`);
   out.blank();
 
   const byType = new Map();

@@ -133,7 +133,7 @@ function repoUrl(pkg) {
   if (!repo) return null;
   let url = typeof repo === 'string' ? repo : repo.url;
   if (!url) return null;
-  // Clean up git+https://...git → https://...
+  // Clean up git+https://...git -> https://...
   url = url.replace(/^git\+/, '').replace(/\.git$/, '');
   return url;
 }

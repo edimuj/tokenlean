@@ -405,7 +405,7 @@ function printTree(node, out, prefix = '', isLast = true, path = '') {
 
   // Print routes at this level
   for (const route of node.routes) {
-    const typeIcon = route.type === 'api' ? '⚡' : route.type === 'layout' ? '📐' : '📄';
+    const typeIcon = route.type === 'api' ? '' : route.type === 'layout' ? '' : '';
     out.add(`${prefix}${typeIcon} ${route.path || '/'}`);
   }
 
@@ -568,7 +568,7 @@ out.setData('routes', routes);
 out.setData('totalRoutes', routes.length);
 
 // Output
-out.header(`🛤️  Routes (${framework})`);
+out.header(` Routes (${framework})`);
 out.blank();
 
 if (routes.length === 0) {
@@ -585,7 +585,7 @@ if (routes.length === 0) {
   if (pages.length > 0) {
     out.add('Pages:');
     for (const route of pages) {
-      const component = withComponents ? ` → ${route.file}` : '';
+      const component = withComponents ? ` -> ${route.file}` : '';
       out.add(`  ${route.path}${component}`);
     }
     out.blank();
@@ -594,7 +594,7 @@ if (routes.length === 0) {
   if (apis.length > 0) {
     out.add('API Routes:');
     for (const route of apis) {
-      const component = withComponents ? ` → ${route.file}` : '';
+      const component = withComponents ? ` -> ${route.file}` : '';
       out.add(`  ${route.path}${component}`);
     }
     out.blank();
@@ -603,7 +603,7 @@ if (routes.length === 0) {
   if (layouts.length > 0) {
     out.add('Layouts:');
     for (const route of layouts) {
-      const component = withComponents ? ` → ${route.file}` : '';
+      const component = withComponents ? ` -> ${route.file}` : '';
       out.add(`  ${route.path}${component}`);
     }
     out.blank();

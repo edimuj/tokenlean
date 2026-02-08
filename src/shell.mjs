@@ -60,7 +60,7 @@ export function rgCommand(args, opts = {}) {
     return null;
   }
 
-  // Exit 1 (no matches) → return empty string
+  // Exit 1 (no matches) -> return empty string
   if (proc.status === 1) {
     return '';
   }

@@ -85,7 +85,7 @@ function hasDir(dir, name) {
 // Dependency Detection Maps
 // ─────────────────────────────────────────────────────────────
 
-// dep name → [category, display name]
+// dep name -> [category, display name]
 const DEP_MAP = {
   // Frameworks (full-stack / SSR)
   'next':                 ['framework', 'Next.js'],

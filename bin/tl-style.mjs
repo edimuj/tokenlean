@@ -249,8 +249,8 @@ function analyzeJsTs(content, stats, fileName) {
     }
 
     // --- Opening bracket position ---
-    // function foo() {   ← same line
-    // function foo()     ← next line if followed by {
+    // function foo() {   <- same line
+    // function foo()     <- next line if followed by {
     if (/\)\s*\{$/.test(trimmed) || /\belse\s*\{$/.test(trimmed) || /=>\s*\{$/.test(trimmed)) {
       stats.formatting.bracketSameLine++;
     }

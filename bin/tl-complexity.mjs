@@ -333,10 +333,10 @@ function removeStringsAndComments(code) {
 // ─────────────────────────────────────────────────────────────
 
 function getRating(cyclomatic) {
-  if (cyclomatic <= 10) return { label: 'simple', icon: '✓' };
-  if (cyclomatic <= 20) return { label: 'moderate', icon: '◐' };
-  if (cyclomatic <= 50) return { label: 'complex', icon: '⚠' };
-  return { label: 'very complex', icon: '✗' };
+  if (cyclomatic <= 10) return { label: 'simple', icon: 'ok' };
+  if (cyclomatic <= 20) return { label: 'moderate', icon: '~' };
+  if (cyclomatic <= 50) return { label: 'complex', icon: '! ' };
+  return { label: 'very complex', icon: 'X' };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -459,7 +459,7 @@ out.setData('totalFunctions', allFunctions.length);
 
 // Output
 if (summaryOnly) {
-  out.header(`📊 Complexity Summary (${fileSummaries.length} files)`);
+  out.header(`Complexity Summary (${fileSummaries.length} files)`);
   out.blank();
 
   // Sort files by total complexity
@@ -474,7 +474,7 @@ if (summaryOnly) {
 
   formatTable(rows).forEach(line => out.add(line));
 } else {
-  out.header(`📊 Function Complexity (${displayFunctions.length}${allFunctions.length > topN ? ` of ${allFunctions.length}` : ''} functions)`);
+  out.header(`Function Complexity (${displayFunctions.length}${allFunctions.length > topN ? ` of ${allFunctions.length}` : ''} functions)`);
   out.blank();
 
   if (displayFunctions.length === 0) {

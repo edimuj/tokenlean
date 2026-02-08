@@ -129,7 +129,7 @@ function findEntryPoints(searchPath, projectRoot, filterType) {
 
   // Collect all patterns with metadata for a single batch call
   const allPatterns = [];
-  const patternMeta = Object.create(null); // pattern → {type, desc}
+  const patternMeta = Object.create(null); // pattern -> {type, desc}
   for (const type of types) {
     const config = PATTERNS[type];
     if (!config) continue;
@@ -240,7 +240,7 @@ if (!existsSync(resolvedPath)) {
 
 const out = createOutput(options);
 
-out.header(`\n🚪 Entry points: ${searchPath === '.' ? 'project' : searchPath}`);
+out.header(`\nEntry points: ${searchPath === '.' ? 'project' : searchPath}`);
 
 const results = findEntryPoints(resolvedPath, projectRoot, filterType);
 
@@ -267,7 +267,7 @@ if (totalEntries === 0) {
 }
 
 out.add('');
-out.stats(`📊 Found ${totalEntries} entry points`);
+out.stats(`Found ${totalEntries} entry points`);
 out.add('');
 
 out.print();

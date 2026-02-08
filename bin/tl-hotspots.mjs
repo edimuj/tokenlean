@@ -53,10 +53,10 @@ Examples:
   tl-hotspots -a                    # Show who changes what most
 
 Output shows:
-  • Files sorted by change frequency
-  • Number of commits touching each file
-  • Lines added/removed
-  • Token cost to read the file
+  - Files sorted by change frequency
+  - Number of commits touching each file
+  - Lines added/removed
+  - Token cost to read the file
 `;
 
 // ─────────────────────────────────────────────────────────────
@@ -198,7 +198,7 @@ function formatAuthorSummary(authorChanges, out, topN) {
     .slice(0, topN);
 
   out.blank();
-  out.add('👥 Top contributors:');
+  out.add('Top contributors:');
 
   for (const author of authors) {
     out.add(`  ${author.commits.toString().padStart(3)} commits  ${author.fileCount.toString().padStart(3)} files  ${author.name}`);
@@ -273,7 +273,7 @@ if (gitCommand(['rev-parse', '--git-dir'], { cwd: projectRoot }) === null) {
 
 const out = createOutput(options);
 
-out.header(`\n🔥 Hotspots: ${relPath === '.' ? basename(projectRoot) : relPath}`);
+out.header(`\nHotspots: ${relPath === '.' ? basename(projectRoot) : relPath}`);
 out.header(`   Last ${days} days, top ${topN} files`);
 out.blank();
 
@@ -309,7 +309,7 @@ if (showAuthors && authorChanges.size > 0) {
 
 out.blank();
 out.stats('─'.repeat(50));
-out.stats(`📊 ${commits.length} commits, ${stats.length} files changed`);
+out.stats(`${commits.length} commits, ${stats.length} files changed`);
 out.stats(`   Top ${count} files: ~${formatTokens(totalTokens)} tokens to review`);
 out.blank();
 

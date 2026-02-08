@@ -416,7 +416,7 @@ out.setData('files', filteredCoverage.map(([path, data]) => ({
 out.setData('totalCoverage', calcPercentage(totalHit, totalLines));
 
 // Output
-out.header(`📊 Coverage from ${basename(coverageSource.path)}`);
+out.header(`Coverage from ${basename(coverageSource.path)}`);
 out.blank();
 
 if (filteredCoverage.length === 0) {
@@ -429,7 +429,7 @@ if (filteredCoverage.length === 0) {
     const funcPct = calcPercentage(data.functions.hit, data.functions.found);
     const branchPct = calcPercentage(data.branches.hit, data.branches.found);
 
-    const indicator = linePct >= 80 ? '✓' : linePct >= 50 ? '◐' : '✗';
+    const indicator = linePct >= 80 ? 'ok' : linePct >= 50 ? '~' : 'X';
 
     rows.push([
       `${indicator} ${path}`,

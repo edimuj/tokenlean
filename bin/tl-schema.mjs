@@ -598,7 +598,7 @@ function formatCompact(tables, out, showRelations = true) {
     const pk = table.columns.find(c => c.primaryKey);
     const pkStr = pk ? `${pk.name}` : '';
 
-    out.add(`📦 ${table.name} (${pkStr ? 'PK: ' + pkStr : table.columns.length + ' cols'})`);
+    out.add(`${table.name} (${pkStr ? 'PK: ' + pkStr : table.columns.length + ' cols'})`);
 
     // Show columns briefly
     const cols = table.columns.map(c => {
@@ -606,7 +606,7 @@ function formatCompact(tables, out, showRelations = true) {
       if (c.nullable) str += '?';
       if (c.primaryKey) str += ' [PK]';
       if (c.unique) str += ' [UQ]';
-      if (c.references) str += ` → ${c.references}`;
+      if (c.references) str += ` -> ${c.references}`;
       return str;
     });
 
@@ -632,7 +632,7 @@ function formatDetailed(tables, out) {
       out.add(`│  ${col.name.padEnd(20)} ${col.type.padEnd(15)}${flagStr}`);
 
       if (col.references) {
-        out.add(`│  └── FK → ${col.references}`);
+        out.add(`│  └── FK -> ${col.references}`);
       }
     }
 
@@ -675,7 +675,7 @@ function formatRelationsOnly(tables, out) {
   for (const [table, rels] of Object.entries(bySource)) {
     out.add(`${table}:`);
     for (const rel of rels) {
-      out.add(`  ${rel.fromCol} → ${rel.to}.${rel.toCol}`);
+      out.add(`  ${rel.fromCol} -> ${rel.to}.${rel.toCol}`);
     }
   }
 }
@@ -777,7 +777,7 @@ for (const source of sources) {
         break;
     }
   } catch (err) {
-    out.add(`⚠ Error parsing ${source.path}: ${err.message}`);
+    out.add(`! Error parsing ${source.path}: ${err.message}`);
   }
 
   allTables = allTables.concat(tables);

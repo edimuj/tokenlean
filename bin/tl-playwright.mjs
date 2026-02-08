@@ -327,7 +327,7 @@ try {
       }
 
       if (!options.quiet) {
-        out.header(`# ${normalizedUrl}${selector !== 'body' ? ` → ${selector}` : ''}\n`);
+        out.header(`# ${normalizedUrl}${selector !== 'body' ? ` -> ${selector}` : ''}\n`);
       }
 
       if (options.json) {

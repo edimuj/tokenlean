@@ -446,7 +446,7 @@ if (targetStat.isFile()) {
   }
   files = [resolve(targetDir)];
   allProjectFiles = findCodeFiles(projectRoot, [], { includeTests, ignorePatterns });
-  out.header(`🔍 Analyzing exports of ${relative(projectRoot, files[0])} against ${allProjectFiles.length} project files...`);
+  out.header(`Analyzing exports of ${relative(projectRoot, files[0])} against ${allProjectFiles.length} project files...`);
 } else {
   files = findCodeFiles(targetDir, [], { includeTests, ignorePatterns });
   allProjectFiles = files;
@@ -454,7 +454,7 @@ if (targetStat.isFile()) {
     console.error('No code files found');
     process.exit(1);
   }
-  out.header(`🔍 Analyzing ${files.length} files for unused code...`);
+  out.header(`Analyzing ${files.length} files for unused code...`);
 }
 out.blank();
 
@@ -515,7 +515,7 @@ if (!options.quiet) {
   const totalIssues = results.unusedExports.length + results.unreferencedFiles.length;
 
   if (totalIssues === 0) {
-    out.add('✓ No obviously unused code found');
+    out.add('ok No obviously unused code found');
   } else {
     out.add(`Found ${results.unusedExports.length} potentially unused exports, ${results.unreferencedFiles.length} unreferenced files`);
   }

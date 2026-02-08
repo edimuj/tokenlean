@@ -220,8 +220,8 @@ function getRelativeTime(date) {
 }
 
 function formatStatus(available, takenInfo = '') {
-  if (available === true) return '✓ available';
-  if (available === false) return `✗ taken${takenInfo ? ` (${takenInfo})` : ''}`;
+  if (available === true) return 'ok available';
+  if (available === false) return `X taken${takenInfo ? ` (${takenInfo})` : ''}`;
   if (available === 'likely') return '? likely available';
   return '? unknown';
 }
@@ -271,7 +271,7 @@ const out = createOutput(options);
 const results = [];
 
 for (const name of names) {
-  out.header(`\n📦 ${name}`);
+  out.header(`\n${name}`);
 
   const result = { name, npm: null, github: null, domain: null };
 
@@ -346,7 +346,7 @@ if (suggest) {
 
   if (takenNames.length > 0) {
     out.blank();
-    out.header('💡 Suggested variations:');
+    out.header('Suggested variations:');
 
     for (const taken of takenNames) {
       const variations = generateVariations(taken.name);
@@ -358,7 +358,7 @@ if (suggest) {
       for (const variant of toCheck) {
         // Quick npm check only for suggestions
         const npmResult = await checkNpm(variant);
-        const status = npmResult.available ? '✓' : '✗';
+        const status = npmResult.available ? 'ok' : 'X';
         out.add(`    ${status} ${variant}`);
       }
     }
@@ -374,7 +374,7 @@ const available = results.filter(r =>
 );
 
 if (available.length > 0) {
-  out.add(`✨ Fully available: ${available.map(r => r.name).join(', ')}`);
+  out.add(`Fully available: ${available.map(r => r.name).join(', ')}`);
 } else if (results.length === 1) {
   out.add('No fully available names found');
 } else {

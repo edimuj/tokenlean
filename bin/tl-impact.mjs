@@ -50,10 +50,10 @@ Examples:
   tl-impact src/utils/api.ts -j      # JSON output
 
 Output shows:
-  • Which files import the target
-  • Token cost of each importer
-  • Line number of the import
-  • Categorized by source/test/story/mock
+  - Which files import the target
+  - Token cost of each importer
+  - Line number of the import
+  - Categorized by source/test/story/mock
 `;
 
 // ─────────────────────────────────────────────────────────────
@@ -224,7 +224,7 @@ function buildResults(importers, projectRoot) {
 function printCategory(out, title, files, emoji) {
   if (files.length === 0) return { totalFiles: 0, totalTokens: 0 };
 
-  out.add(`${emoji} ${title} (${files.length}):`);
+  out.add(`${emoji ? emoji + ' ' : ''}${title} (${files.length}):`);
 
   let totalTokens = 0;
   for (const file of files) {
@@ -277,7 +277,7 @@ const targetTokens = estimateTokens(readFileSync(resolvedPath, 'utf-8'));
 
 const out = createOutput(options);
 
-out.header(`\n🎯 Impact analysis: ${relPath}`);
+out.header(`\nImpact analysis: ${relPath}`);
 out.header(`   Target file: ~${formatTokens(targetTokens)} tokens`);
 
 if (maxDepth > 1) {
@@ -303,12 +303,12 @@ out.setData('targetTokens', targetTokens);
 out.setData('maxDepth', maxDepth);
 
 if (importers.size === 0) {
-  out.add('✨ No importers found - this file has no dependents!');
+  out.add('No importers found - this file has no dependents!');
   out.blank();
   out.add('This could mean:');
-  out.add('  • It\'s an entry point (main, index)');
-  out.add('  • It\'s a standalone script');
-  out.add('  • It\'s unused and can be safely deleted');
+  out.add('  - It\'s an entry point (main, index)');
+  out.add('  - It\'s a standalone script');
+  out.add('  - It\'s unused and can be safely deleted');
   out.blank();
 
   out.setData('importers', []);
@@ -327,23 +327,23 @@ out.setData('importers', categories);
 let totalFiles = 0;
 let totalTokens = 0;
 
-const s = printCategory(out, 'Source files', categories.source, '📦');
+const s = printCategory(out, 'Source files', categories.source, '');
 totalFiles += s.totalFiles; totalTokens += s.totalTokens;
 
-const t = printCategory(out, 'Test files', categories.test, '🧪');
+const t = printCategory(out, 'Test files', categories.test, '');
 totalFiles += t.totalFiles; totalTokens += t.totalTokens;
 
-const st = printCategory(out, 'Stories', categories.story, '📖');
+const st = printCategory(out, 'Stories', categories.story, '');
 totalFiles += st.totalFiles; totalTokens += st.totalTokens;
 
-const m = printCategory(out, 'Mocks/Fixtures', categories.mock, '🎭');
+const m = printCategory(out, 'Mocks/Fixtures', categories.mock, '');
 totalFiles += m.totalFiles; totalTokens += m.totalTokens;
 
 out.setData('totalFiles', totalFiles);
 out.setData('totalTokens', totalTokens);
 
 out.stats('─'.repeat(50));
-out.stats(`📊 Total impact: ${totalFiles} files, ~${formatTokens(totalTokens)} tokens`);
+out.stats(`Total impact: ${totalFiles} files, ~${formatTokens(totalTokens)} tokens`);
 out.stats(`   Changing ${basename(resolvedPath)} may affect all listed files.`);
 out.blank();
 

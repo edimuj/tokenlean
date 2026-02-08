@@ -478,7 +478,7 @@ function formatCompact(entries, options = {}) {
     }
 
     if (entry.deprecated) {
-      header += ' ⚠️ DEPRECATED';
+      header += ' ! DEPRECATED';
     }
 
     lines.push(header);
@@ -534,7 +534,7 @@ function formatDetailed(entries, options = {}) {
       'type': '𝑇',
       'method': '𝑚',
       'enum': '𝐸'
-    }[entry.kind] || '•';
+    }[entry.kind] || '-';
 
     lines.push(`┌─ ${kindIcon} ${entry.name}`);
 
@@ -543,7 +543,7 @@ function formatDetailed(entries, options = {}) {
     }
 
     if (entry.deprecated) {
-      lines.push(`│  ⚠️ DEPRECATED${entry.deprecatedMsg ? ': ' + entry.deprecatedMsg : ''}`);
+      lines.push(`│  ! DEPRECATED${entry.deprecatedMsg ? ': ' + entry.deprecatedMsg : ''}`);
     }
 
     if (entry.description) {
@@ -715,13 +715,13 @@ if (totalEntries === 0) {
   process.exit(0);
 }
 
-out.header(`📖 Documentation (${totalEntries} items)`);
+out.header(`Documentation (${totalEntries} items)`);
 out.blank();
 
 const formatOptions = { withExamples, withSignature };
 
 for (const doc of allDocs) {
-  out.add(`📄 ${doc.file}`);
+  out.add(`${doc.file}`);
   out.blank();
 
   const formatted = format === 'detailed'

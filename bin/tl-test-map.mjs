@@ -402,7 +402,7 @@ const projectWide = findProjectWideTests(name, projectRoot);
 const importBased = findImportBasedTests(fullPath, projectRoot);
 
 // Tag each with discovery method, deduplicate by absolute path
-const seen = new Map(); // absPath → discovery method
+const seen = new Map(); // absPath -> discovery method
 
 for (const p of colocated) {
   if (!seen.has(p)) seen.set(p, 'colocated');
