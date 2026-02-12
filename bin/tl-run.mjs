@@ -85,7 +85,6 @@ function runCommand(command, timeout) {
       ...process.env,
       NO_COLOR: '1',
       FORCE_COLOR: '0',
-      CI: '1',
       TERM: 'dumb'
     }
   });
@@ -178,8 +177,8 @@ function detectType(command, stdout, stderr) {
     }
   }
 
-  // Require 2+ matches for confident detection, accept 1 as weak signal
-  if (bestCount >= 1) return bestType;
+  // Require 2+ matches for confident detection from output alone
+  if (bestCount >= 2) return bestType;
 
   return 'generic';
 }
@@ -191,10 +190,11 @@ function detectType(command, stdout, stderr) {
 function summarizeTest(stdout, stderr, exitCode) {
   const combined = stdout + '\n' + stderr;
   const lines = combined.split('\n');
-  const result = { summary: '', failures: [] };
+  const result = { summary: '', failures: [], parsed: false };
 
   // Extract pass/fail counts from various test runners
   let passed = 0, failed = 0, skipped = 0, total = 0;
+  let goPassed = 0, goFailed = 0;
   let foundCounts = false;
 
   for (const line of lines) {
@@ -215,17 +215,18 @@ function summarizeTest(stdout, stderr, exitCode) {
     m = line.match(/(\d+)\s+failing/i);
     if (m) { failed = parseInt(m[1], 10); foundCounts = true; }
 
-    // pytest: N passed, N failed
-    m = line.match(/(\d+)\s+passed/i);
-    if (m) { passed = parseInt(m[1], 10); foundCounts = true; }
-    m = line.match(/(\d+)\s+failed/i);
-    if (m) { failed = parseInt(m[1], 10); foundCounts = true; }
+    // pytest: "3 passed, 2 failed in 0.12s" or "====== 3 passed ======"
+    // Gated behind summary indicators to avoid matching random log lines
+    if (/={3,}|in\s+[\d.]+s/.test(line)) {
+      m = line.match(/(\d+)\s+passed/i);
+      if (m) { passed = parseInt(m[1], 10); foundCounts = true; }
+      m = line.match(/(\d+)\s+failed/i);
+      if (m) { failed = parseInt(m[1], 10); foundCounts = true; }
+    }
 
-    // Go test: ok/FAIL
-    m = line.match(/^ok\s+/);
-    if (m && !foundCounts) { passed++; foundCounts = true; }
-    m = line.match(/^FAIL\s+/);
-    if (m && !foundCounts) { failed++; foundCounts = true; }
+    // Go test: ok/FAIL per package (counted separately, used as fallback)
+    if (line.match(/^ok\s+\S+\/\S+/)) { goPassed++; }
+    if (line.match(/^FAIL\s+\S+\/\S+/)) { goFailed++; }
 
     // Rust: test result: ok. N passed; N failed
     m = line.match(/test result:.*?(\d+)\s+passed.*?(\d+)\s+failed/i);
@@ -234,6 +235,13 @@ function summarizeTest(stdout, stderr, exitCode) {
       failed = parseInt(m[2], 10);
       foundCounts = true;
     }
+  }
+
+  // Go fallback: use per-package counts if no other runner was detected
+  if (!foundCounts && (goPassed > 0 || goFailed > 0)) {
+    passed = goPassed;
+    failed = goFailed;
+    foundCounts = true;
   }
 
   if (!foundCounts) {
@@ -246,22 +254,40 @@ function summarizeTest(stdout, stderr, exitCode) {
   if (failed > 0) parts.push(`${failed} failed`);
   if (skipped > 0) parts.push(`${skipped} skipped`);
   result.summary = parts.length > 0 ? parts.join(', ') : (exitCode === 0 ? 'all passed' : 'tests failed');
+  result.parsed = foundCounts;
 
-  // Extract failure details (if non-zero exit)
-  if (exitCode !== 0) {
+  // When exit is non-zero but runner reports 0 failures, note it
+  // (common with Jest console warnings, unhandled promise warnings, etc.)
+  if (exitCode !== 0 && failed === 0 && foundCounts) {
+    result.summary += ` (exit ${exitCode})`;
+  }
+
+  // Extract failure details — only when the runner actually reports failures,
+  // or when we couldn't parse counts (unknown state). Avoids false positives
+  // from Jest console blocks, warnings, etc. when all tests actually pass.
+  if (exitCode !== 0 && (failed > 0 || !foundCounts)) {
     let inFailure = false;
     let currentFailure = null;
     let failureCount = 0;
+
+    // Jest/Vitest: when ● blocks exist, use only those (they have assertion
+    // details). FAIL suite lines and ✕ indicators are redundant noise.
+    const hasJestBullets = lines.some(l => /^\s*●\s+/.test(l) && !/●\s+Console\s*$/i.test(l));
 
     for (const line of lines) {
       if (failureCount >= 10) break;
 
       // Detect failure start patterns
-      const failStart =
-        line.match(/^(\s*)?(FAIL|✕|✗|×|✘)\s+(.+)/i) ||
-        line.match(/^(\s*)?(FAILED):\s*(.+)/i) ||
-        line.match(/^\s*\d+\)\s+(.+)/) ||
-        line.match(/^(\s*)?●\s+(.+)/);
+      let failStart;
+      if (hasJestBullets) {
+        failStart = /^\s*●\s+/.test(line) && !/●\s+Console\s*$/i.test(line)
+          ? line.match(/^(\s*)?●\s+(.+)/) : null;
+      } else {
+        failStart =
+          line.match(/^(\s*)?(FAIL|✕|✗|×|✘)\s+(.+)/i) ||
+          line.match(/^(\s*)?(FAILED):\s*(.+)/i) ||
+          line.match(/^\s*\d+\)\s+(.+)/);
+      }
 
       if (failStart) {
         if (currentFailure) {
@@ -275,17 +301,21 @@ function summarizeTest(stdout, stderr, exitCode) {
       }
 
       if (inFailure && currentFailure) {
-        // Capture assertion/expected/received
-        if (/Expected|Received|AssertionError|assert/i.test(line)) {
-          currentFailure.message += (currentFailure.message ? '\n' : '') + line.trim();
+        const stripped = line.trim();
+        // Capture error/assertion messages (any non-empty, non-stack-trace line)
+        if (stripped && !stripped.startsWith('at ') && !stripped.startsWith('|')) {
+          const msgLines = currentFailure.message ? currentFailure.message.split('\n').length : 0;
+          if (msgLines < 5) {
+            currentFailure.message += (currentFailure.message ? '\n' : '') + stripped;
+          }
         }
-        // Capture file:line location
+        // Capture file:line location from stack traces
         const locMatch = line.match(/at\s+.*?([^\s(]+:\d+)/);
         if (locMatch && !currentFailure.location) {
           currentFailure.location = locMatch[1];
         }
         // End of failure block
-        if (line.trim() === '' && currentFailure.message) {
+        if (stripped === '' && currentFailure.message) {
           inFailure = false;
         }
       }
@@ -312,6 +342,9 @@ function summarizeBuild(stdout, stderr, exitCode) {
     if (/\berror\b/i.test(line) && /[^\s]+:\d+/.test(line)) {
       errors.push(line.trim());
     } else if (/\berror\s*(TS|C|E|\[E)\d+/i.test(line)) {
+      errors.push(line.trim());
+    } else if (/^\s*error\s*:/i.test(line)) {
+      // Bare "error:" prefix (e.g., "error: linker command failed")
       errors.push(line.trim());
     } else if (/\bwarning\b/i.test(line)) {
       warnings.push(line.trim());
@@ -356,8 +389,8 @@ function summarizeLint(stdout, stderr, exitCode) {
     const ruleCounts = {};
 
     for (const line of lines) {
-      // ESLint format: rule-name  at end or (rule-name)
-      const ruleMatch = line.match(/\s+([\w@/-]+)\s*$/) || line.match(/\(([\w@/-]+)\)\s*$/);
+      // ESLint: "rule-name" at end; Biome: "(lint/style/ruleName)"; pylint: "C0301"
+      const ruleMatch = line.match(/\(([\w@/.:-]+)\)\s*$/) || line.match(/\s+([\w@/-]+-[\w@/-]+)\s*$/);
       if (ruleMatch && /error|warning|✕|✗/i.test(line)) {
         const rule = ruleMatch[1];
         ruleCounts[rule] = (ruleCounts[rule] || 0) + 1;
@@ -379,7 +412,7 @@ function summarizeGeneric(stdout, stderr, exitCode) {
   const lines = combined.split('\n');
   const result = { summary: '', lines: [] };
 
-  if (lines.length <= 30) {
+  if (lines.length <= 50) {
     // Short output: pass through as-is
     result.lines = lines;
     result.summary = exitCode === 0 ? '' : `exited with code ${exitCode}`;
@@ -596,7 +629,7 @@ function main() {
   // Fallback: when exit != 0 and the summarizer extracted no details,
   // show raw stderr/output so the agent can diagnose the actual error.
   if (result.exitCode !== 0 && type !== 'generic') {
-    const hasDetails = (type === 'test' && summary.failures.length > 0) ||
+    const hasDetails = (type === 'test' && (summary.failures.length > 0 || summary.parsed)) ||
                        (type === 'build' && summary.errors.length > 0) ||
                        (type === 'lint' && summary.violations.length > 0);
 
