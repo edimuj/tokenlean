@@ -76,6 +76,29 @@ function detectLanguage(filePath) {
 // JavaScript/TypeScript Extraction
 // ─────────────────────────────────────────────────────────────
 
+function finalizeJsContainer(container, symbols) {
+  if (container.type === 'class') {
+    symbols.classes.push({ signature: container.signature, methods: container.items });
+  } else if (container.type === 'enum') {
+    const values = container.items;
+    const MAX_INLINE = 6;
+    let enumStr = container.signature;
+    if (values.length > 0) {
+      if (values.length <= MAX_INLINE) {
+        enumStr += ' { ' + values.join(', ') + ' }';
+      } else {
+        enumStr += ' { ' + values.slice(0, MAX_INLINE).join(', ') + `, ... +${values.length - MAX_INLINE} more }`;
+      }
+    }
+    symbols.types.push(enumStr);
+    if (container.exported) symbols.exports.push(enumStr);
+  } else {
+    // interface or type literal
+    symbols.types.push({ signature: container.signature, members: container.items });
+    if (container.exported) symbols.exports.push(container.signature);
+  }
+}
+
 function extractJsSymbols(content, exportsOnly = false) {
   const symbols = {
     exports: [],
@@ -86,9 +109,8 @@ function extractJsSymbols(content, exportsOnly = false) {
   };
 
   const lines = content.split('\n');
-  let inClass = null;
+  let container = null; // { type: 'class'|'interface'|'type'|'enum', signature, items: [], exported }
   let braceDepth = 0;
-  let currentClassMethods = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -99,21 +121,58 @@ function extractJsSymbols(content, exportsOnly = false) {
       continue;
     }
 
-    // Track brace depth for class scope
+    // Track brace depth for scope
     const openBraces = (line.match(/\{/g) || []).length;
     const closeBraces = (line.match(/\}/g) || []).length;
 
-    // Check if we're exiting a class
-    if (inClass && braceDepth === 1 && closeBraces > openBraces) {
-      symbols.classes.push({
-        signature: inClass,
-        methods: currentClassMethods
-      });
-      inClass = null;
-      currentClassMethods = [];
+    // Check if we're exiting a container
+    if (container && braceDepth === 1 && closeBraces > openBraces) {
+      finalizeJsContainer(container, symbols);
+      container = null;
     }
 
+    const prevBraceDepth = braceDepth;
     braceDepth += openBraces - closeBraces;
+
+    // Inside a container: collect items at first level, skip deeper
+    if (container && prevBraceDepth >= 1) {
+      if (prevBraceDepth === 1) {
+        if (container.type === 'class') {
+          // Arrow function class properties (before method regex)
+          if (trimmed.match(/^(?:public\s+|private\s+|protected\s+)?(?:static\s+)?(?:readonly\s+)?\w+\s*=\s*(?:async\s+)?\(/)) {
+            const sig = trimmed.replace(/=>\s*\{?\s*$/, '=>').replace(/=>.*$/, '=>').trim();
+            if (sig.includes('=>')) {
+              container.items.push(sig);
+            }
+          }
+          // Constructor
+          else if (trimmed.match(/^constructor\s*\(/)) {
+            container.items.push(extractSignatureLine(trimmed));
+          }
+          // Regular methods
+          else if (trimmed.match(/^(?:public\s+|private\s+|protected\s+)?(?:static\s+)?(?:async\s+)?(?:get\s+|set\s+)?(\w+)\s*[(<]/)) {
+            const methodName = trimmed.match(/^(?:public\s+|private\s+|protected\s+)?(?:static\s+)?(?:async\s+)?(?:get\s+|set\s+)?(\w+)/)?.[1];
+            if (methodName && !['if', 'for', 'while', 'switch', 'catch', 'return', 'throw', 'new', 'typeof', 'delete', 'void', 'yield', 'await'].includes(methodName)) {
+              if (!trimmed.includes('=') || trimmed.includes('=>')) {
+                container.items.push(extractSignatureLine(trimmed));
+              }
+            }
+          }
+        } else if (container.type === 'enum') {
+          const cleaned = trimmed.replace(/\/\/.*$/, '').replace(/,\s*$/, '').trim();
+          if (cleaned && cleaned !== '}') {
+            container.items.push(cleaned);
+          }
+        } else {
+          // interface or type literal: collect members
+          const cleaned = trimmed.replace(/[;,]\s*$/, '').trim();
+          if (cleaned) {
+            container.items.push(cleaned);
+          }
+        }
+      }
+      continue;
+    }
 
     // Export statements
     if (trimmed.startsWith('export ')) {
@@ -129,15 +188,29 @@ function extractJsSymbols(content, exportsOnly = false) {
       else if (trimmed.match(/export\s+\*\s+from/)) {
         symbols.exports.push(trimmed);
       }
-      else if (trimmed.match(/export\s+(interface|type)\s+/)) {
+      else if (trimmed.match(/export\s+interface\s+/)) {
         const sig = extractSignatureLine(trimmed);
-        symbols.types.push(sig);
-        symbols.exports.push(sig);
+        if (braceDepth > 0) {
+          container = { type: 'interface', signature: sig, items: [], exported: true };
+          braceDepth = openBraces - closeBraces;
+        } else {
+          symbols.types.push(sig);
+          symbols.exports.push(sig);
+        }
+      }
+      else if (trimmed.match(/export\s+type\s+/)) {
+        const sig = extractSignatureLine(trimmed);
+        if (trimmed.match(/=\s*\{/) && braceDepth > 0) {
+          container = { type: 'type', signature: sig, items: [], exported: true };
+          braceDepth = openBraces - closeBraces;
+        } else {
+          symbols.types.push(sig);
+          symbols.exports.push(sig);
+        }
       }
       else if (trimmed.match(/export\s+(?:abstract\s+)?class\s+/)) {
         const sig = extractSignatureLine(trimmed);
-        inClass = sig;
-        currentClassMethods = [];
+        container = { type: 'class', signature: sig, items: [], exported: true };
         braceDepth = openBraces - closeBraces;
       }
       else if (trimmed.match(/export\s+(?:async\s+)?function\s+/)) {
@@ -156,22 +229,47 @@ function extractJsSymbols(content, exportsOnly = false) {
       }
       else if (trimmed.match(/export\s+(?:const\s+)?enum\s+/)) {
         const sig = extractSignatureLine(trimmed);
-        symbols.types.push(sig);
-        symbols.exports.push(sig);
+        if (braceDepth > 0) {
+          container = { type: 'enum', signature: sig, items: [], exported: true };
+          braceDepth = openBraces - closeBraces;
+        } else {
+          symbols.types.push(sig);
+          symbols.exports.push(sig);
+        }
       }
     }
     // Non-exported symbols
     else if (!exportsOnly) {
       if (trimmed.match(/^interface\s+/)) {
-        symbols.types.push(extractSignatureLine(trimmed));
+        const sig = extractSignatureLine(trimmed);
+        if (braceDepth > 0) {
+          container = { type: 'interface', signature: sig, items: [], exported: false };
+          braceDepth = openBraces - closeBraces;
+        } else {
+          symbols.types.push(sig);
+        }
       }
       else if (trimmed.match(/^type\s+\w+/)) {
-        symbols.types.push(extractSignatureLine(trimmed));
+        const sig = extractSignatureLine(trimmed);
+        if (trimmed.match(/=\s*\{/) && braceDepth > 0) {
+          container = { type: 'type', signature: sig, items: [], exported: false };
+          braceDepth = openBraces - closeBraces;
+        } else {
+          symbols.types.push(sig);
+        }
+      }
+      else if (trimmed.match(/^(?:const\s+)?enum\s+/)) {
+        const sig = extractSignatureLine(trimmed);
+        if (braceDepth > 0) {
+          container = { type: 'enum', signature: sig, items: [], exported: false };
+          braceDepth = openBraces - closeBraces;
+        } else {
+          symbols.types.push(sig);
+        }
       }
       else if (trimmed.match(/^(?:abstract\s+)?class\s+/)) {
         const sig = extractSignatureLine(trimmed);
-        inClass = sig;
-        currentClassMethods = [];
+        container = { type: 'class', signature: sig, items: [], exported: false };
         braceDepth = openBraces - closeBraces;
       }
       else if (trimmed.match(/^(?:async\s+)?function\s+/)) {
@@ -180,29 +278,12 @@ function extractJsSymbols(content, exportsOnly = false) {
       else if (braceDepth === 0 && trimmed.match(/^const\s+\w+.*=.*=>/)) {
         symbols.functions.push(extractSignatureLine(trimmed));
       }
-      // Class methods
-      else if (inClass && braceDepth >= 1) {
-        if (trimmed.match(/^constructor\s*\(/)) {
-          currentClassMethods.push(extractSignatureLine(trimmed));
-        }
-        else if (trimmed.match(/^(?:public\s+|private\s+|protected\s+)?(?:static\s+)?(?:async\s+)?(?:get\s+|set\s+)?(\w+)\s*[(<]/)) {
-          const methodName = trimmed.match(/^(?:public\s+|private\s+|protected\s+)?(?:static\s+)?(?:async\s+)?(?:get\s+|set\s+)?(\w+)/)?.[1];
-          if (methodName && !['if', 'for', 'while', 'switch', 'catch', 'return', 'throw', 'new', 'typeof', 'delete', 'void', 'yield', 'await'].includes(methodName)) {
-            if (!trimmed.includes('=') || trimmed.includes('=>')) {
-              currentClassMethods.push(extractSignatureLine(trimmed));
-            }
-          }
-        }
-      }
     }
   }
 
-  // Handle last class if file ends inside one
-  if (inClass) {
-    symbols.classes.push({
-      signature: inClass,
-      methods: currentClassMethods
-    });
+  // Handle last container if file ends inside one
+  if (container) {
+    finalizeJsContainer(container, symbols);
   }
 
   return symbols;
@@ -228,17 +309,41 @@ function extractPythonSymbols(content) {
   const lines = content.split('\n');
   let inClass = null;
   let currentClassMethods = [];
+  let currentClassFields = [];
+  let isDataclass = false;
+  let isEnumClass = false;
+  let isNextDataclass = false;
+
+  function pushCurrentClass() {
+    if (!inClass) return;
+    const cls = { signature: inClass, methods: currentClassMethods };
+    if (currentClassFields.length > 0) {
+      cls.fields = currentClassFields;
+      cls.isEnum = isEnumClass;
+    }
+    symbols.classes.push(cls);
+  }
 
   for (const line of lines) {
     const trimmed = line.trim();
 
+    // Track @dataclass decorator
+    if (trimmed === '@dataclass' || trimmed.startsWith('@dataclass(') || trimmed.startsWith('@dataclasses.dataclass')) {
+      isNextDataclass = true;
+      continue;
+    }
+    // Skip other decorators (preserve isNextDataclass flag)
+    if (trimmed.startsWith('@')) continue;
+
     const classMatch = trimmed.match(/^class\s+(\w+)(?:\([^)]*\))?:/);
     if (classMatch) {
-      if (inClass) {
-        symbols.classes.push({ signature: inClass, methods: currentClassMethods });
-      }
+      pushCurrentClass();
       inClass = trimmed.replace(/:$/, '');
+      isDataclass = isNextDataclass;
+      isEnumClass = /\((?:\w+\.)?(Enum|IntEnum|StrEnum|Flag|IntFlag)\)/.test(trimmed);
+      isNextDataclass = false;
       currentClassMethods = [];
+      currentClassFields = [];
       continue;
     }
 
@@ -248,20 +353,26 @@ function extractPythonSymbols(content) {
       if (inClass && line.startsWith('    ')) {
         currentClassMethods.push(sig);
       } else {
-        if (inClass) {
-          symbols.classes.push({ signature: inClass, methods: currentClassMethods });
-          inClass = null;
-          currentClassMethods = [];
-        }
+        pushCurrentClass();
+        inClass = null;
+        currentClassMethods = [];
+        currentClassFields = [];
         symbols.functions.push(sig);
+      }
+      continue;
+    }
+
+    // Inside a class: collect fields (dataclass fields or enum values)
+    if (inClass && line.startsWith('    ') && !line.startsWith('        ')) {
+      if (isDataclass && trimmed.match(/^\w+\s*:/)) {
+        currentClassFields.push(trimmed);
+      } else if (isEnumClass && trimmed.match(/^\w+\s*=/)) {
+        currentClassFields.push(trimmed);
       }
     }
   }
 
-  if (inClass) {
-    symbols.classes.push({ signature: inClass, methods: currentClassMethods });
-  }
-
+  pushCurrentClass();
   return symbols;
 }
 
@@ -317,10 +428,20 @@ function formatSymbols(symbols, lang, out) {
       out.blank();
     }
 
-    const nonExportedTypes = symbols.types.filter(t => !t.startsWith('export'));
-    if (nonExportedTypes.length > 0) {
+    const typesWithDetail = symbols.types.filter(t => {
+      if (typeof t !== 'string') return true; // always show types with members
+      return !t.startsWith('export'); // filter exported plain strings (already in Exports)
+    });
+    if (typesWithDetail.length > 0) {
       out.add('Types:');
-      nonExportedTypes.forEach(t => out.add('  ' + t));
+      for (const t of typesWithDetail) {
+        if (typeof t === 'string') {
+          out.add('  ' + t);
+        } else {
+          out.add('  ' + t.signature);
+          t.members.forEach(m => out.add('    ' + m));
+        }
+      }
       out.blank();
     }
 
@@ -335,6 +456,18 @@ function formatSymbols(symbols, lang, out) {
       out.add('Classes:');
       for (const cls of symbols.classes) {
         out.add('  ' + cls.signature);
+        if (cls.fields && cls.fields.length > 0) {
+          if (cls.isEnum) {
+            const MAX = 6;
+            if (cls.fields.length <= MAX) {
+              out.add('    ' + cls.fields.join(', '));
+            } else {
+              out.add('    ' + cls.fields.slice(0, MAX).join(', ') + `, ... +${cls.fields.length - MAX} more`);
+            }
+          } else {
+            cls.fields.forEach(f => out.add('    ' + f));
+          }
+        }
         cls.methods.forEach(m => out.add('    ' + m));
       }
       out.blank();
@@ -399,10 +532,16 @@ function countSymbols(symbols) {
   if (symbols.exports) count += symbols.exports.length;
   if (symbols.classes) {
     count += symbols.classes.length;
-    symbols.classes.forEach(c => count += c.methods?.length || 0);
+    symbols.classes.forEach(c => {
+      count += c.methods?.length || 0;
+      count += c.fields?.length || 0;
+    });
   }
   if (symbols.functions) count += symbols.functions.length;
-  if (symbols.types) count += symbols.types.length;
+  if (symbols.types) {
+    count += symbols.types.length;
+    symbols.types.forEach(t => count += t.members?.length || 0);
+  }
   if (symbols.constants) count += symbols.constants.length;
   if (symbols.modules) count += symbols.modules.length;
   return count;
