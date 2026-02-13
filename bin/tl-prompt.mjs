@@ -31,8 +31,11 @@ function discoverTools() {
   const tools = [];
   const binDir = __dirname;
 
+  // Tools excluded from prompt output (low-value or deprecated)
+  const skip = new Set(['tl-prompt.mjs', 'tl-secrets.mjs', 'tl-stack.mjs', 'tl-todo.mjs']);
+
   const files = readdirSync(binDir)
-    .filter(f => f.startsWith('tl-') && f.endsWith('.mjs') && f !== 'tl-prompt.mjs');
+    .filter(f => f.startsWith('tl-') && f.endsWith('.mjs') && !skip.has(f));
 
   for (const file of files) {
     try {
@@ -101,7 +104,7 @@ Use these tools to explore the codebase efficiently and save context tokens.
 - **Before modifying a file**, run \`tl-impact <file>\` to understand what depends on it and what might break.
 - **Before committing**, run \`tl-guard\` to catch secrets, new TODOs, unused exports, and circular dependencies.
 - **When running tests, builds, or linters**, wrap with \`tl-run "<command>"\` instead of running directly — it extracts only errors and key output.
-- **When exploring an unfamiliar codebase**, start with \`tl-structure\` then \`tl-stack\` before diving into files.
+- **When exploring an unfamiliar codebase**, start with \`tl-structure\` before diving into files.
 - **Before reading a large file**, check \`tl-context <file>\` — if it's over 1000 tokens, use \`tl-symbols\` or \`tl-snippet <name>\` instead.
 
 ### Tips
