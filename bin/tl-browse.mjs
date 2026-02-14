@@ -35,7 +35,7 @@ ${COMMON_OPTIONS_HELP}
 Examples:
   tl-browse https://docs.example.com/api         # Fetch as markdown
   tl-browse https://example.com --no-native      # Force HTML conversion
-  tl-browse https://example.com -t               # Show token count
+  tl-browse https://example.com -t 2000           # Limit to ~2000 tokens
   tl-browse https://example.com -l 50            # Limit to 50 lines
   tl-browse https://example.com -j               # JSON output
   tl-browse https://example.com -q               # No header, just content
