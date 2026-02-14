@@ -178,7 +178,7 @@ const tokens = result.tokens || estimateTokens(result.markdown);
 
 if (!options.quiet) {
   out.header(`# ${url}`);
-  out.add(`Source: ${result.source} | ~${formatTokens(tokens)}`);
+  out.add(`Source: ${result.source} | ~${formatTokens(tokens)} tokens`);
   out.blank();
 }
 
