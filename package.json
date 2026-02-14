@@ -23,6 +23,7 @@
     "tl-analyze": "bin/tl-analyze.mjs",
     "tl-api": "bin/tl-api.mjs",
     "tl-blame": "bin/tl-blame.mjs",
+    "tl-browse": "bin/tl-browse.mjs",
     "tl-cache": "bin/tl-cache.mjs",
     "tl-changelog": "bin/tl-changelog.mjs",
     "tl-config": "bin/tl-config.mjs",
@@ -78,6 +79,9 @@
     "context",
     "developer"
   ],
+  "dependencies": {
+    "node-html-markdown": "^2.0.0"
+  },
   "author": "Edin Mujkanovic",
   "license": "MIT"
 }

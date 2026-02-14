@@ -5,7 +5,7 @@
 <h1 align="center">tokenlean</h1>
 
 <p align="center">
-  <strong>39 CLI tools that let AI agents understand codebases without burning tokens</strong>
+  <strong>40 CLI tools that let AI agents understand codebases without burning tokens</strong>
 </p>
 
 <p align="center">
@@ -27,7 +27,7 @@
 
 ---
 
-**Zero dependencies** — only Node.js built-ins, installs in seconds
+**Minimal dependencies** — one optional dep (node-html-markdown), installs in seconds
 &nbsp;&middot;&nbsp;
 **Token-conscious** — every tool outputs only what's needed, nothing more
 &nbsp;&middot;&nbsp;
@@ -185,6 +185,7 @@ Add tokenlean instructions to your AI tool's config with a single command:
 | `tl-config`     | Show/manage configuration                | `tl-config --init`          |
 | `tl-context7`   | Look up library docs via Context7 API    | `tl-context7 react "hooks"` |
 | `tl-name`       | Check name availability (npm/GH/domains) | `tl-name myproject -s`      |
+| `tl-browse`     | Fetch URL as clean markdown              | `tl-browse https://docs.example.com` |
 | `tl-playwright` | Headless browser content extraction      | `tl-playwright example.com` |
 | `tl-prompt`     | Generate AI agent instructions           | `tl-prompt --minimal`       |
 | `tl-run`        | Smart command runner with summaries      | `tl-run "npm test"`         |
@@ -394,10 +395,11 @@ tl-run "npm test" -j               # Structured JSON output
 <summary><strong>Looking up documentation</strong></summary>
 
 ```bash
-tl-context7 react "useEffect"      # Look up React docs
-tl-context7 nextjs "app router"    # Next.js docs
-tl-npm lodash --deps               # Check package dependencies
-tl-npm chalk --versions            # Version history
+tl-browse https://docs.example.com/api  # Fetch docs as markdown
+tl-context7 react "useEffect"           # Look up React docs via Context7
+tl-context7 nextjs "app router"         # Next.js docs
+tl-npm lodash --deps                    # Check package dependencies
+tl-npm chalk --versions                 # Version history
 ```
 
 </details>
@@ -406,10 +408,11 @@ tl-npm chalk --versions            # Version history
 <summary><strong>Extracting web content</strong></summary>
 
 ```bash
-tl-playwright example.com                 # Extract page text
+tl-browse https://example.com/docs        # Fast: native markdown or HTML conversion
+tl-browse https://example.com -t 2000     # Limit to ~2000 tokens
+tl-playwright example.com                 # Full: headless browser (JS-rendered pages)
 tl-playwright example.com -s "h1,h2,h3"  # Extract headings only
 tl-playwright example.com --screenshot p  # Save screenshot
-tl-playwright example.com --eval "title"  # Evaluate JS expression
 ```
 
 </details>
