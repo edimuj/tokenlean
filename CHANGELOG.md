@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-02-15
+
+### Added
+- **Agent Skills** — three ready-made workflows following the [Agent Skills](https://agentskills.io) spec:
+  - `code-review` — PR review with blast radius, complexity, and targeted code reading
+  - `explore-codebase` — understand an unfamiliar project in minutes
+  - `safe-refactor` — rename, move, or extract code with impact verification
+- `tl-prompt` restructured around core tools and decision rules (when to use tl-* vs. just reading the file)
+- README: Essential tools tier (open by default), Agent Skills section
+
+## [0.14.0] - 2026-02-14
+
+### Added
+- `tl-browse` — Fetch any URL as clean markdown (native markdown via Cloudflare, HTML conversion fallback)
+
+## [0.13.0] - 2026-02-12
+
 ### Added
 - `tl-analyze` — Composite file profile: chains symbols + deps + impact + complexity + related into one compact view
 - `tl-snippet` — Extract function/class body by name (supports `Class.method` and `file:method` syntax)
