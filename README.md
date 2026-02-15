@@ -12,7 +12,6 @@
   <a href="https://www.npmjs.com/package/tokenlean"><img src="https://img.shields.io/npm/v/tokenlean.svg" alt="npm version"></a>
   <a href="https://www.npmjs.com/package/tokenlean"><img src="https://img.shields.io/npm/dm/tokenlean.svg" alt="npm downloads"></a>
   <a href="https://github.com/edimuj/tokenlean/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/tokenlean.svg" alt="license"></a>
-  <a href="https://github.com/edimuj/tokenlean"><img src="https://img.shields.io/github/stars/edimuj/tokenlean.svg?style=social" alt="GitHub stars"></a>
 </p>
 
 <p align="center">
@@ -21,6 +20,7 @@
   <a href="#all-tools">All Tools</a> •
   <a href="#language-support">Language Support</a> •
   <a href="#ai-agent-integration">AI Integration</a> •
+  <a href="#agent-skills">Skills</a> •
   <a href="#workflows">Workflows</a> •
   <a href="#changelog">Changelog</a>
 </p>
@@ -108,21 +108,53 @@ Add tokenlean instructions to your AI tool's config with a single command:
 | GitHub Copilot | `tl-prompt >> .github/copilot-instructions.md` |
 | Windsurf       | `tl-prompt --minimal >> .windsurfrules`        |
 
+## Agent Skills
+
+Ready-made workflows following the [Agent Skills](https://agentskills.io) open format. Copy to your skills directory or use directly.
+
+| Skill | What it does |
+|-------|-------------|
+| [`code-review`](skills/code-review/SKILL.md) | Review PRs efficiently — scope, blast radius, complexity, then targeted code reading |
+| [`explore-codebase`](skills/explore-codebase/SKILL.md) | Understand an unfamiliar project in minutes without reading everything |
+| [`safe-refactor`](skills/safe-refactor/SKILL.md) | Rename, move, or extract code with impact analysis and verification at each step |
+
+```bash
+# Claude Code — copy a skill
+cp -r node_modules/tokenlean/skills/code-review ~/.claude/skills/
+
+# Or clone and pick what you need
+git clone https://github.com/edimuj/tokenlean.git
+cp -r tokenlean/skills/code-review ~/.claude/skills/
+```
+
 ## All Tools
 
 <details open>
-<summary><strong>Before Reading Files</strong> — understand structure without reading implementations</summary>
+<summary><strong>Essential</strong> — the tools agents use 90% of the time</summary>
+
+| Tool           | Description                                    | Example                          |
+|----------------|------------------------------------------------|----------------------------------|
+| `tl-symbols`   | Function/class signatures without bodies       | `tl-symbols src/utils.ts`        |
+| `tl-snippet`   | Extract one function/class by name             | `tl-snippet handleSubmit`        |
+| `tl-impact`    | Blast radius — what depends on this file       | `tl-impact src/auth.ts`          |
+| `tl-run`       | Token-efficient command output (tests, builds) | `tl-run "npm test"`              |
+| `tl-guard`     | Pre-commit check (secrets, TODOs, unused, circular) | `tl-guard`                  |
+| `tl-structure` | Project overview with token estimates          | `tl-structure src/`              |
+| `tl-browse`    | Fetch any URL as clean markdown                | `tl-browse https://docs.example.com` |
+| `tl-context7`  | Look up library docs via Context7 API          | `tl-context7 react "hooks"`      |
+| `tl-component` | React component analyzer (props, hooks, state) | `tl-component Button.tsx`        |
+| `tl-analyze`   | Composite file profile (5 tools in 1)          | `tl-analyze src/auth.ts`         |
+
+</details>
+
+<details>
+<summary><strong>Understanding Code</strong> — structure and signatures without reading implementations</summary>
 
 | Tool           | Description                              | Example                   |
 |----------------|------------------------------------------|---------------------------|
-| `tl-analyze`   | Composite file profile (5 tools in 1)   | `tl-analyze src/auth.ts`  |
-| `tl-structure` | Project overview with token estimates    | `tl-structure src/`       |
 | `tl-context`   | Estimate token usage for files/dirs      | `tl-context src/api/`     |
-| `tl-symbols`   | Function/class signatures without bodies | `tl-symbols src/utils.ts` |
-| `tl-snippet`   | Extract function/class body by name      | `tl-snippet handleSubmit` |
 | `tl-types`     | Full TypeScript type definitions         | `tl-types src/types/`     |
 | `tl-exports`   | Public API surface of a module           | `tl-exports src/lib/`     |
-| `tl-component` | React component analyzer (props, hooks)  | `tl-component Button.tsx` |
 | `tl-docs`      | Extract JSDoc/TSDoc documentation        | `tl-docs src/utils/`      |
 | `tl-entry`     | Find entry points and main files         | `tl-entry src/`           |
 | `tl-schema`    | Extract DB schema from ORMs/migrations   | `tl-schema`               |
@@ -135,7 +167,6 @@ Add tokenlean instructions to your AI tool's config with a single command:
 
 | Tool            | Description                                 | Example                             |
 |-----------------|---------------------------------------------|-------------------------------------|
-| `tl-impact`     | Blast radius — what depends on this file    | `tl-impact src/auth.ts`             |
 | `tl-deps`       | Show what a file imports (with tree mode)   | `tl-deps src/api.ts --tree`         |
 | `tl-related`    | Find tests, types, and importers            | `tl-related src/Button.tsx`         |
 | `tl-flow`       | Call graph — what calls this, what it calls | `tl-flow src/utils.ts`              |
@@ -183,12 +214,9 @@ Add tokenlean instructions to your AI tool's config with a single command:
 |-----------------|------------------------------------------|-----------------------------|
 | `tl-cache`      | Manage ripgrep result cache              | `tl-cache stats`            |
 | `tl-config`     | Show/manage configuration                | `tl-config --init`          |
-| `tl-context7`   | Look up library docs via Context7 API    | `tl-context7 react "hooks"` |
 | `tl-name`       | Check name availability (npm/GH/domains) | `tl-name myproject -s`      |
-| `tl-browse`     | Fetch URL as clean markdown              | `tl-browse https://docs.example.com` |
 | `tl-playwright` | Headless browser content extraction      | `tl-playwright example.com` |
 | `tl-prompt`     | Generate AI agent instructions           | `tl-prompt --minimal`       |
-| `tl-run`        | Smart command runner with summaries      | `tl-run "npm test"`         |
 
 </details>
 
