@@ -58,9 +58,18 @@ function normalizeUrl(raw) {
 // HTML → Markdown Conversion
 // ─────────────────────────────────────────────────────────────
 
+function extractMainContent(html) {
+  // Prefer <main>, fall back to <article>, else use full HTML
+  const mainMatch = html.match(/<main[\s>][\s\S]*<\/main>/i);
+  if (mainMatch) return mainMatch[0];
+  const articleMatch = html.match(/<article[\s>][\s\S]*<\/article>/i);
+  if (articleMatch) return articleMatch[0];
+  return html;
+}
+
 function convertHtml(html) {
-  return NodeHtmlMarkdown.translate(html, {
-    ignore: ['nav', 'footer', 'header', 'aside'],
+  return NodeHtmlMarkdown.translate(extractMainContent(html), {
+    ignore: ['nav', 'footer', 'header', 'aside', 'script', 'style', 'svg', 'noscript', 'form'],
     maxConsecutiveNewlines: 3
   });
 }
@@ -81,6 +90,11 @@ async function fetchMarkdown(url, { native = true, timeout = DEFAULT_TIMEOUT } =
   try {
     const response = await fetch(url, { headers, signal: controller.signal, redirect: 'follow' });
     clearTimeout(timer);
+
+    // 406 means server rejected Accept: text/markdown — retry as HTML
+    if (response.status === 406 && native) {
+      return fetchMarkdown(url, { native: false, timeout });
+    }
 
     if (!response.ok) {
       return { error: `HTTP ${response.status} ${response.statusText}` };

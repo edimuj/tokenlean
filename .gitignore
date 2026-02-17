@@ -35,3 +35,5 @@ IMPROVEMENT_IDEAS.md
 
 .claude-rig
 .private
+# Nightshift plan artifacts (keep out of version control)
+.nightshift-plan
