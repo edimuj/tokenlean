@@ -20,8 +20,10 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { readFileSync } from 'fs';
-import { basename, extname, relative } from 'path';
+import { readFileSync } from 'node:fs';
+import { basename, dirname, extname, join, relative } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   createOutput,
   parseCommonArgs,
@@ -348,6 +350,22 @@ defs = defs.filter(d => {
 
 if (defs.length === 0) {
   out.add(`No definition found for "${displayName}"`);
+
+  // Show available symbols so the agent doesn't need a separate tl-symbols call
+  if (targetFile) {
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const symbolsTool = join(__dirname, 'tl-symbols.mjs');
+    const result = spawnSync(process.execPath, [symbolsTool, targetFile], {
+      encoding: 'utf-8',
+      timeout: 5000
+    });
+    if (result.stdout && result.status === 0) {
+      out.blank();
+      out.add('Available symbols:');
+      out.add(result.stdout.trimEnd());
+    }
+  }
+
   out.print();
   process.exit(1);
 }
