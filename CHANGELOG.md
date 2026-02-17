@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.15.3] - 2026-02-17
+
+### Fixed
+- `tl-snippet` now shows available symbols when a definition isn't found (eliminates the common agent pattern of failed snippet → separate tl-symbols call)
+
 ## [0.15.2] - 2026-02-17
 
 ### Fixed
