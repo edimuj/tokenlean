@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-02-17
+
+### Fixed
+- `tl-browse` auto-retries without `Accept: text/markdown` on HTTP 406 (fixes GitHub URLs and other sites that reject markdown content negotiation)
+- `tl-browse` extracts `<main>` or `<article>` content before HTML conversion, removing site chrome (nav bars, sidebars, footers)
+- `tl-browse` ignores `script`, `style`, `svg`, `noscript`, `form` tags during HTML conversion
+
 ## [0.15.0] - 2026-02-15
 
 ### Added
