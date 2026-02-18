@@ -367,7 +367,7 @@ if (defs.length === 0) {
   }
 
   out.print();
-  process.exit(1);
+  process.exit(0);
 }
 
 // Extract and display

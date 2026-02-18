@@ -338,7 +338,7 @@ const coverageSource = findCoverageData(projectRoot);
 if (!coverageSource) {
   console.error('No coverage data found. Run your tests with coverage first.');
   console.error('Looked for: coverage/lcov.info, coverage/coverage-final.json, .nyc_output/');
-  process.exit(1);
+  process.exit(0);
 }
 
 // Load coverage
@@ -346,7 +346,7 @@ const coverage = loadCoverage(coverageSource, projectRoot);
 
 if (coverage.size === 0) {
   console.error('Coverage data is empty');
-  process.exit(1);
+  process.exit(0);
 }
 
 // Filter by target path if specified

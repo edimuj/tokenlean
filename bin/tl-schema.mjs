@@ -749,7 +749,7 @@ if (targetPath && existsSync(targetPath) && statSync(targetPath).isFile()) {
 if (sources.length === 0) {
   console.error('No database schema found. Supported: Prisma, Drizzle, TypeORM, SQL migrations, Mongoose');
   console.error('Use --orm <type> to force a specific parser');
-  process.exit(1);
+  process.exit(0);
 }
 
 // Parse all sources
@@ -794,7 +794,7 @@ allTables = Array.from(tableMap.values());
 
 if (allTables.length === 0) {
   console.error('No tables found in schema');
-  process.exit(1);
+  process.exit(0);
 }
 
 // Output

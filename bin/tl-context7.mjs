@@ -356,7 +356,7 @@ try {
       const libs = searchResult.data;
       if (!Array.isArray(libs) || libs.length === 0) {
         console.error(`No libraries found matching "${library}". Try a different name.`);
-        process.exit(1);
+        process.exit(0);
       }
 
       const bestMatch = libs[0];

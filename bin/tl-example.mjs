@@ -401,7 +401,7 @@ function main() {
 
   if (rawMatches.length === 0) {
     console.error(`No matches found for "${pattern}"`);
-    process.exit(1);
+    process.exit(0);
   }
 
   // Parse
