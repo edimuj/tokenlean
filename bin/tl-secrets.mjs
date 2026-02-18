@@ -20,8 +20,9 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { readFileSync, existsSync, statSync } from 'fs';
-import { join, relative, extname, basename } from 'path';
+import { readFileSync, existsSync, statSync } from 'node:fs';
+import { join, relative, extname, basename } from 'node:path';
+import { execSync } from 'node:child_process';
 import {
   createOutput,
   parseCommonArgs,
@@ -514,7 +515,6 @@ function maskSecret(value) {
 // ─────────────────────────────────────────────────────────────
 
 function getStagedFiles(projectRoot) {
-  const { execSync } = require('child_process');
   try {
     const output = execSync('git diff --cached --name-only --diff-filter=ACM', {
       cwd: projectRoot,
