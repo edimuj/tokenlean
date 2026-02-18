@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+## [0.15.6] - 2026-02-18
+
+### Fixed
+- Normalized exit codes across `tl-context7`, `tl-coverage`, `tl-example`, `tl-schema`, `tl-snippet` — return 0 when no matches/data found instead of 1 (exit code 1 should indicate errors, not empty results)
 
 ## [0.15.5] - 2026-02-18
 
