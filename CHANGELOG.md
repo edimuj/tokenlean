@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.15.4] - 2026-02-18
+
+### Fixed
+- `tl-secrets` ESM cleanup — added `node:` prefix to fs/path imports, replaced `require('child_process')` with ESM import
+
 ## [0.15.3] - 2026-02-17
 
 ### Fixed
