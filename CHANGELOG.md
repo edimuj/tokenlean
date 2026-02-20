@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+
+## [0.15.7] - 2026-02-20
+
+### Fixed
+- Hardened security across 4 tools: `tl-secrets`, `tl-api`, `tl-env`, `tl-npm` — use spawnSync with array args instead of shell execution, preventing command injection
+
+### Changed
+- Migrated `tl-secrets` to use `gitCommand()` wrapper from src/shell.mjs
+- Removed dead `shellEscape` utility (only used in one tool, now migrated)
+- Extracted `CODE_EXTENSIONS` and `findCodeFiles()` to src/project.mjs for reuse across tools
+
+### Documentation
+- Fixed tool count in README (now 51 tools vs. stale 40)
+- Added missing tools to tables and capability matrices
 ## [0.15.6] - 2026-02-18
 
 ### Fixed
