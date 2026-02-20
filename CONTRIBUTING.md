@@ -27,11 +27,14 @@ tl-structure --help
 ```
 bin/           # CLI entry points (tl-*.mjs)
 src/
-  output.mjs   # Common flags (-l, -t, -j, -q, -h), formatting, token estimation
-  project.mjs  # File categorization, language detection, skip/important logic
-  cache.mjs    # LRU disk cache with git-based invalidation
-  traverse.mjs # Fast file traversal with symlink protection
-  config.mjs   # Config file loading (.tokenleanrc.json)
+  output.mjs       # Common flags (-l, -t, -j, -q, -h), formatting, token estimation
+  project.mjs      # File categorization, language detection, skip/important logic
+  cache.mjs        # LRU disk cache with git-based invalidation
+  traverse.mjs     # Fast file traversal with symlink protection
+  config.mjs       # Config file loading (.tokenleanrc.json)
+  shell.mjs        # Safe git/rg wrappers (spawnSync, no shell injection)
+  generic-lang.mjs # Regex-based symbol/import extraction for non-JS/TS languages
+skills/        # Agent skills (code-review, explore-codebase, safe-refactor)
 ```
 
 ## Adding a New Tool
@@ -124,7 +127,7 @@ tl-<name> src/ --json
 
 These aren't suggestions — they're the rules of the game:
 
-1. **Zero dependencies** — Only Node.js built-ins. No `package-lock.json` in production.
+1. **Minimal dependencies** — One optional dep (node-html-markdown for tl-browse), otherwise Node.js built-ins only.
 2. **Single purpose** — Each tool does one thing well. If it does two things, it's two tools.
 3. **Token-conscious** — Every byte of output matters. No verbose explanations, no decorative borders.
 4. **Fast** — No heavy parsing, no AST analysis, no external services (unless that's the tool's purpose).

@@ -5,7 +5,7 @@
 <h1 align="center">tokenlean</h1>
 
 <p align="center">
-  <strong>40 CLI tools that let AI agents understand codebases without burning tokens</strong>
+  <strong>46 CLI tools that let AI agents understand codebases without burning tokens</strong>
 </p>
 
 <p align="center">
@@ -157,6 +157,7 @@ cp -r tokenlean/skills/code-review ~/.claude/skills/
 | `tl-exports`   | Public API surface of a module           | `tl-exports src/lib/`     |
 | `tl-docs`      | Extract JSDoc/TSDoc documentation        | `tl-docs src/utils/`      |
 | `tl-entry`     | Find entry points and main files         | `tl-entry src/`           |
+| `tl-scope`     | Show what symbols are in scope at a line | `tl-scope src/cache.mjs:52` |
 | `tl-schema`    | Extract DB schema from ORMs/migrations   | `tl-schema`               |
 | `tl-stack`     | Auto-detect project technology stack     | `tl-stack`                |
 
@@ -172,6 +173,8 @@ cp -r tokenlean/skills/code-review ~/.claude/skills/
 | `tl-flow`       | Call graph — what calls this, what it calls | `tl-flow src/utils.ts`              |
 | `tl-coverage`   | Test coverage info for files                | `tl-coverage src/`                  |
 | `tl-complexity` | Code complexity metrics                     | `tl-complexity src/ --threshold 10` |
+| `tl-errors`     | Map error types and throw points            | `tl-errors src/`                    |
+| `tl-test-map`   | Map source files to their test files        | `tl-test-map src/cache.mjs`         |
 | `tl-style`      | Detect coding conventions from code         | `tl-style src/`                     |
 
 </details>
