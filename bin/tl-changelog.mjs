@@ -20,6 +20,8 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import {
   createOutput,
   parseCommonArgs,
@@ -38,6 +40,7 @@ Options:
   --to <ref>            End at tag/commit (default: HEAD)
   --unreleased          Show changes since last tag
   --all                 Show all commits (not just conventional)
+  --draft               Draft a release entry with semver bump suggestion
   --format <fmt>        Output format: markdown, plain, compact (default: markdown)
   --with-hash           Include commit hashes
   --with-author         Include commit authors
@@ -52,6 +55,7 @@ Examples:
   tl-changelog --unreleased         # Unreleased changes
   tl-changelog --format plain       # Plain text output
   tl-changelog --with-author        # Include authors
+  tl-changelog --draft              # Draft release entry with bump suggestion
 
 Conventional Commits:
   feat:     New features
@@ -344,6 +348,83 @@ function capitalize(str) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Draft Mode — Semver Suggestion
+// ─────────────────────────────────────────────────────────────
+
+function suggestBump(commits) {
+  const parsed = commits.map(c => parseCommit(c));
+  const hasBreaking = parsed.some(c => c.isBreaking);
+  const hasFeats = parsed.some(c => c.type === 'feat');
+
+  if (hasBreaking) return 'major';
+  if (hasFeats) return 'minor';
+  return 'patch';
+}
+
+function bumpVersion(version, bump) {
+  const parts = version.replace(/^v/, '').split('.').map(Number);
+  if (bump === 'major') return `${parts[0] + 1}.0.0`;
+  if (bump === 'minor') return `${parts[0]}.${parts[1] + 1}.0`;
+  return `${parts[0]}.${parts[1]}.${parts[2] + 1}`;
+}
+
+function getCurrentVersion(projectRoot) {
+  try {
+    const pkg = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf-8'));
+    return pkg.version || '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+function formatDraftEntry(version, groups, breaking) {
+  const today = new Date().toISOString().split('T')[0];
+  const lines = [`## [${version}] - ${today}`, ''];
+
+  // Map commit types to changelog categories
+  const CATEGORY_MAP = {
+    feat: 'Added',
+    fix: 'Fixed',
+    perf: 'Changed',
+    refactor: 'Changed',
+    docs: 'Changed',
+    style: 'Changed',
+    chore: 'Changed',
+    ci: 'Changed',
+    build: 'Changed',
+    test: 'Changed',
+    revert: 'Changed'
+  };
+
+  // Group by changelog category
+  const categories = {};
+  for (const [type, commits] of groups) {
+    const category = CATEGORY_MAP[type] || 'Changed';
+    if (!categories[category]) categories[category] = [];
+    for (const commit of commits) {
+      categories[category].push(commit);
+    }
+  }
+
+  // Output in standard order: Added, Changed, Fixed
+  const ORDER = ['Added', 'Changed', 'Fixed'];
+  for (const category of ORDER) {
+    const commits = categories[category];
+    if (!commits || commits.length === 0) continue;
+
+    lines.push(`### ${category}`);
+    for (const commit of commits) {
+      let desc = commit.description;
+      if (commit.scope) desc = `**${commit.scope}:** ${desc}`;
+      lines.push(`- ${desc}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────────────────────
 
@@ -358,6 +439,7 @@ let withHash = false;
 let withAuthor = false;
 let withDate = false;
 let groupBreaking = false;
+let draft = false;
 let range = null;
 
 for (let i = 0; i < options.remaining.length; i++) {
@@ -382,6 +464,8 @@ for (let i = 0; i < options.remaining.length; i++) {
     withDate = true;
   } else if (arg === '--group-breaking') {
     groupBreaking = true;
+  } else if (arg === '--draft') {
+    draft = true;
   } else if (!arg.startsWith('-') && arg.includes('..')) {
     range = arg;
   } else if (!arg.startsWith('-')) {
@@ -425,6 +509,30 @@ if (commits.length === 0) {
 // Group and format
 const formatOptions = { withHash, withAuthor, withDate, groupBreaking, includeAll };
 const { groups, breaking } = groupCommits(commits, formatOptions);
+
+// Draft mode — output release entry with bump suggestion
+if (draft) {
+  const currentVersion = getCurrentVersion(projectRoot);
+  const bump = suggestBump(commits);
+  const nextVersion = bumpVersion(currentVersion, bump);
+
+  const typeCounts = groups.map(([type, c]) => `${c.length} ${type}`).join(', ');
+
+  if (options.json) {
+    out.setData('currentVersion', currentVersion);
+    out.setData('suggestedBump', bump);
+    out.setData('nextVersion', nextVersion);
+    out.setData('commits', commits.map(c => parseCommit(c)));
+    out.setData('entry', formatDraftEntry(nextVersion, groups, breaking));
+  } else {
+    out.add(`Suggested bump: ${bump} (${typeCounts})`);
+    out.blank();
+    out.add(formatDraftEntry(nextVersion, groups, breaking));
+  }
+
+  out.print();
+  process.exit(0);
+}
 
 // Generate title
 let title = '';
