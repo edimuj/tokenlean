@@ -10,7 +10,7 @@
  *   importantFiles: ["ARCHITECTURE.md"]
  */
 
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, readdirSync } from 'fs';
 import { dirname, join, relative, extname } from 'path';
 import { getConfig } from './config.mjs';
 
@@ -274,4 +274,52 @@ export function isCodeFile(filePath) {
   ]);
 
   return codeLanguages.has(lang);
+}
+
+// ─────────────────────────────────────────────────────────────
+// JS/TS Code File Discovery
+// ─────────────────────────────────────────────────────────────
+
+export const CODE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts']);
+
+/**
+ * Recursively find JS/TS code files in a directory
+ * @param {string} dir - Directory to search
+ * @param {string[]} [files=[]] - Accumulator (for recursion)
+ * @param {Object} [options={}]
+ * @param {boolean} [options.includeTests=false] - Include .test./.spec. files
+ * @param {string[]} [options.ignorePatterns=[]] - Additional patterns to skip
+ */
+export function findCodeFiles(dir, files = [], options = {}) {
+  const { includeTests = false, ignorePatterns = [] } = options;
+  const entries = readdirSync(dir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+
+    if (ignorePatterns.length > 0 &&
+        ignorePatterns.some(p => entry.name.includes(p) || fullPath.includes(p))) {
+      continue;
+    }
+
+    if (entry.isDirectory()) {
+      if (!shouldSkip(entry.name, true)) {
+        findCodeFiles(fullPath, files, options);
+      }
+    } else if (entry.isFile()) {
+      const ext = extname(entry.name).toLowerCase();
+      if (CODE_EXTENSIONS.has(ext) && !shouldSkip(entry.name, false)) {
+        if (!includeTests) {
+          const lower = entry.name.toLowerCase();
+          if (lower.includes('.test.') || lower.includes('.spec.') ||
+              lower.includes('__tests__') || lower.includes('__mocks__')) {
+            continue;
+          }
+        }
+        files.push(fullPath);
+      }
+    }
+  }
+
+  return files;
 }

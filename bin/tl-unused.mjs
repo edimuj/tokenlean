@@ -20,14 +20,14 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
+import { readFileSync, existsSync, statSync } from 'fs';
 import { join, relative, dirname, basename, extname, resolve } from 'path';
 import {
   createOutput,
   parseCommonArgs,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
-import { findProjectRoot, shouldSkip } from '../src/project.mjs';
+import { findProjectRoot, findCodeFiles, CODE_EXTENSIONS } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
 import { ensureRipgrep, batchRipgrep } from '../src/traverse.mjs';
 
@@ -57,50 +57,6 @@ Note: This is a heuristic analysis. Some "unused" exports might be:
   - Entry points
   - Used by external packages
 `;
-
-// ─────────────────────────────────────────────────────────────
-// File Discovery
-// ─────────────────────────────────────────────────────────────
-
-const CODE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts']);
-
-function isCodeExtension(filePath) {
-  return CODE_EXTENSIONS.has(extname(filePath).toLowerCase());
-}
-
-function findCodeFiles(dir, files = [], options = {}) {
-  const { includeTests = false, ignorePatterns = [] } = options;
-  const entries = readdirSync(dir, { withFileTypes: true });
-
-  for (const entry of entries) {
-    const fullPath = join(dir, entry.name);
-
-    // Check ignore patterns
-    if (ignorePatterns.some(p => entry.name.includes(p) || fullPath.includes(p))) {
-      continue;
-    }
-
-    if (entry.isDirectory()) {
-      if (!shouldSkip(entry.name, true)) {
-        findCodeFiles(fullPath, files, options);
-      }
-    } else if (entry.isFile() && isCodeExtension(fullPath)) {
-      if (!shouldSkip(entry.name, false)) {
-        // Skip test files unless includeTests
-        if (!includeTests) {
-          const lower = entry.name.toLowerCase();
-          if (lower.includes('.test.') || lower.includes('.spec.') ||
-              lower.includes('__tests__') || lower.includes('__mocks__')) {
-            continue;
-          }
-        }
-        files.push(fullPath);
-      }
-    }
-  }
-
-  return files;
-}
 
 // ─────────────────────────────────────────────────────────────
 // Export Extraction
@@ -440,7 +396,7 @@ let files;
 let allProjectFiles;
 
 if (targetStat.isFile()) {
-  if (!isCodeExtension(targetDir)) {
+  if (!CODE_EXTENSIONS.has(extname(targetDir).toLowerCase())) {
     console.error(`Not a code file: ${targetDir}`);
     process.exit(1);
   }

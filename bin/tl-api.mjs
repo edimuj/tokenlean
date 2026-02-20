@@ -20,14 +20,14 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
-import { join, relative, extname } from 'path';
+import { readFileSync, existsSync, statSync } from 'fs';
+import { join, relative } from 'path';
 import {
   createOutput,
   parseCommonArgs,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
-import { findProjectRoot, shouldSkip } from '../src/project.mjs';
+import { findProjectRoot, findCodeFiles } from '../src/project.mjs';
 
 const HELP = `
 tl-api - Extract REST/GraphQL API endpoints from code
@@ -51,33 +51,6 @@ Detects:
   REST: Express, Fastify, Koa, Hono, NestJS decorators, fetch handlers
   GraphQL: Query/Mutation/Subscription definitions, resolvers
 `;
-
-// ─────────────────────────────────────────────────────────────
-// File Discovery
-// ─────────────────────────────────────────────────────────────
-
-const CODE_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts']);
-
-function findCodeFiles(dir, files = []) {
-  const entries = readdirSync(dir, { withFileTypes: true });
-
-  for (const entry of entries) {
-    const fullPath = join(dir, entry.name);
-
-    if (entry.isDirectory()) {
-      if (!shouldSkip(entry.name, true)) {
-        findCodeFiles(fullPath, files);
-      }
-    } else if (entry.isFile()) {
-      const ext = extname(entry.name).toLowerCase();
-      if (CODE_EXTENSIONS.has(ext) && !shouldSkip(entry.name, false)) {
-        files.push(fullPath);
-      }
-    }
-  }
-
-  return files;
-}
 
 // ─────────────────────────────────────────────────────────────
 // REST Endpoint Extraction
