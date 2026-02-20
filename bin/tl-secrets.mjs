@@ -22,7 +22,7 @@ if (process.argv.includes('--prompt')) {
 
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, relative, extname, basename } from 'node:path';
-import { execSync } from 'node:child_process';
+import { gitCommand } from '../src/shell.mjs';
 import {
   createOutput,
   parseCommonArgs,
@@ -515,15 +515,9 @@ function maskSecret(value) {
 // ─────────────────────────────────────────────────────────────
 
 function getStagedFiles(projectRoot) {
-  try {
-    const output = execSync('git diff --cached --name-only --diff-filter=ACM', {
-      cwd: projectRoot,
-      encoding: 'utf-8'
-    });
-    return output.trim().split('\n').filter(Boolean).map(f => join(projectRoot, f));
-  } catch {
-    return null;
-  }
+  const output = gitCommand(['diff', '--cached', '--name-only', '--diff-filter=ACM'], { cwd: projectRoot });
+  if (output === null) return null;
+  return output.split('\n').filter(Boolean).map(f => join(projectRoot, f));
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -8,14 +8,6 @@
 // Shell Escaping
 // ─────────────────────────────────────────────────────────────
 
-/**
- * Escape a string for safe use in shell double-quoted strings
- * Handles: $ ` \ " !
- */
-export function shellEscape(str) {
-  return str.replace(/[`$"\\!]/g, '\\$&');
-}
-
 // ─────────────────────────────────────────────────────────────
 // Token Estimation
 // ─────────────────────────────────────────────────────────────
