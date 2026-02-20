@@ -75,10 +75,39 @@ function convertHtml(html) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// SSRF Protection
+// ─────────────────────────────────────────────────────────────
+
+function isPrivateHost(hostname) {
+  if (hostname === 'localhost' || hostname === '0.0.0.0' || hostname === '[::]') return true;
+  // IPv4 private ranges
+  if (/^127\./.test(hostname)) return true;
+  if (/^10\./.test(hostname)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) return true;
+  if (/^192\.168\./.test(hostname)) return true;
+  if (/^169\.254\./.test(hostname)) return true; // link-local
+  // IPv6 loopback
+  if (hostname === '::1' || hostname === '[::1]') return true;
+  // Cloud metadata endpoints
+  if (hostname === 'metadata.google.internal') return true;
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Fetch
 // ─────────────────────────────────────────────────────────────
 
 async function fetchMarkdown(url, { native = true, timeout = DEFAULT_TIMEOUT } = {}) {
+  // Block requests to private/internal networks
+  try {
+    const parsed = new URL(url);
+    if (isPrivateHost(parsed.hostname)) {
+      return { error: 'Blocked: cannot fetch private/internal network addresses' };
+    }
+  } catch {
+    return { error: `Invalid URL: ${url}` };
+  }
+
   const headers = {};
   if (native) {
     headers['Accept'] = 'text/markdown';

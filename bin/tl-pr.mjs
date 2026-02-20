@@ -20,7 +20,7 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { basename, extname } from 'path';
 import {
@@ -165,17 +165,22 @@ function getChangedFiles(branch, base) {
 // ─────────────────────────────────────────────────────────────
 
 function isGhAvailable() {
-  return exec('gh --version') !== null;
+  const result = spawnSync('gh', ['--version'], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+  return result.status === 0;
 }
 
 function getPRInfo(prNumber) {
   if (!isGhAvailable()) return null;
 
-  const json = exec(`gh pr view ${prNumber} --json title,body,author,baseRefName,headRefName,additions,deletions,changedFiles,commits,files,state,mergeable`);
-  if (!json) return null;
+  const fields = 'title,body,author,baseRefName,headRefName,additions,deletions,changedFiles,commits,files,state,mergeable';
+  const result = spawnSync('gh', ['pr', 'view', String(prNumber), '--json', fields], {
+    encoding: 'utf-8',
+    stdio: ['pipe', 'pipe', 'pipe']
+  });
+  if (result.status !== 0 || !result.stdout) return null;
 
   try {
-    return JSON.parse(json);
+    return JSON.parse(result.stdout.trim());
   } catch {
     return null;
   }

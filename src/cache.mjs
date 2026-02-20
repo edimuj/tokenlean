@@ -176,7 +176,7 @@ export function getCacheDir(projectRoot) {
   const cacheDir = join(config.location, projectHash);
 
   if (!existsSync(cacheDir)) {
-    mkdirSync(cacheDir, { recursive: true });
+    mkdirSync(cacheDir, { recursive: true, mode: 0o700 });
   }
 
   return cacheDir;
@@ -325,7 +325,7 @@ export function setCached(key, data, projectRoot) {
   };
 
   try {
-    mkdirSync(dirname(filePath), { recursive: true });
+    mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
 
     writeFileSync(filePath, JSON.stringify(cacheEntry));
 

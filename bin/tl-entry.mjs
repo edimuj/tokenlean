@@ -20,13 +20,12 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { relative, resolve } from 'path';
 import {
   createOutput,
   parseCommonArgs,
-  shellEscape,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot } from '../src/project.mjs';
@@ -175,8 +174,10 @@ function findEntryPoints(searchPath, projectRoot, filterType) {
 
     for (const fileName of config.files) {
       try {
-        const cmd = `find "${shellEscape(searchPath)}" -name "${fileName}" -not -path "*/node_modules/*" 2>/dev/null || true`;
-        const output = execSync(cmd, { encoding: 'utf-8' });
+        const result = spawnSync('find', [
+          searchPath, '-name', fileName, '-not', '-path', '*/node_modules/*'
+        ], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
+        const output = result.stdout || '';
 
         for (const file of output.trim().split('\n')) {
           if (!file) continue;
