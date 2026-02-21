@@ -22,8 +22,8 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { existsSync } from 'fs';
-import { basename } from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { basename, join, resolve } from 'path';
 import {
   createOutput,
   parseCommonArgs,
@@ -40,6 +40,7 @@ Usage: tl-structure [path] [options]
 
 Options:
   --depth N, -d N    Maximum depth to show (default: 3)
+  --entry-points     Highlight entry points (main, bin, exports from package.json)
 ${COMMON_OPTIONS_HELP}
 
 Configure defaults in .tokenleanrc.json:
@@ -87,6 +88,71 @@ function printNode(entry, out, prefix, isLast) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// Entry Point Detection
+// ─────────────────────────────────────────────────────────────
+
+function detectEntryPoints(projectDir) {
+  const entries = [];
+  const pkgPath = join(projectDir, 'package.json');
+
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+
+      if (pkg.main) entries.push({ path: pkg.main, type: 'main' });
+      if (pkg.module) entries.push({ path: pkg.module, type: 'module' });
+
+      if (pkg.bin) {
+        if (typeof pkg.bin === 'string') {
+          entries.push({ path: pkg.bin, type: 'bin' });
+        } else {
+          for (const [name, path] of Object.entries(pkg.bin)) {
+            entries.push({ path, type: `bin:${name}` });
+          }
+        }
+      }
+
+      if (pkg.exports) {
+        if (typeof pkg.exports === 'string') {
+          entries.push({ path: pkg.exports, type: 'exports' });
+        } else {
+          for (const [key, value] of Object.entries(pkg.exports)) {
+            const resolved = typeof value === 'string' ? value :
+              (value.import || value.require || value.default || null);
+            if (resolved) entries.push({ path: resolved, type: `exports:${key}` });
+          }
+        }
+      }
+
+      // Scripts that hint at entry points
+      if (pkg.scripts?.start) {
+        const startMatch = pkg.scripts.start.match(/node\s+(\S+\.m?[jt]sx?)/);
+        if (startMatch) entries.push({ path: startMatch[1], type: 'scripts:start' });
+      }
+    } catch { /* ignore parse errors */ }
+  }
+
+  // Common entry patterns (only if no package.json entries found)
+  if (entries.length === 0) {
+    const commonEntries = [
+      'index.js', 'index.ts', 'index.mjs', 'main.js', 'main.ts',
+      'app.js', 'app.ts', 'server.js', 'server.ts',
+      'src/index.js', 'src/index.ts', 'src/index.mjs',
+      'src/main.js', 'src/main.ts', 'src/main.tsx',
+      'src/app.js', 'src/app.ts', 'src/app.tsx',
+      'src/App.tsx', 'src/App.jsx'
+    ];
+    for (const entry of commonEntries) {
+      if (existsSync(join(projectDir, entry))) {
+        entries.push({ path: entry, type: 'conventional' });
+      }
+    }
+  }
+
+  return entries;
+}
+
 // Main
 const args = process.argv.slice(2);
 const options = parseCommonArgs(args);
@@ -96,6 +162,7 @@ const structureConfig = getConfig('structure') || {};
 
 let targetPath = '.';
 let maxDepth = structureConfig.depth || 3;
+let showEntryPoints = false;
 
 // Parse tool-specific options
 for (let i = 0; i < options.remaining.length; i++) {
@@ -103,6 +170,8 @@ for (let i = 0; i < options.remaining.length; i++) {
   if ((arg === '--depth' || arg === '-d') && options.remaining[i + 1]) {
     maxDepth = parseInt(options.remaining[i + 1], 10);
     i++;
+  } else if (arg === '--entry-points') {
+    showEntryPoints = true;
   } else if (!arg.startsWith('-')) {
     targetPath = arg;
   }
@@ -139,5 +208,19 @@ out.blank();
 
 // Tree output
 printTree(tree, out, '', true);
+
+// Entry points
+if (showEntryPoints) {
+  const absTarget = resolve(targetPath);
+  const entryPoints = detectEntryPoints(absTarget);
+  if (entryPoints.length > 0) {
+    out.blank();
+    out.add('Entry points:');
+    for (const ep of entryPoints) {
+      out.add(`  ${ep.path} (${ep.type})`);
+    }
+    out.setData('entryPoints', entryPoints);
+  }
+}
 
 out.print();

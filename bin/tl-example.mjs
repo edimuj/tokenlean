@@ -48,6 +48,7 @@ Options:
   --type <type>         File type filter (e.g. "ts", "py")
   --def                 Prefer definitions over usages
   --usage               Prefer usages over definitions (default)
+  --exclude-tests       Exclude test/spec files from results
 ${COMMON_OPTIONS_HELP}
 
 Examples:
@@ -360,6 +361,7 @@ function main() {
   let glob = null;
   let type = null;
   let preferDef = false;
+  let excludeTests = false;
   const filteredArgs = [];
 
   for (let i = 0; i < args.length; i++) {
@@ -376,6 +378,8 @@ function main() {
       preferDef = true;
     } else if (arg === '--usage') {
       preferDef = false;
+    } else if (arg === '--exclude-tests') {
+      excludeTests = true;
     } else {
       filteredArgs.push(arg);
     }
@@ -405,7 +409,14 @@ function main() {
   }
 
   // Parse
-  const matches = parseMatches(rawMatches, dir);
+  let matches = parseMatches(rawMatches, dir);
+
+  // Filter out test files if requested
+  if (excludeTests) {
+    matches = matches.filter(m => !/\.(test|spec|e2e)\.[^.]+$/.test(m.basename) &&
+      !m.relPath.includes('__tests__') && !m.relPath.includes('__mocks__'));
+  }
+
   const totalFiles = new Set(matches.map(m => m.file)).size;
 
   // Select diverse examples

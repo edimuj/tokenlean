@@ -22,6 +22,9 @@ if (process.argv.includes('--prompt')) {
 }
 
 import { spawnSync } from 'child_process';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { join } from 'path';
+import { createHash } from 'crypto';
 import {
   createOutput,
   parseCommonArgs,
@@ -42,6 +45,7 @@ Options:
   --type <type>         Force output type: test, build, lint, generic (default: auto)
   --raw                 Show full output, no summarization
   --timeout <ms>        Command timeout in ms (default: 300000 / 5min)
+  --diff                Compare output against previous run of same command
 ${COMMON_OPTIONS_HELP}
 
 Examples:
@@ -462,6 +466,80 @@ function formatElapsed(ms) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Diff Cache (--diff)
+// ─────────────────────────────────────────────────────────────
+
+function getCacheDir() {
+  return join(process.env.HOME || '/tmp', '.cache', 'tokenlean', 'run');
+}
+
+function getCacheKey(command) {
+  const cwd = process.cwd();
+  return createHash('md5').update(`${cwd}:${command}`).digest('hex').slice(0, 12);
+}
+
+function loadPrevious(command) {
+  const cacheFile = join(getCacheDir(), `${getCacheKey(command)}.json`);
+  try {
+    return JSON.parse(readFileSync(cacheFile, 'utf-8'));
+  } catch { return null; }
+}
+
+function saveCurrent(command, result, type, summary) {
+  const cacheDir = getCacheDir();
+  mkdirSync(cacheDir, { recursive: true });
+  const cacheFile = join(cacheDir, `${getCacheKey(command)}.json`);
+  writeFileSync(cacheFile, JSON.stringify({
+    command, type, exitCode: result.exitCode, elapsed: result.elapsed,
+    summary: summary.summary || '',
+    failures: summary.failures || [],
+    errors: summary.errors || [],
+    violations: summary.violations || [],
+    timestamp: Date.now()
+  }) + '\n', 'utf-8');
+}
+
+function diffResults(prev, curr, type) {
+  const changes = [];
+
+  if (prev.exitCode !== curr.exitCode) {
+    const dir = curr.exitCode === 0 ? 'FIXED' : 'REGRESSED';
+    changes.push(`${dir}: exit ${prev.exitCode} -> ${curr.exitCode}`);
+  }
+
+  if (type === 'test') {
+    // Compare failure lists
+    const prevNames = new Set((prev.failures || []).map(f => f.name));
+    const currNames = new Set((curr.failures || []).map(f => f.name));
+
+    for (const name of currNames) {
+      if (!prevNames.has(name)) changes.push(`  NEW FAILURE: ${name}`);
+    }
+    for (const name of prevNames) {
+      if (!currNames.has(name)) changes.push(`  NOW PASSING: ${name}`);
+    }
+  }
+
+  if (type === 'build') {
+    const prevCount = (prev.errors || []).length;
+    const currCount = (curr.errors || []).length;
+    if (prevCount !== currCount) {
+      changes.push(`  Errors: ${prevCount} -> ${currCount}`);
+    }
+  }
+
+  if (type === 'lint') {
+    const prevCount = (prev.violations || []).reduce((s, v) => s + v.count, 0);
+    const currCount = (curr.violations || []).reduce((s, v) => s + v.count, 0);
+    if (prevCount !== currCount) {
+      changes.push(`  Violations: ${prevCount} -> ${currCount}`);
+    }
+  }
+
+  return changes;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────────────────────
 
@@ -471,6 +549,7 @@ function main() {
   // Parse common args, but we need to handle our custom args first
   let typeArg = null;
   let raw = false;
+  let diffMode = false;
   let timeout = null;
   const filteredArgs = [];
 
@@ -480,6 +559,8 @@ function main() {
       typeArg = args[++i];
     } else if (arg === '--raw') {
       raw = true;
+    } else if (arg === '--diff') {
+      diffMode = true;
     } else if (arg === '--timeout') {
       timeout = parseInt(args[++i], 10);
     } else {
@@ -647,6 +728,28 @@ function main() {
         out.add('output (last lines):');
         out.addLines(stdoutLines.slice(-20));
       }
+    }
+  }
+
+  // Diff mode: compare with previous run
+  if (diffMode) {
+    const prev = loadPrevious(command);
+    saveCurrent(command, result, type, summary);
+
+    if (prev) {
+      const changes = diffResults(prev, { exitCode: result.exitCode, failures: summary.failures, errors: summary.errors, violations: summary.violations }, type);
+      if (changes.length > 0) {
+        out.blank();
+        out.add('vs previous run:');
+        for (const c of changes) out.add(c);
+      } else {
+        out.blank();
+        out.add('vs previous run: no change');
+      }
+      if (opts.json) out.setData('diff', changes);
+    } else {
+      out.blank();
+      out.add('(no previous run to compare — result saved for next --diff)');
     }
   }
 

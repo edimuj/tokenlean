@@ -39,6 +39,7 @@ Usage: tl-symbols <file> [options]
 
 Options:
   --exports-only, -e    Show only exported symbols
+  --filter <type>       Show only: function, class, type, constant, export
 ${COMMON_OPTIONS_HELP}
 
 Examples:
@@ -554,7 +555,21 @@ function countSymbols(symbols) {
 const args = process.argv.slice(2);
 const options = parseCommonArgs(args);
 const exportsOnly = options.remaining.includes('--exports-only') || options.remaining.includes('-e');
-const filePath = options.remaining.find(a => !a.startsWith('-'));
+
+let filterType = null;
+for (let i = 0; i < options.remaining.length; i++) {
+  if (options.remaining[i] === '--filter' && options.remaining[i + 1]) {
+    filterType = options.remaining[++i].toLowerCase();
+  }
+}
+
+const VALID_FILTERS = ['function', 'class', 'type', 'constant', 'export'];
+if (filterType && !VALID_FILTERS.includes(filterType)) {
+  console.error(`Invalid filter: "${filterType}". Must be one of: ${VALID_FILTERS.join(', ')}`);
+  process.exit(1);
+}
+
+const filePath = options.remaining.find(a => !a.startsWith('-') && !VALID_FILTERS.includes(a.toLowerCase()));
 
 if (options.help || !filePath) {
   console.log(HELP);
@@ -587,6 +602,52 @@ switch (lang) {
     symbols = extractGenericSymbols(content);
     isGeneric = true;
     break;
+}
+
+// Apply filter if requested
+if (filterType) {
+  const filterMap = {
+    function: () => {
+      symbols.classes = [];
+      symbols.types = symbols.types ? [] : undefined;
+      symbols.constants = symbols.constants ? [] : undefined;
+      symbols.exports = symbols.exports ? symbols.exports.filter(e =>
+        /\bfunction\b/.test(e) || /=>\s*$/.test(e)) : undefined;
+      symbols.modules = symbols.modules ? [] : undefined;
+    },
+    class: () => {
+      symbols.functions = symbols.functions ? [] : undefined;
+      symbols.types = symbols.types ? [] : undefined;
+      symbols.constants = symbols.constants ? [] : undefined;
+      symbols.exports = symbols.exports ? symbols.exports.filter(e => /\bclass\b/.test(e)) : undefined;
+      symbols.modules = symbols.modules ? [] : undefined;
+    },
+    type: () => {
+      symbols.functions = symbols.functions ? [] : undefined;
+      symbols.classes = symbols.classes ? [] : undefined;
+      symbols.constants = symbols.constants ? [] : undefined;
+      symbols.exports = symbols.exports ? symbols.exports.filter(e =>
+        /\b(type|interface|enum)\b/.test(e)) : undefined;
+      symbols.modules = symbols.modules ? [] : undefined;
+    },
+    constant: () => {
+      symbols.functions = symbols.functions ? [] : undefined;
+      symbols.classes = symbols.classes ? [] : undefined;
+      symbols.types = symbols.types ? [] : undefined;
+      symbols.exports = symbols.exports ? symbols.exports.filter(e =>
+        /\bconst\b/.test(e) && !/=>/.test(e)) : undefined;
+      symbols.modules = symbols.modules ? [] : undefined;
+    },
+    export: () => {
+      // Keep only exports section, clear everything else
+      symbols.functions = [];
+      symbols.classes = [];
+      symbols.types = symbols.types ? [] : undefined;
+      symbols.constants = symbols.constants ? [] : undefined;
+      symbols.modules = symbols.modules ? [] : undefined;
+    }
+  };
+  if (filterMap[filterType]) filterMap[filterType]();
 }
 
 const symbolCount = countSymbols(symbols);

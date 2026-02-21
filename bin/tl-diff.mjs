@@ -20,6 +20,7 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
+import { readFileSync, existsSync } from 'fs';
 import {
   createOutput,
   parseCommonArgs,
@@ -36,6 +37,7 @@ Usage: tl-diff [ref] [options]
 Options:
   --staged             Show staged changes only
   --stat-only          Show just the summary (no file list)
+  --breaking           Detect breaking changes (removed/renamed exports)
 ${COMMON_OPTIONS_HELP}
 
 Examples:
@@ -107,6 +109,104 @@ function categorizeChanges(files) {
   return categories;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Breaking Change Detection
+// ─────────────────────────────────────────────────────────────
+
+const CODE_EXTS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.mts', '.cjs']);
+
+function extractExportNames(content) {
+  const exports = new Map(); // name -> signature (first 80 chars)
+  if (!content) return exports;
+
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('export ')) continue;
+
+    // export function foo(...)
+    let m = trimmed.match(/export\s+(?:async\s+)?function\s+(\w+)\s*(\([^)]*\))/);
+    if (m) { exports.set(m[1], trimmed.slice(0, 80)); continue; }
+
+    // export class Foo
+    m = trimmed.match(/export\s+(?:abstract\s+)?class\s+(\w+)/);
+    if (m) { exports.set(m[1], trimmed.slice(0, 80)); continue; }
+
+    // export const foo
+    m = trimmed.match(/export\s+const\s+(\w+)/);
+    if (m) { exports.set(m[1], trimmed.slice(0, 80)); continue; }
+
+    // export type/interface
+    m = trimmed.match(/export\s+(?:type|interface)\s+(\w+)/);
+    if (m) { exports.set(m[1], trimmed.slice(0, 80)); continue; }
+
+    // export enum
+    m = trimmed.match(/export\s+(?:const\s+)?enum\s+(\w+)/);
+    if (m) { exports.set(m[1], trimmed.slice(0, 80)); continue; }
+
+    // export { foo, bar }
+    m = trimmed.match(/export\s+\{([^}]+)\}/);
+    if (m) {
+      for (const name of m[1].split(',')) {
+        const clean = name.trim().split(/\s+as\s+/)[0].trim();
+        if (clean) exports.set(clean, `export { ${clean} }`);
+      }
+    }
+
+    // export default
+    m = trimmed.match(/export\s+default\s+(?:class|function)?\s*(\w+)?/);
+    if (m && m[1]) { exports.set('default', trimmed.slice(0, 80)); }
+  }
+
+  return exports;
+}
+
+function detectBreakingChanges(files, ref, staged) {
+  const breakingChanges = [];
+  const baseRef = staged ? 'HEAD' : (ref || 'HEAD');
+
+  for (const file of files) {
+    const ext = '.' + file.path.split('.').pop();
+    if (!CODE_EXTS.has(ext)) continue;
+
+    // Get old file content from git
+    const oldContent = gitCommand(['show', `${baseRef}:${file.path}`]);
+    if (oldContent === null) continue; // new file, no breaking changes possible
+
+    // Get current file content
+    let newContent = null;
+    if (existsSync(file.path)) {
+      try { newContent = readFileSync(file.path, 'utf-8'); } catch { /* skip */ }
+    }
+    if (newContent === null) continue; // deleted file — all exports removed, but that's obvious
+
+    const oldExports = extractExportNames(oldContent);
+    const newExports = extractExportNames(newContent);
+
+    const removed = [];
+    const changed = [];
+
+    for (const [name, oldSig] of oldExports) {
+      if (!newExports.has(name)) {
+        removed.push(name);
+      } else {
+        const newSig = newExports.get(name);
+        // Check for parameter signature changes
+        const oldParams = oldSig.match(/\(([^)]*)\)/);
+        const newParams = newSig.match(/\(([^)]*)\)/);
+        if (oldParams && newParams && oldParams[1] !== newParams[1]) {
+          changed.push(name);
+        }
+      }
+    }
+
+    if (removed.length > 0 || changed.length > 0) {
+      breakingChanges.push({ file: file.path, removed, changed });
+    }
+  }
+
+  return breakingChanges;
+}
+
 // Main
 const args = process.argv.slice(2);
 const options = parseCommonArgs(args);
@@ -116,11 +216,14 @@ let ref = '';
 let staged = false;
 let statOnly = false;
 
+let breaking = false;
 for (const arg of options.remaining) {
   if (arg === '--staged') {
     staged = true;
   } else if (arg === '--stat-only') {
     statOnly = true;
+  } else if (arg === '--breaking') {
+    breaking = true;
   } else if (!arg.startsWith('-')) {
     ref = arg;
   }
@@ -207,6 +310,28 @@ if (!statOnly) {
 
   out.header('Tip: Use --stat-only for just the summary, or check specific files with:');
   out.header('   git diff [ref] -- path/to/file.ts');
+}
+
+// Breaking change detection
+if (breaking) {
+  const breakingChanges = detectBreakingChanges(files, ref, staged);
+  if (breakingChanges.length > 0) {
+    out.blank();
+    out.add(`BREAKING CHANGES (${breakingChanges.length}):`);
+    for (const bc of breakingChanges) {
+      out.add(`  ${bc.file}:`);
+      for (const removed of bc.removed) {
+        out.add(`    - ${removed} (removed)`);
+      }
+      for (const changed of bc.changed) {
+        out.add(`    ~ ${changed} (signature changed)`);
+      }
+    }
+    out.setData('breakingChanges', breakingChanges);
+  } else {
+    out.blank();
+    out.add('No breaking changes detected');
+  }
 }
 
 out.print();

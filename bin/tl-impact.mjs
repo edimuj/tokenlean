@@ -42,6 +42,7 @@ Usage: tl-impact <file> [options]
 
 Options:
   --depth N, -d N       Include transitive importers up to N levels (default: 1)
+  --why                 Show which exports each importer uses
 ${COMMON_OPTIONS_HELP}
 
 Examples:
@@ -127,12 +128,32 @@ function buildReverseImportMap(projectRoot) {
         if (line.includes('import(')) importType = 'dynamic import';
         if (line.match(/import\s+type/)) importType = 'type import';
 
+        // Capture full import statement (handles multi-line imports)
+        let statement = line.trim();
+        if (!statement.includes('import ') && !statement.includes('require')) {
+          // This line has 'from' but not 'import' — look backward for the import clause
+          let fullImport = '';
+          for (let j = Math.max(0, i - 10); j <= i; j++) {
+            fullImport += lines[j].trim() + ' ';
+            if (lines[j].trim().startsWith('import ')) break;
+          }
+          // Build it forward from the import keyword
+          fullImport = '';
+          for (let j = i; j >= Math.max(0, i - 10); j--) {
+            if (lines[j].trim().startsWith('import ')) {
+              for (let k = j; k <= i; k++) fullImport += lines[k].trim() + ' ';
+              break;
+            }
+          }
+          if (fullImport) statement = fullImport.trim();
+        }
+
         if (!reverseMap[resolved]) reverseMap[resolved] = [];
         reverseMap[resolved].push({
           importer: filePath,
           line: i + 1,
           importType,
-          statement: line.trim().substring(0, 80)
+          statement: statement.substring(0, 200)
         });
       }
     }
@@ -193,6 +214,35 @@ function findTransitiveImporters(directImporters, targetPath, reverseMap, maxDep
 
 
 // ─────────────────────────────────────────────────────────────
+// Import Statement Parsing (--why)
+// ─────────────────────────────────────────────────────────────
+
+function extractImportedNames(statement) {
+  // "import { foo, bar } from './x'" -> ['foo', 'bar']
+  const namedMatch = statement.match(/\{\s*([^}]+)\s*\}/);
+  if (namedMatch) {
+    return namedMatch[1].split(',').map(s => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
+  }
+  // "import Foo from './x'" -> ['default (Foo)']
+  const defaultMatch = statement.match(/import\s+(\w+)\s+from/);
+  if (defaultMatch) return [`default (${defaultMatch[1]})`];
+  // "import * as X from './x'" -> ['* (X)']
+  const starMatch = statement.match(/import\s+\*\s+as\s+(\w+)/);
+  if (starMatch) return [`* (${starMatch[1]})`];
+  // require: "const { foo } = require('./x')"
+  const reqNamed = statement.match(/const\s+\{\s*([^}]+)\s*\}\s*=\s*require/);
+  if (reqNamed) {
+    return reqNamed[1].split(',').map(s => s.trim().split(/\s*:\s*/)[0].trim()).filter(Boolean);
+  }
+  // require: "const X = require('./x')"
+  const reqDefault = statement.match(/const\s+(\w+)\s*=\s*require/);
+  if (reqDefault) return [`default (${reqDefault[1]})`];
+  // Dynamic import
+  if (statement.includes('import(')) return ['dynamic'];
+  return [];
+}
+
+// ─────────────────────────────────────────────────────────────
 // Output
 // ─────────────────────────────────────────────────────────────
 
@@ -221,7 +271,7 @@ function buildResults(importers, projectRoot) {
   return categories;
 }
 
-function printCategory(out, title, files, emoji) {
+function printCategory(out, title, files, emoji, showWhy) {
   if (files.length === 0) return { totalFiles: 0, totalTokens: 0 };
 
   out.add(`${emoji ? emoji + ' ' : ''}${title} (${files.length}):`);
@@ -234,6 +284,12 @@ function printCategory(out, title, files, emoji) {
       line += ` [via ${file.via}]`;
     }
     out.add(line);
+    if (showWhy && file.statement) {
+      const names = extractImportedNames(file.statement);
+      if (names.length > 0) {
+        out.add(`      uses: ${names.join(', ')}`);
+      }
+    }
   }
   out.blank();
 
@@ -249,11 +305,14 @@ const options = parseCommonArgs(args);
 
 // Parse tool-specific options
 let maxDepth = 1;
+let showWhy = false;
 for (let i = 0; i < options.remaining.length; i++) {
   const arg = options.remaining[i];
   if ((arg === '--depth' || arg === '-d') && options.remaining[i + 1]) {
     maxDepth = parseInt(options.remaining[i + 1], 10);
     i++;
+  } else if (arg === '--why') {
+    showWhy = true;
   }
 }
 
@@ -327,16 +386,16 @@ out.setData('importers', categories);
 let totalFiles = 0;
 let totalTokens = 0;
 
-const s = printCategory(out, 'Source files', categories.source, '');
+const s = printCategory(out, 'Source files', categories.source, '', showWhy);
 totalFiles += s.totalFiles; totalTokens += s.totalTokens;
 
-const t = printCategory(out, 'Test files', categories.test, '');
+const t = printCategory(out, 'Test files', categories.test, '', showWhy);
 totalFiles += t.totalFiles; totalTokens += t.totalTokens;
 
-const st = printCategory(out, 'Stories', categories.story, '');
+const st = printCategory(out, 'Stories', categories.story, '', showWhy);
 totalFiles += st.totalFiles; totalTokens += st.totalTokens;
 
-const m = printCategory(out, 'Mocks/Fixtures', categories.mock, '');
+const m = printCategory(out, 'Mocks/Fixtures', categories.mock, '', showWhy);
 totalFiles += m.totalFiles; totalTokens += m.totalTokens;
 
 out.setData('totalFiles', totalFiles);

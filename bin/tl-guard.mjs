@@ -21,7 +21,7 @@ if (process.argv.includes('--prompt')) {
 }
 
 import { spawnSync } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join, resolve, relative, extname } from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -52,6 +52,7 @@ Options:
   --no-unused           Skip unused exports check
   --no-circular         Skip circular deps check
   --strict              Treat warnings as failures (exit 1)
+  --fix                 Auto-fix: remove console.log statements from staged files
 ${COMMON_OPTIONS_HELP}
 
 Examples:
@@ -81,6 +82,7 @@ const skipChecks = {
   circular: rawArgs.includes('--no-circular'),
 };
 const strict = rawArgs.includes('--strict');
+const fix = rawArgs.includes('--fix');
 
 // ─────────────────────────────────────────────────────────────
 // Sub-tool Runner (tl-analyze pattern)
@@ -358,6 +360,47 @@ function checkCircular(projectRoot) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Auto-fix: remove console.log from staged files
+// ─────────────────────────────────────────────────────────────
+
+function autoFix(projectRoot, stagedFiles) {
+  let fixedCount = 0;
+  const fixedFiles = [];
+
+  for (const relFile of stagedFiles) {
+    const absPath = join(projectRoot, relFile);
+    if (!isCodeFile(relFile) || !existsSync(absPath)) continue;
+
+    let content;
+    try { content = readFileSync(absPath, 'utf-8'); } catch { continue; }
+
+    // Remove console.log/warn/error/debug/info statements (full lines)
+    // Only remove standalone console.log calls, not ones inside expressions
+    const lines = content.split('\n');
+    const filtered = [];
+    let removed = 0;
+
+    for (const line of lines) {
+      if (/^\s*console\.(log|warn|debug|info)\s*\(/.test(line) && !line.includes('eslint-disable')) {
+        removed++;
+      } else {
+        filtered.push(line);
+      }
+    }
+
+    if (removed > 0) {
+      writeFileSync(absPath, filtered.join('\n'), 'utf-8');
+      // Re-stage the file
+      gitCommand(['add', absPath], { cwd: projectRoot });
+      fixedCount += removed;
+      fixedFiles.push({ file: relFile, removed });
+    }
+  }
+
+  return { fixedCount, fixedFiles };
+}
+
+// ─────────────────────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────────────────────
 
@@ -444,6 +487,19 @@ for (const [name, result] of Object.entries(checks)) {
   }
 }
 
+// Auto-fix if requested
+let fixResult = null;
+if (fix) {
+  fixResult = autoFix(projectRoot, stagedFiles);
+  if (fixResult.fixedCount > 0) {
+    out.blank();
+    out.add(`  >> Fixed: removed ${fixResult.fixedCount} console statement(s) from ${fixResult.fixedFiles.length} file(s)`);
+    for (const f of fixResult.fixedFiles) {
+      out.add(`     ${f.file}: ${f.removed} removed`);
+    }
+  }
+}
+
 out.blank();
 out.stats(`${passed} passed, ${warnings} warning(s), ${failed} failed`);
 
@@ -451,6 +507,7 @@ out.stats(`${passed} passed, ${warnings} warning(s), ${failed} failed`);
 out.setData('checks', checks);
 out.setData('stagedFiles', stagedFiles.length);
 out.setData('summary', { passed, warnings, failed });
+if (fixResult) out.setData('fixed', fixResult);
 
 // Quiet mode override
 if (quiet && !json) {
