@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-02-21
+
+### Added
+- Four new tools: `tl-test` (map test files), `tl-lint-config` (find linting configs), `tl-risk-assess` (assess PR risk), `tl-monorepo` (analyze monorepo structure)
+- `tl-changelog --draft` flag to preview unreleased changes before running full version bump
+
+### Changed
+- `tl-diff` now supports `--breaking` flag to detect removed/renamed exports, improving analysis of potentially breaking changes
+
 ## [0.15.7] - 2026-02-20
 
 ### Fixed
