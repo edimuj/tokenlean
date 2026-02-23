@@ -366,7 +366,7 @@ if (maxDepth > 1) {
 const reverseMap = withCache(
   { op: 'reverse-import-map' },
   () => buildReverseImportMap(projectRoot),
-  { projectRoot }
+  { projectRoot, headOnly: true }
 );
 
 const directImporters = findDirectImporters(resolvedPath, reverseMap);

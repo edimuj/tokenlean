@@ -276,7 +276,8 @@ function enforceMaxSize(projectRoot) {
  * Read from cache if valid
  * Returns cached data or null if cache miss/invalid
  */
-export function getCached(key, projectRoot) {
+export function getCached(key, projectRoot, options = {}) {
+  const { headOnly = false } = options;
   const config = getCacheConfig();
   if (!config.enabled) return null;
 
@@ -289,8 +290,12 @@ export function getCached(key, projectRoot) {
     // Git-based invalidation
     const currentGitState = getGitState(projectRoot);
     if (currentGitState) {
-      // If we have git state, use it for validation
-      if (!gitStateMatches(cached.gitState, currentGitState)) {
+      if (headOnly) {
+        // Only compare HEAD commit — ignore dirty files
+        if (!cached.gitState || cached.gitState.head !== currentGitState.head) {
+          return null;
+        }
+      } else if (!gitStateMatches(cached.gitState, currentGitState)) {
         return null;
       }
     } else {
@@ -350,10 +355,10 @@ export function setCached(key, data, projectRoot) {
  * @returns {*} Cached or computed result
  */
 export function withCache(key, fn, options = {}) {
-  const { projectRoot = process.cwd() } = options;
+  const { projectRoot = process.cwd(), headOnly } = options;
 
   // Check cache first
-  const cached = getCached(key, projectRoot);
+  const cached = getCached(key, projectRoot, { headOnly });
   if (cached !== null) {
     return cached;
   }
