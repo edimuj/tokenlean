@@ -169,6 +169,15 @@ export function extractGenericSymbols(content) {
 
     // Methods inside a class/impl block (non-keyword methods like Ruby `def`)
     if (inBlock && braceDepth > inBlock.depth) {
+      // Enum variants: Name, Name(T), Name { field: T }
+      if (inBlock.kind === 'enum') {
+        const variantMatch = trimmed.match(/^(\w+)(?:\s*\(.*\)|\s*\{.*\})?\s*,?\s*$/);
+        if (variantMatch && variantMatch[1][0] === variantMatch[1][0].toUpperCase()) {
+          inBlock.fields.push(variantMatch[1]);
+          continue;
+        }
+      }
+
       // Struct fields: name: Type (only in struct/class/interface/trait blocks, not impl/enum)
       if (inBlock.kind !== 'impl' && inBlock.kind !== 'enum') {
         const fieldMatch = trimmed.match(/^(?:pub(?:\([^)]*\))?\s+)?(\w+)\s*:\s*.+/);

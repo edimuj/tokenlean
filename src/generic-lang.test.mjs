@@ -255,6 +255,45 @@ def real():
     });
   });
 
+  describe('enum variants', () => {
+    it('extracts simple enum variants', () => {
+      const code = `pub enum Color {
+  Red,
+  Green,
+  Blue,
+}`;
+      const r = extractGenericSymbols(code);
+      assert.strictEqual(r.classes.length, 1);
+      assert.ok(r.classes[0].fields);
+      assert.strictEqual(r.classes[0].fields.length, 3);
+      assert.ok(r.classes[0].fields.includes('Red'));
+    });
+
+    it('extracts tuple variants', () => {
+      const code = `enum Message {
+  Quit,
+  Move(i32, i32),
+  Write(String),
+}`;
+      const r = extractGenericSymbols(code);
+      assert.strictEqual(r.classes.length, 1);
+      assert.strictEqual(r.classes[0].fields.length, 3);
+      assert.ok(r.classes[0].fields.includes('Quit'));
+      assert.ok(r.classes[0].fields.includes('Move'));
+      assert.ok(r.classes[0].fields.includes('Write'));
+    });
+
+    it('extracts struct variants', () => {
+      const code = `enum Event {
+  Click { x: i32, y: i32 },
+  KeyPress(char),
+}`;
+      const r = extractGenericSymbols(code);
+      assert.strictEqual(r.classes.length, 1);
+      assert.strictEqual(r.classes[0].fields.length, 2);
+    });
+  });
+
   describe('false positive filtering', () => {
     it('does not treat Ok() as a method inside impl', () => {
       const code = `impl Parser {
