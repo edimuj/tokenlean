@@ -423,7 +423,7 @@ function extractSignatureLine(line) {
 // ─────────────────────────────────────────────────────────────
 
 function extractPythonSymbols(content) {
-  const symbols = { classes: [], functions: [] };
+  const symbols = { classes: [], functions: [], all: null };
   const lines = content.split('\n');
   let inClass = null;
   let currentClassMethods = [];
@@ -431,6 +431,15 @@ function extractPythonSymbols(content) {
   let isDataclass = false;
   let isEnumClass = false;
   let isNextDataclass = false;
+
+  // Parse __all__ (single-line or multi-line)
+  const allMatch = content.match(/__all__\s*=\s*\[([\s\S]*?)\]/);
+  if (allMatch) {
+    symbols.all = allMatch[1]
+      .split(',')
+      .map(s => s.trim().replace(/['"]/g, ''))
+      .filter(Boolean);
+  }
 
   function pushCurrentClass() {
     if (!inClass) return;
@@ -491,6 +500,20 @@ function extractPythonSymbols(content) {
   }
 
   pushCurrentClass();
+
+  // When __all__ is defined, filter to only public API symbols
+  if (symbols.all) {
+    const allowed = new Set(symbols.all);
+    symbols.classes = symbols.classes.filter(c => {
+      const name = c.signature.match(/^class\s+(\w+)/)?.[1];
+      return name && allowed.has(name);
+    });
+    symbols.functions = symbols.functions.filter(f => {
+      const name = f.match(/^(?:async\s+)?def\s+(\w+)/)?.[1];
+      return name && allowed.has(name);
+    });
+  }
+
   return symbols;
 }
 
@@ -978,7 +1001,8 @@ if (isGeneric) out.setData('generic', true);
 if (isGeneric) {
   out.header(`\n! Generic extraction (no dedicated ${extname(filePath)} parser)`);
 }
-out.header(`\n${basename(filePath)} (${symbolCount} symbols)`);
+const allTag = symbols.all ? `, __all__: ${symbols.all.length} public` : '';
+out.header(`\n${basename(filePath)} (${symbolCount} symbols${allTag})`);
 out.header(`   Full file: ~${formatTokens(fullFileTokens)} tokens -> Symbols only: ~${formatTokens(Math.ceil(symbolCount * 15))} tokens`);
 out.blank();
 

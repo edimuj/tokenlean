@@ -236,8 +236,8 @@ function extractPythonExports(content) {
 
   const lines = content.split('\n');
 
-  // Check for __all__
-  const allMatch = content.match(/__all__\s*=\s*\[([^\]]+)\]/);
+  // Check for __all__ (single-line or multi-line)
+  const allMatch = content.match(/__all__\s*=\s*\[([\s\S]*?)\]/);
   if (allMatch) {
     exports.all = allMatch[1]
       .split(',')
@@ -266,6 +266,14 @@ function extractPythonExports(content) {
         exports.constants.push({ name: constMatch[1] });
       }
     }
+  }
+
+  // When __all__ is defined, it IS the public API — filter everything else out
+  if (exports.all) {
+    const allowed = new Set(exports.all);
+    exports.functions = exports.functions.filter(f => allowed.has(f.name));
+    exports.classes = exports.classes.filter(c => allowed.has(c.name));
+    exports.constants = exports.constants.filter(c => allowed.has(c.name));
   }
 
   return exports;
@@ -622,10 +630,11 @@ if (treeMode) {
       out.header(`! Generic extraction (no dedicated ${extname(file)} parser) — showing pub/export/public symbols`);
       out.blank();
     }
+    const allTag = exports.all ? ', filtered by __all__' : '';
     if (allFileExports.length > 1) {
-      out.add(`${file} (${count} exports)`);
+      out.add(`${file} (${count} exports${allTag})`);
     } else {
-      out.header(`${file} (${count} exports)`);
+      out.header(`${file} (${count} exports${allTag})`);
       out.blank();
     }
 
