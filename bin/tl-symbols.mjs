@@ -502,7 +502,16 @@ function formatSymbols(symbols, lang, out) {
     if (symbols.classes?.length > 0) {
       out.add('Classes/Structs:');
       for (const cls of symbols.classes) {
-        out.add('  ' + cls.signature);
+        if (cls.fields && cls.fields.length > 0) {
+          const MAX = 6;
+          if (cls.fields.length <= MAX) {
+            out.add('  ' + cls.signature + ' { ' + cls.fields.join(', ') + ' }');
+          } else {
+            out.add('  ' + cls.signature + ' { ' + cls.fields.slice(0, MAX).join(', ') + `, ... +${cls.fields.length - MAX} more }`);
+          }
+        } else {
+          out.add('  ' + cls.signature);
+        }
         cls.methods.forEach(m => out.add('    ' + m));
       }
       out.blank();
