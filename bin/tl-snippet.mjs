@@ -68,7 +68,8 @@ function findDefinitions(name, searchPath) {
     `function ${name}\\s*[(<]`,                 // function name( or name<T>(
     `(const|let|var)\\s+${name}\\s*=`,          // const name =
     `${name}\\s*:\\s*\\(`,                       // name: ( (object method shorthand)
-    `(?:async\\s+)?${name}\\s*\\([^)]*\\)\\s*(?::\\s*\\w[^{]*)?\\{`, // name() { (class method)
+    `(?:async\\s+)?${name}\\s*\\([^)]*\\)\\s*(?::\\s*\\w[^{]*)?\\{`, // name() { (class method, single-line)
+    `(?:(?:public|private|protected|static|abstract|override|readonly)\\s+)*(?:async\\s+)?${name}\\s*\\(`, // name( (class method, multi-line params)
     `(?:export\\s+)?(?:abstract\\s+)?class\\s+${name}`,  // class Name
     `(?:export\\s+)?interface\\s+${name}`,       // interface Name
     `(?:export\\s+)?type\\s+${name}\\s*[=<]`,    // type Name =
@@ -101,6 +102,10 @@ function findDefinitions(name, searchPath) {
       if (trimmed.startsWith('import ') || trimmed.includes('require(')) continue;
       // Skip comments
       if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) continue;
+      // Skip call sites: this.name(, obj.name(, foo?.name(, await this.name(
+      if (new RegExp(`[.?]\\s*${name}\\s*\\(`).test(trimmed)) continue;
+      // Skip variable assignments that just call the function: const x = name(
+      if (new RegExp(`(?:const|let|var)\\s+\\w+\\s*=\\s*(?:await\\s+)?${name}\\s*\\(`).test(trimmed)) continue;
 
       defs.push({
         file,
