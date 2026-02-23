@@ -47,6 +47,8 @@ File size → Decision
 
 ```bash
 tl-symbols <file>     # Signatures — what does this file expose?
+tl-symbols src/       # All files in a directory (compact one-liner per file)
+tl-symbols a.ts b.ts  # Multiple specific files (compact)
 tl-deps <file>        # What does it import?
 tl-exports <file>     # What's the public API?
 ```

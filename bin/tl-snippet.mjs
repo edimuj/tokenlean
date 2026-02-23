@@ -37,7 +37,7 @@ import { rgCommand } from '../src/shell.mjs';
 const HELP = `
 tl-snippet - Extract a function/class body by name
 
-Usage: tl-snippet <name> [file] [options]
+Usage: tl-snippet <name[,name2,...]> [file] [options]
 
 Extracts the full implementation of a function, class, method, or type.
 Much more token-efficient than reading entire files.
@@ -52,9 +52,13 @@ Supports qualified names:
   tl-snippet SaveManager.save         # Method 'save' in SaveManager class
   tl-snippet src/utils.ts:parseArgs   # Function in specific file
 
+Multiple names (comma-separated):
+  tl-snippet getCached,setCached src/cache.mjs
+
 Examples:
   tl-snippet handleSubmit src/form.ts     # Extract handleSubmit from file
   tl-snippet useAuth                      # Find and extract useAuth hook
+  tl-snippet getCached,setCached,withCache src/cache.mjs  # Multiple at once
   tl-snippet Router.get src/server.ts     # Extract class method
   tl-snippet parseConfig -c 3            # Include 3 lines of context
 `;
@@ -360,149 +364,162 @@ if (!rawName) {
   process.exit(1);
 }
 
-// Parse qualified names: file:method or Class.method syntax
-let name = rawName;
-let className = null;
+// Parse qualified name: file:method or Class.method syntax
+function parseQualifiedName(raw) {
+  let name = raw;
+  let cls = null;
+  let file = targetFile;
 
-// Handle file:method syntax (e.g., src/utils.ts:parseArgs)
-const colonIdx = rawName.lastIndexOf(':');
-if (colonIdx > 0) {
-  const possibleFile = rawName.substring(0, colonIdx);
-  const possibleMethod = rawName.substring(colonIdx + 1);
-  if (possibleFile && possibleMethod) {
-    if (!targetFile) targetFile = possibleFile;
-    name = possibleMethod;
+  // Handle file:method syntax (e.g., src/utils.ts:parseArgs)
+  const colonIdx = raw.lastIndexOf(':');
+  if (colonIdx > 0) {
+    const possibleFile = raw.substring(0, colonIdx);
+    const possibleMethod = raw.substring(colonIdx + 1);
+    if (possibleFile && possibleMethod) {
+      if (!file) file = possibleFile;
+      name = possibleMethod;
+    }
   }
+
+  // Handle Class.method syntax (e.g., SaveManager.save)
+  const KNOWN_EXTS = new Set(['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'mts', 'json', 'md', 'css', 'html', 'vue', 'svelte']);
+  if (name === raw && raw.includes('.')) {
+    const dotIdx = raw.lastIndexOf('.');
+    const possibleOwner = raw.substring(0, dotIdx);
+    const possibleMethod = raw.substring(dotIdx + 1);
+    if (possibleOwner && possibleMethod && !KNOWN_EXTS.has(possibleMethod.toLowerCase())) {
+      cls = possibleOwner;
+      name = possibleMethod;
+    }
+  }
+
+  return { name, className: cls, targetFile: file };
 }
 
-// Handle Class.method syntax (e.g., SaveManager.save)
-const KNOWN_EXTS = new Set(['js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'mts', 'json', 'md', 'css', 'html', 'vue', 'svelte']);
-if (name === rawName && rawName.includes('.')) {
-  const dotIdx = rawName.lastIndexOf('.');
-  const possibleOwner = rawName.substring(0, dotIdx);
-  const possibleMethod = rawName.substring(dotIdx + 1);
-  if (possibleOwner && possibleMethod && !KNOWN_EXTS.has(possibleMethod.toLowerCase())) {
-    className = possibleOwner;
-    name = possibleMethod;
-  }
-}
+// Split comma-separated names (but not if name contains file:method with commas in path)
+const nameList = rawName.includes(',') ? rawName.split(',').filter(Boolean) : [rawName];
 
 const projectRoot = findProjectRoot();
 const out = createOutput(options);
-const displayName = className ? `${className}.${name}` : name;
+const allResults = [];
 
-// Find definitions
-const searchPath = targetFile || projectRoot;
-let defs = findDefinitions(name, searchPath);
+for (let ni = 0; ni < nameList.length; ni++) {
+  const parsed = parseQualifiedName(nameList[ni].trim());
+  const { name, className } = parsed;
+  const file = parsed.targetFile;
+  const displayName = className ? `${className}.${name}` : name;
 
-if (defs.length === 0 && targetFile) {
-  // Try searching the whole project if file-specific search failed
-  defs = findDefinitions(name, projectRoot);
-}
+  if (ni > 0) out.blank();
 
-// Filter by className if specified
-if (className && defs.length > 0) {
-  const filtered = defs.filter(def => {
-    const fileName = basename(def.file, extname(def.file));
-    if (fileName === className || fileName.toLowerCase() === className.toLowerCase()) {
-      return true;
-    }
-    try {
-      const content = readFileSync(def.file, 'utf-8');
-      return content.includes(`class ${className}`) ||
-             content.includes(`interface ${className}`) ||
-             content.includes(`const ${className}`);
-    } catch { return false; }
-  });
-  if (filtered.length > 0) defs = filtered;
-}
+  // Find definitions
+  const searchPath = file || projectRoot;
+  let defs = findDefinitions(name, searchPath);
 
-// Deduplicate by file:line
-const seen = new Set();
-defs = defs.filter(d => {
-  const key = `${d.file}:${d.line}`;
-  if (seen.has(key)) return false;
-  seen.add(key);
-  return true;
-});
+  if (defs.length === 0 && file) {
+    defs = findDefinitions(name, projectRoot);
+  }
 
-if (defs.length === 0) {
-  out.add(`No definition found for "${displayName}"`);
-
-  // Show available symbols so the agent doesn't need a separate tl-symbols call
-  if (targetFile) {
-    const __dirname = dirname(fileURLToPath(import.meta.url));
-    const symbolsTool = join(__dirname, 'tl-symbols.mjs');
-    const result = spawnSync(process.execPath, [symbolsTool, targetFile], {
-      encoding: 'utf-8',
-      timeout: 5000
+  // Filter by className if specified
+  if (className && defs.length > 0) {
+    const filtered = defs.filter(def => {
+      const fileName = basename(def.file, extname(def.file));
+      if (fileName === className || fileName.toLowerCase() === className.toLowerCase()) {
+        return true;
+      }
+      try {
+        const content = readFileSync(def.file, 'utf-8');
+        return content.includes(`class ${className}`) ||
+               content.includes(`interface ${className}`) ||
+               content.includes(`const ${className}`);
+      } catch { return false; }
     });
-    if (result.stdout && result.status === 0) {
+    if (filtered.length > 0) defs = filtered;
+  }
+
+  // Deduplicate by file:line
+  const seen = new Set();
+  defs = defs.filter(d => {
+    const key = `${d.file}:${d.line}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  if (defs.length === 0) {
+    out.add(`No definition found for "${displayName}"`);
+
+    // Show available symbols only for single-name mode
+    if (nameList.length === 1 && file) {
+      const __dirname = dirname(fileURLToPath(import.meta.url));
+      const symbolsTool = join(__dirname, 'tl-symbols.mjs');
+      const result = spawnSync(process.execPath, [symbolsTool, file], {
+        encoding: 'utf-8',
+        timeout: 5000
+      });
+      if (result.stdout && result.status === 0) {
+        out.blank();
+        out.add('Available symbols:');
+        out.add(result.stdout.trimEnd());
+      }
+    }
+    continue;
+  }
+
+  // Extract and display
+  const maxResults = showAll ? defs.length : 1;
+
+  for (let i = 0; i < Math.min(maxResults, defs.length); i++) {
+    const def = defs[i];
+    const body = extractBody(def.file, def.line, contextLines);
+    if (!body) continue;
+
+    const relPath = relative(projectRoot, def.file);
+    const bodyText = body.lines.join('\n');
+    const tokens = estimateTokens(bodyText);
+    const lineCount = body.endLine - body.startLine + 1;
+
+    allResults.push({
+      name: displayName,
+      file: relPath,
+      startLine: body.startLine,
+      endLine: body.endLine,
+      lineCount,
+      tokens,
+      body: bodyText
+    });
+
+    if (!options.quiet) {
+      out.add(`── ${relPath}:${body.startLine}-${body.endLine} (${lineCount} lines, ~${formatTokens(tokens)})`);
+    }
+
+    const startNum = body.startLine;
+    for (let j = 0; j < body.lines.length; j++) {
+      const lineNum = startNum + j;
+      const prefix = String(lineNum).padStart(4);
+      out.add(`${prefix}│ ${body.lines[j]}`);
+    }
+
+    if (i < Math.min(maxResults, defs.length) - 1) {
       out.blank();
-      out.add('Available symbols:');
-      out.add(result.stdout.trimEnd());
     }
   }
 
-  out.print();
-  process.exit(0);
-}
-
-// Extract and display
-const maxResults = showAll ? defs.length : 1;
-const results = [];
-
-for (let i = 0; i < Math.min(maxResults, defs.length); i++) {
-  const def = defs[i];
-  const body = extractBody(def.file, def.line, contextLines);
-  if (!body) continue;
-
-  const relPath = relative(projectRoot, def.file);
-  const bodyText = body.lines.join('\n');
-  const tokens = estimateTokens(bodyText);
-  const lineCount = body.endLine - body.startLine + 1;
-
-  results.push({
-    file: relPath,
-    startLine: body.startLine,
-    endLine: body.endLine,
-    lineCount,
-    tokens,
-    body: bodyText
-  });
-
-  if (!options.quiet) {
-    out.add(`── ${relPath}:${body.startLine}-${body.endLine} (${lineCount} lines, ~${formatTokens(tokens)})`);
-  }
-
-  // Add line numbers to output
-  const startNum = body.startLine;
-  for (let j = 0; j < body.lines.length; j++) {
-    const lineNum = startNum + j;
-    const prefix = String(lineNum).padStart(4);
-    out.add(`${prefix}│ ${body.lines[j]}`);
-  }
-
-  if (i < Math.min(maxResults, defs.length) - 1) {
+  if (!showAll && defs.length > 1) {
     out.blank();
-  }
-}
-
-if (!showAll && defs.length > 1) {
-  out.blank();
-  out.add(`Found ${defs.length} definitions. Use --all to show all.`);
-  for (const def of defs.slice(1, 5)) {
-    const rel = relative(projectRoot, def.file);
-    out.add(`  ${rel}:${def.line}`);
-  }
-  if (defs.length > 5) {
-    out.add(`  ... and ${defs.length - 5} more`);
+    out.add(`Found ${defs.length} definitions. Use --all to show all.`);
+    for (const def of defs.slice(1, 5)) {
+      const rel = relative(projectRoot, def.file);
+      out.add(`  ${rel}:${def.line}`);
+    }
+    if (defs.length > 5) {
+      out.add(`  ... and ${defs.length - 5} more`);
+    }
   }
 }
 
 // JSON data
-out.setData('name', displayName);
-out.setData('results', results);
-out.setData('totalDefinitions', defs.length);
+out.setData('names', nameList.length === 1 ? nameList[0] : nameList);
+out.setData('results', allResults);
+out.setData('totalDefinitions', allResults.length);
 
 out.print();

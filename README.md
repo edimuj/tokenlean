@@ -140,7 +140,7 @@ cp -r tokenlean/skills/code-review ~/.claude/skills/
 
 | Tool           | Description                                    | Example                          |
 |----------------|------------------------------------------------|----------------------------------|
-| `tl-symbols`   | Function/class signatures without bodies       | `tl-symbols src/utils.ts`        |
+| `tl-symbols`   | Function/class signatures without bodies       | `tl-symbols src/utils.ts` or `src/` |
 | `tl-snippet`   | Extract one function/class by name             | `tl-snippet handleSubmit`        |
 | `tl-impact`    | Blast radius — what depends on this file       | `tl-impact src/auth.ts`          |
 | `tl-run`       | Token-efficient command output (tests, builds) | `tl-run "npm test"`              |
@@ -353,7 +353,7 @@ tl-complexity src/core/auth.ts  # How complex is it?
 
 ```bash
 tl-component src/Button.tsx     # Props, hooks, dependencies
-tl-symbols src/Button.tsx       # Function signatures
+tl-symbols src/Button.tsx       # Function signatures (or src/ for all)
 tl-history src/Button.tsx       # Recent changes
 tl-blame src/Button.tsx         # Who wrote what
 ```

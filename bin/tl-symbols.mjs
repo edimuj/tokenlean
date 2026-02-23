@@ -21,8 +21,8 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { readFileSync, existsSync } from 'fs';
-import { basename, extname } from 'path';
+import { readFileSync, existsSync, statSync, readdirSync } from 'fs';
+import { basename, extname, join, relative } from 'path';
 import {
   createOutput,
   parseCommonArgs,
@@ -31,21 +31,28 @@ import {
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { extractGenericSymbols } from '../src/generic-lang.mjs';
+import { shouldSkip } from '../src/project.mjs';
 
 const HELP = `
 tl-symbols - Extract function/class/type signatures without bodies
 
-Usage: tl-symbols <file> [options]
+Usage: tl-symbols <file|dir...> [options]
 
 Options:
   --exports-only, -e    Show only exported symbols
   --filter <type>       Show only: function, class, type, constant, export
 ${COMMON_OPTIONS_HELP}
 
+Multi-file mode:
+  Multiple files or a directory produce compact one-line-per-file output.
+  Format: path: name1(), name2(), ClassName(3m), +N
+
 Examples:
-  tl-symbols src/api.ts              # All symbols
+  tl-symbols src/api.ts              # All symbols (detailed)
+  tl-symbols src/api.ts src/db.ts    # Multiple files (compact)
+  tl-symbols src/                    # All files in directory
+  tl-symbols src/ -e                 # Exports only, all files
   tl-symbols src/api.ts -e           # Exports only
-  tl-symbols src/api.ts -l 20        # Limit to 20 lines
   tl-symbols src/api.ts -j           # JSON output
 
 Supported languages:
@@ -558,6 +565,172 @@ function countSymbols(symbols) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Directory Mode
+// ─────────────────────────────────────────────────────────────
+
+// All extensions tl-symbols can handle (dedicated + generic fallback)
+const ALL_SUPPORTED_EXTS = new Set([
+  ...LANG_EXTENSIONS.js, ...LANG_EXTENSIONS.python, ...LANG_EXTENSIONS.go,
+  '.rs', '.kt', '.kts', '.swift', '.rb', '.java', '.c', '.cpp', '.cc', '.h', '.hpp',
+  '.cs', '.scala', '.zig', '.lua', '.r', '.R', '.ex', '.exs', '.erl', '.hrl',
+  '.hs', '.ml', '.mli', '.php', '.dart', '.v', '.sv',
+]);
+
+function collectFiles(dir, files = []) {
+  let entries;
+  try { entries = readdirSync(dir, { withFileTypes: true }); }
+  catch { return files; }
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!shouldSkip(entry.name, true)) {
+        collectFiles(fullPath, files);
+      }
+    } else if (entry.isFile()) {
+      const ext = extname(entry.name).toLowerCase();
+      if (ALL_SUPPORTED_EXTS.has(ext) && !shouldSkip(entry.name, false)) {
+        files.push(fullPath);
+      }
+    }
+  }
+  return files;
+}
+
+function extractSymbolsForFile(filePath, exportsOnly) {
+  const lang = detectLanguage(filePath);
+  const content = readFileSync(filePath, 'utf-8');
+  let symbols;
+  switch (lang) {
+    case 'js': symbols = extractJsSymbols(content, exportsOnly); break;
+    case 'python': symbols = extractPythonSymbols(content); break;
+    case 'go': symbols = extractGoSymbols(content); break;
+    default: symbols = extractGenericSymbols(content); break;
+  }
+  return { symbols, lang };
+}
+
+function extractSymbolNames(symbols, lang, exportsOnly) {
+  const names = [];
+
+  if (exportsOnly && symbols.exports) {
+    for (const e of symbols.exports) {
+      const name = extractName(typeof e === 'string' ? e : e.signature || e);
+      if (name) names.push(name);
+    }
+    return names;
+  }
+
+  // Classes — show ClassName with method count
+  if (symbols.classes) {
+    for (const cls of symbols.classes) {
+      const sig = typeof cls === 'string' ? cls : cls.signature;
+      const name = extractName(sig);
+      const methodCount = cls.methods?.length || 0;
+      if (name) names.push(methodCount > 0 ? `${name}(${methodCount}m)` : name);
+    }
+  }
+
+  // Functions
+  if (symbols.functions) {
+    for (const f of symbols.functions) {
+      const name = extractName(typeof f === 'string' ? f : f);
+      if (name) names.push(name + '()');
+    }
+  }
+
+  // Types
+  if (symbols.types) {
+    for (const t of symbols.types) {
+      const sig = typeof t === 'string' ? t : t.signature;
+      const name = extractName(sig);
+      if (name) names.push(name);
+    }
+  }
+
+  // Constants
+  if (symbols.constants) {
+    for (const c of symbols.constants) {
+      const name = extractName(typeof c === 'string' ? c : c);
+      if (name) names.push(name);
+    }
+  }
+
+  // Modules (generic)
+  if (symbols.modules) {
+    for (const m of symbols.modules) {
+      const name = extractName(m);
+      if (name) names.push(name);
+    }
+  }
+
+  return names;
+}
+
+function extractName(sig) {
+  if (!sig) return null;
+  // Strip common prefixes: export, async, function, const, type, interface, class, etc.
+  const cleaned = sig
+    .replace(/^export\s+(default\s+)?/, '')
+    .replace(/^(async\s+)?(function\s+|const\s+|let\s+|var\s+|class\s+|abstract\s+class\s+|interface\s+|type\s+|enum\s+)/, '')
+    .replace(/^(pub\s+)?(fn\s+|struct\s+|enum\s+|trait\s+|impl\s+|mod\s+|type\s+|const\s+|static\s+|let\s+)/, '')
+    .replace(/^(func\s+)/, '')
+    .replace(/^def\s+/, '')
+    .trim();
+  const match = cleaned.match(/^(\w+)/);
+  return match ? match[1] : null;
+}
+
+function runMultiFileMode(files, baseDir, exportsOnly, options) {
+  if (files.length === 0) {
+    console.error(`No code files found`);
+    process.exit(1);
+  }
+
+  const out = createOutput(options);
+  let totalSymbols = 0;
+  let totalFiles = 0;
+  const jsonFiles = [];
+  const MAX_INLINE = 8;
+
+  for (const file of files) {
+    try {
+      const { symbols, lang } = extractSymbolsForFile(file, exportsOnly);
+      const names = extractSymbolNames(symbols, lang, exportsOnly);
+      if (names.length === 0) continue;
+
+      totalFiles++;
+      totalSymbols += names.length;
+      const relPath = baseDir ? relative(baseDir, file) : basename(file);
+
+      let line;
+      if (names.length <= MAX_INLINE) {
+        line = `${relPath}: ${names.join(', ')}`;
+      } else {
+        line = `${relPath}: ${names.slice(0, MAX_INLINE).join(', ')}, +${names.length - MAX_INLINE}`;
+      }
+      out.add(line);
+
+      if (options.json) {
+        jsonFiles.push({ file: relPath, language: lang || 'generic', symbols: names });
+      }
+    } catch {
+      // Skip files that can't be read/parsed
+    }
+  }
+
+  if (options.json) {
+    out.setData('files', jsonFiles);
+    out.setData('totalFiles', totalFiles);
+    out.setData('totalSymbols', totalSymbols);
+  } else {
+    out.blank();
+    out.add(`${totalFiles} files, ${totalSymbols} symbols`);
+  }
+
+  out.print();
+}
+
+// ─────────────────────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────────────────────
 
@@ -578,18 +751,39 @@ if (filterType && !VALID_FILTERS.includes(filterType)) {
   process.exit(1);
 }
 
-const filePath = options.remaining.find(a => !a.startsWith('-') && !VALID_FILTERS.includes(a.toLowerCase()));
+const paths = options.remaining.filter(a => !a.startsWith('-') && !VALID_FILTERS.includes(a.toLowerCase()));
 
-if (options.help || !filePath) {
+if (options.help || paths.length === 0) {
   console.log(HELP);
   process.exit(options.help ? 0 : 1);
 }
 
-if (!existsSync(filePath)) {
-  console.error(`File not found: ${filePath}`);
-  process.exit(1);
+for (const p of paths) {
+  if (!existsSync(p)) {
+    console.error(`Not found: ${p}`);
+    process.exit(1);
+  }
 }
 
+// Multi-path mode: directory or 2+ files -> compact output
+if (paths.length > 1 || statSync(paths[0]).isDirectory()) {
+  const allFiles = [];
+  let baseDir = null;
+  for (const p of paths) {
+    if (statSync(p).isDirectory()) {
+      baseDir = baseDir || p;
+      allFiles.push(...collectFiles(p));
+    } else {
+      allFiles.push(p);
+    }
+  }
+  allFiles.sort();
+  runMultiFileMode(allFiles, baseDir, exportsOnly, options);
+  process.exit(0);
+}
+
+// Single-file mode (detailed)
+const filePath = paths[0];
 const lang = detectLanguage(filePath);
 
 const content = readFileSync(filePath, 'utf-8');
