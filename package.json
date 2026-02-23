@@ -72,6 +72,7 @@
     "tl-unused": "bin/tl-unused.mjs"
   },
   "scripts": {
+    "test": "node --test src/*.test.mjs",
     "link": "npm link"
   },
   "keywords": [

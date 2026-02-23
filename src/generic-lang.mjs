@@ -202,7 +202,7 @@ export function extractGenericSymbols(content) {
 
     // Modules / namespaces
     const modRe = new RegExp(`^${VISIBILITY}${MOD_KW}\\s+(\\w+)`);
-    if (trimmed.match(modRe) && braceDepth === 0) {
+    if (trimmed.match(modRe) && prevDepth === 0) {
       symbols.modules.push(sigLine(rawLines[i]));
       continue;
     }
@@ -248,9 +248,12 @@ export function extractGenericImports(content) {
     const lineNum = i + 1;
     const trimmed = lines[i].trim();
 
-    // Skip comments
-    if (trimmed.startsWith('//') || trimmed.startsWith('#') || trimmed.startsWith('--') ||
+    // Skip comments (but not #include / #import)
+    if (trimmed.startsWith('//') || trimmed.startsWith('--') ||
         trimmed.startsWith('*') || trimmed.startsWith('/*')) {
+      continue;
+    }
+    if (trimmed.startsWith('#') && !trimmed.startsWith('#include') && !trimmed.startsWith('#import')) {
       continue;
     }
 

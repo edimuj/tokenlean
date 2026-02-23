@@ -274,4 +274,4 @@ export function clearConfigCache() {
 // Exports for direct access
 // ─────────────────────────────────────────────────────────────
 
-export { CONFIG_FILENAME, GLOBAL_CONFIG_PATH, DEFAULT_CONFIG };
+export { CONFIG_FILENAME, GLOBAL_CONFIG_PATH, DEFAULT_CONFIG, deepMerge };

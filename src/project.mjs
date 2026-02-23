@@ -147,17 +147,17 @@ export function categorizeFile(filePath, projectRoot = '') {
   const rel = projectRoot ? relative(projectRoot, filePath) : filePath;
   const lower = rel.toLowerCase();
 
-  if (lower.includes('test') || lower.includes('spec') || lower.includes('__tests__')) {
-    return 'test';
-  }
-  if (lower.includes('stories') || lower.includes('storybook') || lower.endsWith('.stories.tsx') || lower.endsWith('.stories.jsx')) {
-    return 'story';
+  if (lower.includes('e2e') || lower.includes('cypress') || lower.includes('playwright')) {
+    return 'e2e';
   }
   if (lower.includes('mock') || lower.includes('fixture') || lower.includes('__mocks__')) {
     return 'mock';
   }
-  if (lower.includes('e2e') || lower.includes('cypress') || lower.includes('playwright')) {
-    return 'e2e';
+  if (lower.includes('stories') || lower.includes('storybook') || lower.endsWith('.stories.tsx') || lower.endsWith('.stories.jsx')) {
+    return 'story';
+  }
+  if (lower.includes('test') || lower.includes('spec') || lower.includes('__tests__')) {
+    return 'test';
   }
   return 'source';
 }
