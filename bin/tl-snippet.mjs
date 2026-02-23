@@ -87,6 +87,7 @@ function findDefinitions(name, searchPath) {
     `func\\s+${name}\\s*[(<]`,                   // Go/Swift: func name(
     `func\\s*\\([^)]*\\)\\s*${name}\\s*\\(`,      // Go: func (recv) name(
     `type\\s+${name}\\s+(?:struct|interface)`,     // Go: type Name struct/interface
+    `function\\s+\\w+\\.${name}\\s*\\(`,           // Lua: function M.name(
   ];
 
   const pattern = `(${patterns.join('|')})`;
@@ -109,7 +110,8 @@ function findDefinitions(name, searchPath) {
       // Skip comments
       if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) continue;
       // Skip call sites: this.name(, obj.name(, foo?.name(, await this.name(
-      if (new RegExp(`[.?]\\s*${name}\\s*\\(`).test(trimmed)) continue;
+      // But not Lua-style definitions: function M.name(
+      if (new RegExp(`[.?]\\s*${name}\\s*\\(`).test(trimmed) && !trimmed.startsWith('function ')) continue;
       // Skip variable assignments that just call the function: const x = name(
       if (new RegExp(`(?:const|let|var)\\s+\\w+\\s*=\\s*(?:await\\s+)?${name}\\s*\\(`).test(trimmed)) continue;
 
@@ -234,10 +236,108 @@ function extractPythonBody(filePath, startLine, contextLines = 0) {
   };
 }
 
+const END_KW_EXTS = new Set(['.rb', '.ex', '.exs', '.lua']);
+
+// Block-opening keywords per language family
+const RUBY_OPEN_RE = /\b(def|do|if|unless|case|for|while|until|begin|class|module)\b/g;
+const ELIXIR_OPEN_RE = /\bdo\b/g; // In Elixir, only `do` opens blocks
+const LUA_OPEN_RE = /\b(function|if|for|while)\b/g; // repeat...until has no end
+const BLOCK_CLOSE_RE = /\bend\b/g;
+
+/**
+ * End-keyword body extraction for Ruby, Elixir, Lua.
+ * Tracks nested block-open/close keywords to find the matching `end`.
+ */
+function extractEndKeywordBody(filePath, startLine, contextLines = 0) {
+  let content;
+  try {
+    content = readFileSync(filePath, 'utf-8');
+  } catch {
+    return null;
+  }
+
+  const lines = content.split('\n');
+  const defIdx = startLine - 1;
+
+  const ext = extname(filePath);
+  const openRe = ext === '.rb' ? RUBY_OPEN_RE
+    : (ext === '.ex' || ext === '.exs') ? ELIXIR_OPEN_RE
+    : LUA_OPEN_RE;
+
+  let depth = 0;
+  for (let i = defIdx; i < lines.length; i++) {
+    const stripped = stripStringsAndComments(lines[i], filePath);
+
+    const opens = [...stripped.matchAll(openRe)].length;
+    const closes = [...stripped.matchAll(BLOCK_CLOSE_RE)].length;
+    depth += opens - closes;
+
+    if (i > defIdx && depth <= 0) {
+      const ctxStart = Math.max(0, defIdx - contextLines);
+      const ctxEnd = Math.min(lines.length - 1, i + contextLines);
+      return {
+        lines: lines.slice(ctxStart, ctxEnd + 1),
+        startLine: ctxStart + 1,
+        endLine: ctxEnd + 1
+      };
+    }
+
+    // Safety
+    if (i - defIdx > 500) break;
+  }
+
+  // Fallback
+  const ctxStart = Math.max(0, defIdx - contextLines);
+  const ctxEnd = Math.min(lines.length - 1, defIdx + 30);
+  return {
+    lines: lines.slice(ctxStart, ctxEnd + 1),
+    startLine: ctxStart + 1,
+    endLine: ctxEnd + 1
+  };
+}
+
+/**
+ * Strip string literals and comments from a line so keyword counting
+ * isn't fooled by `end` inside strings or comments.
+ */
+function stripStringsAndComments(line, filePath) {
+  const isLua = filePath.endsWith('.lua');
+  let result = '';
+  let inSingle = false;
+  let inDouble = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    const prev = i > 0 ? line[i - 1] : '';
+
+    if (prev === '\\') { result += ' '; continue; }
+
+    if (!inSingle && !inDouble) {
+      // Line comments: # (Ruby/Elixir) or -- (Lua)
+      if (ch === '#' && !isLua) break;
+      if (ch === '-' && line[i + 1] === '-' && isLua) break;
+      if (ch === "'") { inSingle = true; continue; }
+      if (ch === '"') { inDouble = true; continue; }
+      result += ch;
+    } else if (inSingle && ch === "'") {
+      inSingle = false;
+    } else if (inDouble && ch === '"') {
+      inDouble = false;
+    }
+  }
+
+  return result;
+}
+
 function extractBody(filePath, startLine, contextLines = 0) {
   // Python: use indentation-based extraction
   if (filePath.endsWith('.py')) {
     return extractPythonBody(filePath, startLine, contextLines);
+  }
+
+  // Ruby, Elixir, Lua: use end-keyword extraction
+  if (END_KW_EXTS.has(extname(filePath))) {
+    return extractEndKeywordBody(filePath, startLine, contextLines);
   }
 
   let content;
