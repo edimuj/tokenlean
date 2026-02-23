@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-02-23
+
+### Added
+- `tl-structure --exports` flag to inline export names in output for clearer module composition analysis
+- Test suite for core src/ modules (config, generic-lang, output, project)
+- Extract struct fields and enum variants in generic-lang for better symbol extraction
+- Extract enum variants in generic-lang
+
+### Changed
+- `tl-symbols` now inlines struct fields and enum variants in output
+- `tl-impact` shows per-export usage summary in default output, providing visibility into which exports are used and how often
+
+### Fixed
+- Filter Rust false-positive methods (Ok, Err, Some, etc.) in symbol extraction
+- Impl regex now handles generics and lifetimes in generic-lang
+
+### Performance
+- Add headOnly cache invalidation in `tl-impact`, reducing reverse-map lookups for unchanged exports
+
 ## [0.17.1] - 2026-02-23
 
 ### Fixed
