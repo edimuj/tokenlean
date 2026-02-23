@@ -132,6 +132,22 @@ function extractComponents(content) {
   return [...new Set(components)];
 }
 
+function extractChildComponents(content, definedComponents) {
+  const children = new Set();
+  const defined = new Set(definedComponents);
+  const tagRegex = /<([A-Z][a-zA-Z0-9]*(?:\.[A-Z]\w*)?)[\s/>]/g;
+  let match;
+
+  while ((match = tagRegex.exec(content)) !== null) {
+    const name = match[1];
+    if (!defined.has(name)) {
+      children.add(name);
+    }
+  }
+
+  return [...children];
+}
+
 function extractStyles(content) {
   const styles = [];
 
@@ -214,9 +230,11 @@ const analysis = {
   hooks: extractHooks(content),
   propsInfo: extractProps(content),
   components: extractComponents(content),
+  renders: null, // filled after components is known
   styles: extractStyles(content),
   redux: extractRedux(content)
 };
+analysis.renders = extractChildComponents(content, analysis.components);
 
 const out = createOutput(options);
 
@@ -225,6 +243,7 @@ out.setData('file', analysis.file);
 out.setData('lines', analysis.lines);
 out.setData('tokens', analysis.tokens);
 out.setData('components', analysis.components);
+out.setData('renders', analysis.renders);
 out.setData('props', analysis.propsInfo);
 out.setData('hooks', analysis.hooks);
 out.setData('imports', analysis.imports);
@@ -239,6 +258,11 @@ out.blank();
 // Components
 if (analysis.components.length > 0) {
   out.add(`Components: ${analysis.components.join(', ')}`);
+}
+
+// Renders (child components)
+if (analysis.renders.length > 0) {
+  out.add(`Renders: ${analysis.renders.join(', ')}`);
 }
 
 // Props
