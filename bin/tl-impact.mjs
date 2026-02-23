@@ -51,6 +51,7 @@ Examples:
   tl-impact src/utils/api.ts -j      # JSON output
 
 Output shows:
+  - Export usage summary (which exports are used and by how many files)
   - Which files import the target
   - Token cost of each importer
   - Line number of the import
@@ -271,6 +272,25 @@ function buildResults(importers, projectRoot) {
   return categories;
 }
 
+function buildExportSummary(categories) {
+  const counts = {};
+
+  for (const files of Object.values(categories)) {
+    for (const file of files) {
+      if (!file.statement) continue;
+      const names = extractImportedNames(file.statement);
+      for (const name of names) {
+        if (name.startsWith('*') || name === 'dynamic') continue;
+        const clean = name.startsWith('default (') ? name.slice(9, -1) : name;
+        counts[clean] = (counts[clean] || 0) + 1;
+      }
+    }
+  }
+
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
 function printCategory(out, title, files, emoji, showWhy) {
   if (files.length === 0) return { totalFiles: 0, totalTokens: 0 };
 
@@ -342,7 +362,6 @@ out.header(`   Target file: ~${formatTokens(targetTokens)} tokens`);
 if (maxDepth > 1) {
   out.header(`   Analyzing ${maxDepth} levels of dependencies...`);
 }
-out.blank();
 
 const reverseMap = withCache(
   { op: 'reverse-import-map' },
@@ -380,7 +399,21 @@ if (importers.size === 0) {
 
 const categories = buildResults(importers, projectRoot);
 
+// Export usage summary
+const exportSummary = buildExportSummary(categories);
+if (exportSummary.length > 0) {
+  const MAX_INLINE = 8;
+  const parts = exportSummary.slice(0, MAX_INLINE).map(([name, count]) => `${name} (${count})`);
+  let line = '   Exports used: ' + parts.join(', ');
+  if (exportSummary.length > MAX_INLINE) {
+    line += `, ... +${exportSummary.length - MAX_INLINE} more`;
+  }
+  out.header(line);
+}
+out.blank();
+
 // Set JSON data
+out.setData('exportUsage', Object.fromEntries(exportSummary));
 out.setData('importers', categories);
 
 let totalFiles = 0;
