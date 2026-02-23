@@ -81,6 +81,8 @@ function findDefinitions(name, searchPath) {
     `impl(?:\\s+\\w+\\s+for)?\\s+${name}`,       // Rust: impl Name / impl Trait for Name
     `(?:public|private|protected)?\\s*(?:static\\s+)?(?:class|interface)\\s+${name}`, // Java/C#/Kotlin
     `func\\s+${name}\\s*[(<]`,                   // Go/Swift: func name(
+    `func\\s*\\([^)]*\\)\\s*${name}\\s*\\(`,      // Go: func (recv) name(
+    `type\\s+${name}\\s+(?:struct|interface)`,     // Go: type Name struct/interface
   ];
 
   const pattern = `(${patterns.join('|')})`;
@@ -162,7 +164,78 @@ function countBraces(line) {
   return { open, close };
 }
 
+/**
+ * Indentation-based body extraction for Python.
+ * Finds the end of a block by tracking indent level.
+ */
+function extractPythonBody(filePath, startLine, contextLines = 0) {
+  let content;
+  try {
+    content = readFileSync(filePath, 'utf-8');
+  } catch {
+    return null;
+  }
+
+  const lines = content.split('\n');
+  const defIdx = startLine - 1;
+
+  // Get indent of the definition line
+  const defLine = lines[defIdx];
+  const defIndent = defLine.match(/^(\s*)/)[1].length;
+
+  // For multi-line signatures (e.g., def foo(\n    arg1,\n    arg2\n):)
+  // scan forward to find the colon that ends the signature
+  let bodyStartIdx = defIdx;
+  if (defLine.includes('(') && !defLine.trimEnd().endsWith(':')) {
+    for (let i = defIdx; i < Math.min(defIdx + 20, lines.length); i++) {
+      if (lines[i].trimEnd().endsWith(':')) {
+        bodyStartIdx = i;
+        break;
+      }
+    }
+  }
+
+  // Scan forward from the line after the signature
+  let endIdx = bodyStartIdx;
+  for (let i = bodyStartIdx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Blank lines and comments are part of the block
+    if (trimmed === '' || trimmed.startsWith('#')) {
+      // But trailing blanks at end shouldn't extend the block —
+      // we'll trim them after finding the real end
+      continue;
+    }
+
+    const lineIndent = line.match(/^(\s*)/)[1].length;
+
+    // Line at same or lesser indent = block ended
+    if (lineIndent <= defIndent) {
+      break;
+    }
+
+    endIdx = i;
+
+    // Safety: don't scan more than 500 lines
+    if (i - defIdx > 500) break;
+  }
+
+  const ctxStart = Math.max(0, defIdx - contextLines);
+  const ctxEnd = Math.min(lines.length - 1, endIdx + contextLines);
+  return {
+    lines: lines.slice(ctxStart, ctxEnd + 1),
+    startLine: ctxStart + 1,
+    endLine: ctxEnd + 1
+  };
+}
+
 function extractBody(filePath, startLine, contextLines = 0) {
+  // Python: use indentation-based extraction
+  if (filePath.endsWith('.py')) {
+    return extractPythonBody(filePath, startLine, contextLines);
+  }
+
   let content;
   try {
     content = readFileSync(filePath, 'utf-8');
