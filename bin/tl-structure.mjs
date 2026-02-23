@@ -32,6 +32,7 @@ import {
 } from '../src/output.mjs';
 import { traverseDirectory } from '../src/traverse.mjs';
 import { getConfig } from '../src/config.mjs';
+import { rgCommand } from '../src/shell.mjs';
 
 const HELP = `
 tl-structure - Smart project overview with context estimates
@@ -41,6 +42,7 @@ Usage: tl-structure [path] [options]
 Options:
   --depth N, -d N    Maximum depth to show (default: 3)
   --entry-points     Highlight entry points (main, bin, exports from package.json)
+  --exports, -e      Show top exports inline per file (JS/TS)
 ${COMMON_OPTIONS_HELP}
 
 Configure defaults in .tokenleanrc.json:
@@ -53,19 +55,19 @@ Examples:
   tl-structure -q                # Quiet (no headers)
 `;
 
-function printTree(node, out, prefix = '', isRoot = false) {
+function printTree(node, out, prefix = '', isRoot = false, exportsByFile = null) {
   if (isRoot) {
     // Print children directly for root
     const children = node.children || [];
     children.forEach((child, index) => {
-      printNode(child, out, '', index === children.length - 1);
+      printNode(child, out, '', index === children.length - 1, exportsByFile);
     });
     return;
   }
-  printNode(node, out, prefix, true);
+  printNode(node, out, prefix, true, exportsByFile);
 }
 
-function printNode(entry, out, prefix, isLast) {
+function printNode(entry, out, prefix, isLast, exportsByFile = null) {
   const connector = isLast ? '└── ' : '├── ';
   const marker = entry.important ? '*' : ' ';
   const newPrefix = prefix + (isLast ? '    ' : '│   ');
@@ -79,12 +81,25 @@ function printNode(entry, out, prefix, isLast) {
     // Print children
     const children = entry.children || [];
     children.forEach((child, index) => {
-      printNode(child, out, newPrefix, index === children.length - 1);
+      printNode(child, out, newPrefix, index === children.length - 1, exportsByFile);
     });
   } else if (entry.binary) {
     out.add(`${prefix}${connector}${marker}${entry.name} (binary)`);
   } else {
-    out.add(`${prefix}${connector}${marker}${entry.name} (~${formatTokens(entry.tokens)})`);
+    let line = `${prefix}${connector}${marker}${entry.name} (~${formatTokens(entry.tokens)})`;
+
+    // Append inline exports if available
+    if (exportsByFile && entry.path) {
+      const exports = exportsByFile.get(resolve(entry.path));
+      if (exports && exports.length > 0) {
+        const MAX_SHOW = 3;
+        const shown = exports.slice(0, MAX_SHOW).join(', ');
+        const overflow = exports.length > MAX_SHOW ? `, +${exports.length - MAX_SHOW}` : '';
+        line += ` [${shown}${overflow}]`;
+      }
+    }
+
+    out.add(line);
   }
 }
 
@@ -153,6 +168,52 @@ function detectEntryPoints(projectDir) {
   return entries;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Export Extraction (JS/TS only)
+// ─────────────────────────────────────────────────────────────
+
+function batchExtractExports(rootDir) {
+  const output = rgCommand([
+    '--no-heading',
+    '-n',
+    '--glob', '*.{js,mjs,cjs,jsx,ts,tsx,mts}',
+    '^export\\s+(default\\s+)?(function|const|let|var|class|type|interface|enum|async\\s+function)\\s+',
+    rootDir
+  ], { maxBuffer: 10 * 1024 * 1024 });
+
+  if (!output) return new Map();
+
+  const exportsByFile = new Map();
+
+  for (const line of output.split('\n')) {
+    if (!line) continue;
+    const colonIdx = line.indexOf(':');
+    if (colonIdx === -1) continue;
+    const secondColon = line.indexOf(':', colonIdx + 1);
+    if (secondColon === -1) continue;
+
+    const filePath = line.substring(0, colonIdx);
+    const content = line.substring(secondColon + 1).trim();
+
+    const name = extractExportName(content);
+    if (!name) continue;
+
+    if (!exportsByFile.has(filePath)) {
+      exportsByFile.set(filePath, []);
+    }
+    exportsByFile.get(filePath).push(name);
+  }
+
+  return exportsByFile;
+}
+
+function extractExportName(line) {
+  const m = line.match(
+    /^export\s+(?:default\s+)?(?:async\s+)?(?:function\s*\*?\s*|const\s+|let\s+|var\s+|class\s+|type\s+|interface\s+|enum\s+)(\w+)/
+  );
+  return m ? m[1] : null;
+}
+
 // Main
 const args = process.argv.slice(2);
 const options = parseCommonArgs(args);
@@ -163,6 +224,7 @@ const structureConfig = getConfig('structure') || {};
 let targetPath = '.';
 let maxDepth = structureConfig.depth || 3;
 let showEntryPoints = false;
+let showExports = false;
 
 // Parse tool-specific options
 for (let i = 0; i < options.remaining.length; i++) {
@@ -172,6 +234,8 @@ for (let i = 0; i < options.remaining.length; i++) {
     i++;
   } else if (arg === '--entry-points') {
     showEntryPoints = true;
+  } else if (arg === '--exports' || arg === '-e') {
+    showExports = true;
   } else if (!arg.startsWith('-')) {
     targetPath = arg;
   }
@@ -206,8 +270,19 @@ out.header(`Total: ${tree.fileCount} files, ~${formatTokens(tree.totalTokens)} t
 out.header(`(* = important for understanding project)`);
 out.blank();
 
+// Export extraction
+const exportsByFile = showExports ? batchExtractExports(resolve(targetPath)) : null;
+
+if (showExports && exportsByFile) {
+  const exportsData = {};
+  for (const [filePath, names] of exportsByFile) {
+    exportsData[filePath] = names;
+  }
+  out.setData('exports', exportsData);
+}
+
 // Tree output
-printTree(tree, out, '', true);
+printTree(tree, out, '', true, exportsByFile);
 
 // Entry points
 if (showEntryPoints) {
