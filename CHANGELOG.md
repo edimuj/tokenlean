@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-02-23
+
+### Added
+- `tl-symbols` now accepts directories or multiple files for compact one-liner output (one symbol list per file)
+- `tl-snippet` supports comma-separated names to extract multiple functions/classes: `tl-snippet getCached,setCached,withCache src/cache.mjs`
+
+### Fixed
+- Python indentation-based body extraction for correct function body boundaries
+- Go struct and method search now handles qualified type names and embedded structs
+
+
+
 ## [0.18.0] - 2026-02-23
 
 ### Added
