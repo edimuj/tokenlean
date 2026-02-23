@@ -117,6 +117,12 @@ Ready-made workflows following the [Agent Skills](https://agentskills.io) open f
 | [`code-review`](skills/code-review/SKILL.md) | Review PRs efficiently — scope, blast radius, complexity, then targeted code reading |
 | [`explore-codebase`](skills/explore-codebase/SKILL.md) | Understand an unfamiliar project in minutes without reading everything |
 | [`safe-refactor`](skills/safe-refactor/SKILL.md) | Rename, move, or extract code with impact analysis and verification at each step |
+| [`add-feature`](skills/add-feature/SKILL.md) | Add functionality by studying existing patterns first — locate, learn conventions, implement, verify |
+| [`debug-bug`](skills/debug-bug/SKILL.md) | Systematic bug investigation — reproduce, localize with blame/history, trace call path, verify fix |
+| [`debug-performance`](skills/debug-performance/SKILL.md) | Measure before optimizing — establish baselines, identify bottlenecks, confirm improvements with numbers |
+| [`write-tests`](skills/write-tests/SKILL.md) | Write tests by studying existing patterns and code under test before writing assertions |
+| [`upgrade-deps`](skills/upgrade-deps/SKILL.md) | Upgrade dependencies safely — audit usage, research breaking changes, scale effort to version jump |
+| [`migrate-framework`](skills/migrate-framework/SKILL.md) | Incremental framework/API migration with verification at each step, batched by dependency order |
 
 ```bash
 # Claude Code — copy a skill
