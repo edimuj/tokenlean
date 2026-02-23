@@ -108,6 +108,28 @@ describe('extractGenericSymbols', () => {
       assert.strictEqual(r.classes.length, 1);
       assert.ok(r.classes[0].signature.includes('Display'));
     });
+
+    it('extracts impl with generic params', () => {
+      const code = `impl<T: AsRef<str>> From<T> for TokenCounter {
+  fn from(s: T) -> Self {
+  }
+}`;
+      const r = extractGenericSymbols(code);
+      assert.strictEqual(r.classes.length, 1);
+      assert.ok(r.classes[0].signature.includes('From'));
+      assert.strictEqual(r.classes[0].methods.length, 1);
+    });
+
+    it('extracts impl with lifetime params', () => {
+      const code = `impl<'a> Iterator for TokenIter<'a> {
+  fn next(&mut self) -> Option<Token> {
+  }
+}`;
+      const r = extractGenericSymbols(code);
+      assert.strictEqual(r.classes.length, 1);
+      assert.ok(r.classes[0].signature.includes('Iterator'));
+      assert.strictEqual(r.classes[0].methods.length, 1);
+    });
   });
 
   describe('constants', () => {

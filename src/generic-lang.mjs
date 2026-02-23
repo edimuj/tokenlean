@@ -130,7 +130,7 @@ export function extractGenericSymbols(content) {
     }
 
     // Impl blocks: impl Foo / impl Trait for Foo
-    const implMatch = trimmed.match(new RegExp(`^${VISIBILITY}impl\\s+(.+?)\\s*\\{?$`));
+    const implMatch = trimmed.match(new RegExp(`^${VISIBILITY}impl(?:<[^{]*?>)?\\s+(.+?)\\s*\\{?$`));
     if (implMatch && !inBlock) {
       const sig = sigLine(rawLines[i]);
       inBlock = { signature: sig, methods: [], depth: braceDepth > prevDepth ? prevDepth : braceDepth };
