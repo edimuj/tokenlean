@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-02-23
+
+### Fixed
+- `tl-snippet` now correctly finds class methods with multi-line parameter lists
+
 ## [0.17.0] - 2026-02-23
 
 ### Added
