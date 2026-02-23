@@ -172,7 +172,7 @@ export function extractGenericSymbols(content) {
       if (methodMatch) {
         const name = methodMatch[1];
         // Skip control flow keywords
-        const skip = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'throw', 'new', 'typeof', 'delete', 'void', 'yield', 'await', 'match', 'loop', 'else']);
+        const skip = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'throw', 'new', 'typeof', 'delete', 'void', 'yield', 'await', 'match', 'loop', 'else', 'Ok', 'Err', 'Some', 'None', 'Self', 'Box', 'Vec', 'Arc', 'Rc', 'println', 'eprintln', 'format', 'panic', 'assert', 'debug_assert', 'todo', 'unimplemented', 'unreachable', 'write', 'writeln']);
         if (!skip.has(name)) {
           inBlock.methods.push(sigLine(rawLines[i]));
         }

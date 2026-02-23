@@ -216,6 +216,34 @@ def real():
       assert.ok(r.types[0].includes('Result'));
     });
   });
+
+  describe('false positive filtering', () => {
+    it('does not treat Ok() as a method inside impl', () => {
+      const code = `impl Parser {
+  fn parse(&self) -> Result<usize> {
+    Ok(tokens.len())
+  }
+}`;
+      const r = extractGenericSymbols(code);
+      assert.strictEqual(r.classes.length, 1);
+      assert.strictEqual(r.classes[0].methods.length, 1);
+      assert.ok(r.classes[0].methods[0].includes('parse'));
+    });
+
+    it('does not treat Err/Some/None/Self as methods', () => {
+      const code = `impl Handler {
+  fn handle(&self) {
+    Some(value)
+    None
+    Err(e)
+    Self::new()
+  }
+}`;
+      const r = extractGenericSymbols(code);
+      assert.strictEqual(r.classes.length, 1);
+      assert.strictEqual(r.classes[0].methods.length, 1);
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
