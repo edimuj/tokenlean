@@ -84,6 +84,60 @@ function detectLanguage(filePath) {
 // JavaScript/TypeScript Extraction
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Join multi-line signatures into single logical lines.
+ * When a line has unbalanced parens, accumulate subsequent lines until balanced.
+ */
+function joinMultiLineSignatures(lines) {
+  const result = [];
+  let accumulator = '';
+  let parenDepth = 0;
+  let angleDepth = 0;
+  let accumLines = 0;
+  const MAX_ACCUM = 10;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Don't join inside block comments or empty lines
+    if (!accumulator && (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('/*') || trimmed.startsWith('*'))) {
+      result.push(line);
+      continue;
+    }
+
+    if (accumulator) {
+      accumulator += ' ' + trimmed;
+      accumLines++;
+    } else {
+      // Only start accumulating on signature-like lines
+      accumulator = line;
+      accumLines = 1;
+    }
+
+    // Count parens and angle brackets (for generics) in this line
+    for (let i = 0; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (ch === '(') parenDepth++;
+      else if (ch === ')') parenDepth--;
+      else if (ch === '<') angleDepth++;
+      else if (ch === '>') angleDepth--;
+    }
+
+    // Balanced or hit limit — flush
+    if (parenDepth <= 0 || accumLines >= MAX_ACCUM) {
+      result.push(accumulator);
+      accumulator = '';
+      parenDepth = 0;
+      angleDepth = 0;
+      accumLines = 0;
+    }
+  }
+
+  // Flush any remaining
+  if (accumulator) result.push(accumulator);
+  return result;
+}
+
 function finalizeJsContainer(container, symbols) {
   if (container.type === 'class') {
     symbols.classes.push({ signature: container.signature, methods: container.items });
@@ -116,7 +170,8 @@ function extractJsSymbols(content, exportsOnly = false) {
     constants: []
   };
 
-  const lines = content.split('\n');
+  const rawLines = content.split('\n');
+  const lines = joinMultiLineSignatures(rawLines);
   let container = null; // { type: 'class'|'interface'|'type'|'enum', signature, items: [], exported }
   let braceDepth = 0;
 
@@ -297,14 +352,69 @@ function extractJsSymbols(content, exportsOnly = false) {
   return symbols;
 }
 
-function extractSignatureLine(line) {
-  let sig = line
-    .replace(/\s*\{[\s\S]*$/, '')
-    .replace(/\s*=>\s*[^{].*$/, ' =>')
-    .replace(/\s*=\s*[^=].*$/, '')
-    .trim();
+/**
+ * Find the position of a character outside balanced parens.
+ * Scans left-to-right. Returns -1 if not found.
+ */
+function findOutsideParens(str, char) {
+  let depth = 0;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    // Skip > that's part of => (arrow, not generic closer)
+    if (ch === '=' && i + 1 < str.length && str[i + 1] === '>') {
+      if (depth === 0 && char === '=') return i; // looking for = and found =>
+      i++; // skip the >
+      continue;
+    }
+    if (ch === '(' || ch === '<') depth++;
+    else if (ch === ')' || ch === '>') depth--;
+    else if (ch === char && depth === 0) return i;
+  }
+  return -1;
+}
 
-  sig = sig.replace(/[,;]$/, '').trim();
+/**
+ * Find the last `=>` that's outside balanced parens (scanning right-to-left).
+ * Returns the index of `=` in `=>`, or -1.
+ */
+function findLastArrowOutsideParens(str) {
+  let depth = 0;
+  for (let i = str.length - 1; i >= 1; i--) {
+    const ch = str[i];
+    // Check => before depth tracking (> is part of => not a generic closer)
+    if (ch === '>' && str[i - 1] === '=' && depth === 0) {
+      return i - 1;
+    }
+    if (ch === ')' || ch === '>') depth++;
+    else if (ch === '(' || ch === '<') depth--;
+  }
+  return -1;
+}
+
+function extractSignatureLine(line) {
+  let sig = line.trim();
+
+  // 1. Strip block body: everything from { onwards (outside parens)
+  const bracePos = findOutsideParens(sig, '{');
+  if (bracePos !== -1) {
+    sig = sig.slice(0, bracePos).trim();
+  }
+
+  // 2. Strip arrow body: keep `=>` stub but drop the expression/block body
+  const arrowPos = findLastArrowOutsideParens(sig);
+  if (arrowPos !== -1) {
+    sig = sig.slice(0, arrowPos).trim() + ' =>';
+  }
+
+  // 3. Strip top-level value assignment (not inside parens, not arrow functions)
+  if (!sig.includes('=>')) {
+    const eqPos = findOutsideParens(sig, '=');
+    if (eqPos !== -1 && sig[eqPos + 1] !== '=') {
+      sig = sig.slice(0, eqPos).trim();
+    }
+  }
+
+  sig = sig.replace(/[,;]$/, '').replace(/\s{2,}/g, ' ').trim();
   return sig;
 }
 
