@@ -124,7 +124,8 @@ export function extractGenericSymbols(content) {
     if (inBlock && braceDepth <= inBlock.depth && prevDepth > inBlock.depth) {
       symbols.classes.push({
         signature: inBlock.signature,
-        methods: inBlock.methods
+        methods: inBlock.methods,
+        fields: inBlock.fields
       });
       inBlock = null;
     }
@@ -133,7 +134,7 @@ export function extractGenericSymbols(content) {
     const implMatch = trimmed.match(new RegExp(`^${VISIBILITY}impl(?:<[^{]*?>)?\\s+(.+?)\\s*\\{?$`));
     if (implMatch && !inBlock) {
       const sig = sigLine(rawLines[i]);
-      inBlock = { signature: sig, methods: [], depth: braceDepth > prevDepth ? prevDepth : braceDepth };
+      inBlock = { signature: sig, methods: [], fields: [], kind: 'impl', depth: braceDepth > prevDepth ? prevDepth : braceDepth };
       continue;
     }
 
@@ -142,11 +143,13 @@ export function extractGenericSymbols(content) {
     const classMatch = trimmed.match(classRe);
     if (classMatch && !inBlock) {
       const sig = sigLine(rawLines[i]);
+      const kindMatch = trimmed.match(/\b(class|struct|interface|trait|enum|protocol|record|union)\b/);
+      const kind = kindMatch ? kindMatch[1] : 'class';
       if (openBraces > 0) {
-        inBlock = { signature: sig, methods: [], depth: braceDepth > prevDepth ? prevDepth : braceDepth };
+        inBlock = { signature: sig, methods: [], fields: [], kind, depth: braceDepth > prevDepth ? prevDepth : braceDepth };
       } else {
         // Could be a forward decl or single-line — add as class with no methods
-        symbols.classes.push({ signature: sig, methods: [] });
+        symbols.classes.push({ signature: sig, methods: [], fields: [] });
       }
       continue;
     }
@@ -166,6 +169,18 @@ export function extractGenericSymbols(content) {
 
     // Methods inside a class/impl block (non-keyword methods like Ruby `def`)
     if (inBlock && braceDepth > inBlock.depth) {
+      // Struct fields: name: Type (only in struct/class/interface/trait blocks, not impl/enum)
+      if (inBlock.kind !== 'impl' && inBlock.kind !== 'enum') {
+        const fieldMatch = trimmed.match(/^(?:pub(?:\([^)]*\))?\s+)?(\w+)\s*:\s*.+/);
+        if (fieldMatch) {
+          const name = fieldMatch[1];
+          if (name !== 'fn') {
+            inBlock.fields.push(name);
+            continue;
+          }
+        }
+      }
+
       // Check for method-like patterns that weren't caught above
       const methodRe = new RegExp(`^${VISIBILITY}${MODIFIERS}(\\w+)\\s*\\(`);
       const methodMatch = trimmed.match(methodRe);
@@ -212,7 +227,8 @@ export function extractGenericSymbols(content) {
   if (inBlock) {
     symbols.classes.push({
       signature: inBlock.signature,
-      methods: inBlock.methods
+      methods: inBlock.methods,
+      fields: inBlock.fields
     });
   }
 

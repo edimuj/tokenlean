@@ -217,6 +217,44 @@ def real():
     });
   });
 
+  describe('struct fields', () => {
+    it('extracts fields from struct', () => {
+      const code = `pub struct Config {
+  pub host: String,
+  port: u16,
+  verbose: bool,
+}`;
+      const r = extractGenericSymbols(code);
+      assert.strictEqual(r.classes.length, 1);
+      assert.ok(r.classes[0].fields);
+      assert.strictEqual(r.classes[0].fields.length, 3);
+      assert.ok(r.classes[0].fields.includes('host'));
+      assert.ok(r.classes[0].fields.includes('port'));
+      assert.ok(r.classes[0].fields.includes('verbose'));
+    });
+
+    it('does not extract fields from impl blocks', () => {
+      const code = `impl Config {
+  fn new() -> Self {
+  }
+}`;
+      const r = extractGenericSymbols(code);
+      assert.strictEqual(r.classes.length, 1);
+      assert.ok(!r.classes[0].fields || r.classes[0].fields.length === 0);
+    });
+
+    it('extracts trait method declarations as methods not fields', () => {
+      const code = `pub trait Formatter {
+  fn format(&self, count: usize) -> String;
+  fn supports_streaming(&self) -> bool;
+}`;
+      const r = extractGenericSymbols(code);
+      assert.strictEqual(r.classes.length, 1);
+      assert.strictEqual(r.classes[0].methods.length, 2);
+      assert.ok(!r.classes[0].fields || r.classes[0].fields.length === 0);
+    });
+  });
+
   describe('false positive filtering', () => {
     it('does not treat Ok() as a method inside impl', () => {
       const code = `impl Parser {
