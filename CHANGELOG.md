@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-02-23
+
+### Added
+- Six new agent skills: `debug-bug` (systematic bug investigation), `add-feature` (pattern-aware feature implementation), `debug-performance` (measure-driven optimization), `upgrade-deps` (safe dependency upgrades), `write-tests` (convention-aware test writing), `migrate-framework` (incremental migration with per-batch verification)
+
 ## [0.16.0] - 2026-02-21
 
 ### Added
