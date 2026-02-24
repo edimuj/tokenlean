@@ -59,6 +59,8 @@ Supported languages:
   JavaScript/TypeScript (.js, .ts, .jsx, .tsx, .mjs)
   Python (.py)
   Go (.go)
+  Rust (.rs)
+  Ruby (.rb)
   Other languages: generic regex-based extraction (best-effort)
 `;
 
@@ -69,7 +71,9 @@ Supported languages:
 const LANG_EXTENSIONS = {
   js: ['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts'],
   python: ['.py'],
-  go: ['.go']
+  go: ['.go'],
+  rust: ['.rs'],
+  ruby: ['.rb']
 };
 
 function detectLanguage(filePath) {
@@ -541,6 +545,443 @@ function extractGoSymbols(content) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Rust Extraction
+// ─────────────────────────────────────────────────────────────
+
+function extractRustSymbols(content) {
+  const symbols = {
+    classes: [],   // structs + enums
+    functions: [], // top-level fn + macro_rules!
+    types: [],     // type aliases
+    constants: [], // const + static
+    modules: [],   // mod declarations
+    impls: []      // trait impl summary lines
+  };
+
+  const lines = content.split('\n');
+  let braceDepth = 0;
+  let pendingDerive = null; // #[derive(...)] waiting for struct/enum
+
+  // Current container: struct, enum, trait, or impl
+  let container = null;
+  // { kind: 'struct'|'enum'|'trait'|'impl', sig, items, derive, implFor, implType, containerDepth }
+
+  // Map from type name -> class entry index (for attaching inherent impl methods)
+  const structMap = new Map();
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Skip empty lines and line comments
+    if (!trimmed || trimmed.startsWith('//')) continue;
+
+    // Capture #[derive(...)]
+    const deriveMatch = trimmed.match(/^#\[derive\(([^)]+)\)\]/);
+    if (deriveMatch) {
+      pendingDerive = deriveMatch[1].trim();
+      continue;
+    }
+    // Skip other attributes
+    if (trimmed.startsWith('#[')) continue;
+
+    // Count braces
+    let lineOpen = 0, lineClose = 0;
+    let inStr = false, strChar = '';
+    for (let j = 0; j < trimmed.length; j++) {
+      const ch = trimmed[j];
+      if (inStr) { if (ch === strChar && trimmed[j - 1] !== '\\') inStr = false; continue; }
+      if (ch === '"' || ch === '\'') { inStr = true; strChar = ch; continue; }
+      if (ch === '/' && trimmed[j + 1] === '/') break; // rest is comment
+      if (ch === '{') lineOpen++;
+      else if (ch === '}') lineClose++;
+    }
+
+    const prevDepth = braceDepth;
+    braceDepth += lineOpen - lineClose;
+
+    // Exiting a container
+    if (container && braceDepth <= container.containerDepth) {
+      finalizeRustContainer(container, symbols, structMap);
+      container = null;
+    }
+
+    // Inside a container: collect items at depth containerDepth+1
+    if (container && prevDepth >= container.containerDepth + 1) {
+      if (prevDepth === container.containerDepth + 1) {
+        collectRustContainerItem(trimmed, container);
+      }
+      continue;
+    }
+
+    // Top-level declarations (prevDepth === 0 or entering a new container)
+    if (prevDepth === 0) {
+      // struct
+      const structMatch = trimmed.match(/^(pub(?:\([^)]+\))?\s+)?struct\s+(\w+)(?:<[^>]*>)?/);
+      if (structMatch) {
+        const vis = structMatch[1]?.trim() || '';
+        const name = structMatch[2];
+        const sig = (vis ? vis + ' ' : '') + 'struct ' + name;
+        // Tuple struct or unit struct (no brace block)
+        if (lineOpen === 0 || trimmed.endsWith(';')) {
+          const entry = { signature: sig, methods: [], derive: pendingDerive };
+          symbols.classes.push(entry);
+          structMap.set(name, symbols.classes.length - 1);
+          pendingDerive = null;
+        } else {
+          container = { kind: 'struct', sig, name, items: [], derive: pendingDerive, containerDepth: prevDepth };
+          pendingDerive = null;
+        }
+        continue;
+      }
+
+      // enum
+      const enumMatch = trimmed.match(/^(pub(?:\([^)]+\))?\s+)?enum\s+(\w+)(?:<[^>]*>)?/);
+      if (enumMatch) {
+        const vis = enumMatch[1]?.trim() || '';
+        const name = enumMatch[2];
+        const sig = (vis ? vis + ' ' : '') + 'enum ' + name;
+        container = { kind: 'enum', sig, name, items: [], derive: pendingDerive, containerDepth: prevDepth };
+        pendingDerive = null;
+        continue;
+      }
+
+      // trait
+      const traitMatch = trimmed.match(/^(pub(?:\([^)]+\))?\s+)?trait\s+(\w+)(?:<[^>]*>)?/);
+      if (traitMatch) {
+        const vis = traitMatch[1]?.trim() || '';
+        const sig = (vis ? vis + ' ' : '') + 'trait ' + traitMatch[2];
+        container = { kind: 'trait', sig, items: [], containerDepth: prevDepth };
+        pendingDerive = null;
+        continue;
+      }
+
+      // impl
+      const implMatch = trimmed.match(/^impl(?:<[^>]*>)?\s+(?:([\w:]+(?:<[^>]*>)?)\s+for\s+)?([\w:]+)(?:<[^>]*>)?/);
+      if (implMatch && !trimmed.match(/^(pub|fn|struct|enum|trait|type|const|static|mod|use|macro)/)) {
+        const traitName = implMatch[1]?.replace(/<.*>/, '') || null;
+        const typeName = implMatch[2];
+        container = { kind: 'impl', implFor: traitName, implType: typeName, items: [], containerDepth: prevDepth };
+        pendingDerive = null;
+        continue;
+      }
+
+      // fn
+      const fnMatch = trimmed.match(/^(pub(?:\([^)]+\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)/);
+      if (fnMatch) {
+        const sig = trimmed.replace(/\s*\{.*$/, '').replace(/\s*where\s+.*$/, '').trim();
+        symbols.functions.push(sig);
+        pendingDerive = null;
+        continue;
+      }
+
+      // type alias
+      const typeMatch = trimmed.match(/^(pub(?:\([^)]+\))?\s+)?type\s+(\w+)/);
+      if (typeMatch) {
+        const sig = trimmed.replace(/;$/, '').trim();
+        symbols.types.push(sig);
+        pendingDerive = null;
+        continue;
+      }
+
+      // const / static
+      const constMatch = trimmed.match(/^(pub(?:\([^)]+\))?\s+)?(const|static)\s+(\w+)/);
+      if (constMatch) {
+        const sig = trimmed.replace(/;$/, '').trim();
+        symbols.constants.push(sig);
+        pendingDerive = null;
+        continue;
+      }
+
+      // mod
+      const modMatch = trimmed.match(/^(pub(?:\([^)]+\))?\s+)?mod\s+(\w+)/);
+      if (modMatch) {
+        const vis = modMatch[1]?.trim() || '';
+        symbols.modules.push((vis ? vis + ' ' : '') + 'mod ' + modMatch[2]);
+        pendingDerive = null;
+        continue;
+      }
+
+      // macro_rules!
+      const macroMatch = trimmed.match(/^macro_rules!\s+(\w+)/);
+      if (macroMatch) {
+        symbols.functions.push('macro_rules! ' + macroMatch[1]);
+        pendingDerive = null;
+        continue;
+      }
+    }
+  }
+
+  // Flush last container
+  if (container) {
+    finalizeRustContainer(container, symbols, structMap);
+  }
+
+  return symbols;
+}
+
+function collectRustContainerItem(trimmed, container) {
+  if (container.kind === 'struct') {
+    // Collect field names: "pub name: Type," or "name: Type,"
+    const fieldMatch = trimmed.match(/^(?:pub(?:\([^)]+\))?\s+)?(\w+)\s*:/);
+    if (fieldMatch) container.items.push(fieldMatch[1]);
+  } else if (container.kind === 'enum') {
+    // Collect variant names
+    const varMatch = trimmed.match(/^(\w+)/);
+    if (varMatch) {
+      let variant = varMatch[1];
+      // Annotate variant shape
+      if (trimmed.includes('{')) variant += '{...}';
+      else if (trimmed.includes('(')) variant += '(...)';
+      container.items.push(variant);
+    }
+  } else if (container.kind === 'trait') {
+    // Collect method signatures
+    const fnMatch = trimmed.match(/^(?:async\s+)?fn\s+/);
+    if (fnMatch) {
+      const sig = trimmed.replace(/\s*\{.*$/, '').replace(/;$/, '').trim();
+      container.items.push(sig);
+    }
+    // Collect associated types
+    const typeMatch = trimmed.match(/^type\s+(\w+)/);
+    if (typeMatch) {
+      container.items.push(trimmed.replace(/;$/, '').trim());
+    }
+  } else if (container.kind === 'impl') {
+    // Collect method signatures
+    const fnMatch = trimmed.match(/^(pub(?:\([^)]+\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+/);
+    if (fnMatch) {
+      const sig = trimmed.replace(/\s*\{.*$/, '').replace(/\s*where\s+.*$/, '').trim();
+      container.items.push(sig);
+    }
+  }
+}
+
+function finalizeRustContainer(container, symbols, structMap) {
+  if (container.kind === 'struct') {
+    const entry = { signature: container.sig, methods: [], derive: container.derive };
+    if (container.items.length > 0) entry.fields = container.items;
+    symbols.classes.push(entry);
+    structMap.set(container.name, symbols.classes.length - 1);
+  } else if (container.kind === 'enum') {
+    const entry = { signature: container.sig, methods: [], derive: container.derive };
+    if (container.items.length > 0) entry.variants = container.items;
+    symbols.classes.push(entry);
+    structMap.set(container.name, symbols.classes.length - 1);
+  } else if (container.kind === 'trait') {
+    // Traits go to classes with isTrait flag
+    symbols.classes.push({ signature: container.sig, methods: container.items, isTrait: true });
+  } else if (container.kind === 'impl') {
+    if (container.implFor) {
+      // Trait impl: summary line under impls
+      symbols.impls.push({
+        trait: container.implFor,
+        type: container.implType,
+        methodCount: container.items.length
+      });
+    } else {
+      // Inherent impl: attach methods to the struct/enum
+      const idx = structMap.get(container.implType);
+      if (idx !== undefined) {
+        symbols.classes[idx].methods.push(...container.items);
+      } else {
+        // Struct defined elsewhere — create a placeholder
+        symbols.impls.push({
+          trait: null,
+          type: container.implType,
+          methods: container.items
+        });
+      }
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Ruby Extraction
+// ─────────────────────────────────────────────────────────────
+
+function extractRubySymbols(content) {
+  const symbols = {
+    classes: [],
+    functions: [],
+    modules: [],
+    constants: []
+  };
+
+  const lines = content.split('\n');
+
+  // Scope stack: each entry = { kind: 'class'|'module'|'def'|'block', name, ... }
+  const scopeStack = [];
+  // Current class/module context
+  let currentClass = null; // { sig, methods, attrs, constants, mixins, visibility }
+  let classStack = []; // for nested classes
+
+  function pushClass(sig, name) {
+    if (currentClass) classStack.push(currentClass);
+    currentClass = {
+      sig, name,
+      methods: [],
+      attrs: [],
+      constants: [],
+      mixins: [],
+      visibility: 'public'
+    };
+  }
+
+  function popClass() {
+    if (currentClass) {
+      symbols.classes.push(currentClass);
+    }
+    currentClass = classStack.pop() || null;
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Skip empty lines and comments
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    // Module
+    const modMatch = trimmed.match(/^module\s+([\w:]+)/);
+    if (modMatch) {
+      symbols.modules.push('module ' + modMatch[1]);
+      pushClass(null, modMatch[1]); // modules can contain methods too
+      currentClass.isModule = true;
+      currentClass.sig = 'module ' + modMatch[1];
+      scopeStack.push({ kind: 'module' });
+      continue;
+    }
+
+    // Class
+    const classMatch = trimmed.match(/^class\s+([\w:]+)(?:\s*<\s*([\w:]+))?/);
+    if (classMatch) {
+      const name = classMatch[1];
+      const parent = classMatch[2];
+      const sig = parent ? `class ${name} < ${parent}` : `class ${name}`;
+      pushClass(sig, name);
+      scopeStack.push({ kind: 'class' });
+      continue;
+    }
+
+    // def self.method (class method)
+    const classMethodMatch = trimmed.match(/^def\s+self\.(\w+[?!=]?)(?:\s*\(([^)]*)\))?/);
+    if (classMethodMatch) {
+      const params = classMethodMatch[2] || '';
+      const methodName = params ? `self.${classMethodMatch[1]}(${params})` : 'self.' + classMethodMatch[1];
+      if (currentClass) {
+        const vis = currentClass.visibility;
+        currentClass.methods.push({ name: methodName, visibility: vis });
+      } else {
+        symbols.functions.push('def ' + methodName);
+      }
+      // Only push to scope if it has a body (not one-liner)
+      if (!trimmed.includes('; end')) {
+        scopeStack.push({ kind: 'def' });
+      }
+      continue;
+    }
+
+    // def method
+    const defMatch = trimmed.match(/^def\s+(\w+[?!=]?)(?:\s*\(([^)]*)\))?/);
+    if (defMatch) {
+      const methodName = defMatch[1];
+      const params = defMatch[2] || '';
+      if (currentClass) {
+        const vis = currentClass.visibility;
+        const sig = params ? `${methodName}(${params})` : methodName;
+        currentClass.methods.push({ name: sig, visibility: vis });
+      } else {
+        const sig = params ? `def ${methodName}(${params})` : `def ${methodName}`;
+        symbols.functions.push(sig);
+      }
+      if (!trimmed.includes('; end')) {
+        scopeStack.push({ kind: 'def' });
+      }
+      continue;
+    }
+
+    // attr_reader / attr_accessor / attr_writer
+    const attrMatch = trimmed.match(/^(attr_reader|attr_accessor|attr_writer)\s+(.+)/);
+    if (attrMatch && currentClass) {
+      const kind = attrMatch[1];
+      const attrs = attrMatch[2].split(',').map(a => a.trim().replace(/^:/, ''));
+      currentClass.attrs.push({ kind, names: attrs });
+      continue;
+    }
+
+    // include / extend
+    const mixinMatch = trimmed.match(/^(include|extend)\s+(.+)/);
+    if (mixinMatch && currentClass) {
+      currentClass.mixins.push({ kind: mixinMatch[1], name: mixinMatch[2].trim() });
+      continue;
+    }
+
+    // Visibility modifiers (section-style)
+    if (currentClass) {
+      if (trimmed === 'private' || trimmed === 'private:') { currentClass.visibility = 'private'; continue; }
+      if (trimmed === 'protected' || trimmed === 'protected:') { currentClass.visibility = 'protected'; continue; }
+      if (trimmed === 'public' || trimmed === 'public:') { currentClass.visibility = 'public'; continue; }
+      // Single-method visibility: private :method_name
+      const singleVisMatch = trimmed.match(/^(private|protected)\s+:(\w+)/);
+      if (singleVisMatch) {
+        const method = currentClass.methods.find(m => m.name === singleVisMatch[2] || m.name.startsWith(singleVisMatch[2] + '('));
+        if (method) method.visibility = singleVisMatch[1];
+        continue;
+      }
+    }
+
+    // Constants inside class (UPPER_CASE = ...)
+    if (currentClass && trimmed.match(/^[A-Z][A-Z_0-9]*\s*=/)) {
+      const constName = trimmed.match(/^([A-Z][A-Z_0-9]*)/)[1];
+      currentClass.constants.push(constName);
+      continue;
+    }
+
+    // Top-level constants
+    if (!currentClass && trimmed.match(/^[A-Z][A-Z_0-9]*\s*=/)) {
+      const constName = trimmed.match(/^([A-Z][A-Z_0-9]*)/)[1];
+      symbols.constants.push(constName);
+      continue;
+    }
+
+    // end keyword — pop scope
+    if (trimmed === 'end' || trimmed.startsWith('end ') || trimmed.startsWith('end#')) {
+      const top = scopeStack.pop();
+      if (top?.kind === 'class' || top?.kind === 'module') {
+        popClass();
+      }
+      continue;
+    }
+
+    // Other block openers that need end-matching: do..end, begin, if/unless/while/for/case at statement level
+    // We only track these to correctly match 'end' keywords
+    if (isRubyBlockOpener(trimmed)) {
+      scopeStack.push({ kind: 'block' });
+    }
+  }
+
+  // Flush remaining
+  while (currentClass) popClass();
+
+  return symbols;
+}
+
+function isRubyBlockOpener(trimmed) {
+  // Block openers that require a matching 'end'
+  // Skip if it's a one-liner (has end on same line)
+  if (trimmed.includes('; end')) return false;
+
+  // do..end blocks
+  if (trimmed.endsWith(' do') || trimmed.endsWith('{') || trimmed === 'begin') return true;
+
+  // Control structures at statement start (not inline modifiers)
+  if (/^(if|unless|while|until|for|case)\s/.test(trimmed)) return true;
+
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Formatting
 // ─────────────────────────────────────────────────────────────
 
@@ -619,6 +1060,164 @@ function formatSymbols(symbols, lang, out) {
       symbols.functions.forEach(f => out.add('  ' + f));
       out.blank();
     }
+  } else if (lang === 'rust') {
+    // Modules
+    if (symbols.modules?.length > 0) {
+      out.add('Modules:');
+      symbols.modules.forEach(m => out.add('  ' + m));
+      out.blank();
+    }
+
+    // Structs, Enums, Traits
+    const structs = symbols.classes?.filter(c => !c.isTrait && c.signature.includes('struct')) || [];
+    const enums = symbols.classes?.filter(c => !c.isTrait && c.signature.includes('enum')) || [];
+    const traits = symbols.classes?.filter(c => c.isTrait) || [];
+
+    if (structs.length > 0 || enums.length > 0) {
+      out.add('Structs:');
+      for (const s of structs) {
+        let line = '  ' + s.signature;
+        if (s.derive) line += '  #[derive(' + s.derive + ')]';
+        if (s.fields?.length > 0) {
+          const MAX = 8;
+          const fieldStr = s.fields.length <= MAX
+            ? s.fields.join(', ')
+            : s.fields.slice(0, MAX).join(', ') + `, +${s.fields.length - MAX}`;
+          line += '  { ' + fieldStr + ' }';
+        }
+        out.add(line);
+        s.methods.forEach(m => out.add('    ' + m));
+      }
+      for (const e of enums) {
+        let line = '  ' + e.signature;
+        if (e.derive) line += '  #[derive(' + e.derive + ')]';
+        if (e.variants?.length > 0) {
+          const MAX = 6;
+          const varStr = e.variants.length <= MAX
+            ? e.variants.join(', ')
+            : e.variants.slice(0, MAX).join(', ') + `, +${e.variants.length - MAX}`;
+          line += ' { ' + varStr + ' }';
+        }
+        out.add(line);
+        e.methods.forEach(m => out.add('    ' + m));
+      }
+      out.blank();
+    }
+
+    if (traits.length > 0) {
+      out.add('Traits:');
+      for (const t of traits) {
+        out.add('  ' + t.signature);
+        t.methods.forEach(m => out.add('    ' + m));
+      }
+      out.blank();
+    }
+
+    // Trait impls (summary)
+    const traitImpls = symbols.impls?.filter(i => i.trait) || [];
+    const orphanImpls = symbols.impls?.filter(i => !i.trait && i.methods) || [];
+    if (traitImpls.length > 0 || orphanImpls.length > 0) {
+      out.add('Impls:');
+      for (const imp of traitImpls) {
+        out.add(`  impl ${imp.trait} for ${imp.type}  (${imp.methodCount} method${imp.methodCount !== 1 ? 's' : ''})`);
+      }
+      for (const imp of orphanImpls) {
+        out.add(`  impl ${imp.type}`);
+        imp.methods.forEach(m => out.add('    ' + m));
+      }
+      out.blank();
+    }
+
+    // Functions
+    if (symbols.functions?.length > 0) {
+      out.add('Functions:');
+      symbols.functions.forEach(f => out.add('  ' + f));
+      out.blank();
+    }
+
+    // Types
+    if (symbols.types?.length > 0) {
+      out.add('Types:');
+      symbols.types.forEach(t => out.add('  ' + t));
+      out.blank();
+    }
+
+    // Constants
+    if (symbols.constants?.length > 0) {
+      out.add('Constants:');
+      symbols.constants.forEach(c => out.add('  ' + c));
+      out.blank();
+    }
+  } else if (lang === 'ruby') {
+    // Modules
+    if (symbols.modules?.length > 0) {
+      out.add('Modules:');
+      symbols.modules.forEach(m => out.add('  ' + m));
+      out.blank();
+    }
+
+    // Classes (including module entries that have methods)
+    const classEntries = symbols.classes?.filter(c => !c.isModule || c.methods.length > 0 || c.attrs.length > 0) || [];
+    if (classEntries.length > 0) {
+      out.add('Classes:');
+      for (const cls of classEntries) {
+        let header = '  ' + cls.sig;
+        // Mixins
+        const includes = cls.mixins?.filter(m => m.kind === 'include').map(m => m.name) || [];
+        const extends_ = cls.mixins?.filter(m => m.kind === 'extend').map(m => m.name) || [];
+        const mixinParts = [];
+        if (includes.length > 0) mixinParts.push('include ' + includes.join(', '));
+        if (extends_.length > 0) mixinParts.push('extend ' + extends_.join(', '));
+        if (mixinParts.length > 0) header += '  [' + mixinParts.join(', ') + ']';
+        out.add(header);
+
+        // Attrs
+        for (const attr of (cls.attrs || [])) {
+          out.add('    ' + attr.kind + ' :' + attr.names.join(', :'));
+        }
+
+        // Constants
+        if (cls.constants?.length > 0) {
+          out.add('    ' + cls.constants.join(', '));
+        }
+
+        // Methods grouped by visibility
+        const publicMethods = cls.methods.filter(m => m.visibility === 'public');
+        const privateMethods = cls.methods.filter(m => m.visibility === 'private');
+        const protectedMethods = cls.methods.filter(m => m.visibility === 'protected');
+
+        for (const m of publicMethods) {
+          out.add('    def ' + m.name);
+        }
+        if (privateMethods.length > 0) {
+          out.add('    private:');
+          for (const m of privateMethods) {
+            out.add('      def ' + m.name);
+          }
+        }
+        if (protectedMethods.length > 0) {
+          out.add('    protected:');
+          for (const m of protectedMethods) {
+            out.add('      def ' + m.name);
+          }
+        }
+      }
+      out.blank();
+    }
+
+    // Top-level functions
+    if (symbols.functions?.length > 0) {
+      out.add('Functions:');
+      symbols.functions.forEach(f => out.add('  ' + f));
+      out.blank();
+    }
+
+    // Top-level constants
+    if (symbols.constants?.length > 0) {
+      out.add('Constants:');
+      symbols.constants.forEach(c => out.add('  ' + c));
+      out.blank();
+    }
   } else if (lang === 'go') {
     if (symbols.types.length > 0) {
       out.add('Types:');
@@ -685,6 +1284,9 @@ function countSymbols(symbols) {
     symbols.classes.forEach(c => {
       count += c.methods?.length || 0;
       count += c.fields?.length || 0;
+      count += c.variants?.length || 0;
+      count += c.attrs?.length || 0;
+      count += c.constants?.length || 0;
     });
   }
   if (symbols.functions) count += symbols.functions.length;
@@ -694,6 +1296,7 @@ function countSymbols(symbols) {
   }
   if (symbols.constants) count += symbols.constants.length;
   if (symbols.modules) count += symbols.modules.length;
+  if (symbols.impls) count += symbols.impls.length;
   return count;
 }
 
@@ -704,7 +1307,7 @@ function countSymbols(symbols) {
 // All extensions tl-symbols can handle (dedicated + generic fallback)
 const ALL_SUPPORTED_EXTS = new Set([
   ...LANG_EXTENSIONS.js, ...LANG_EXTENSIONS.python, ...LANG_EXTENSIONS.go,
-  '.rs', '.kt', '.kts', '.swift', '.rb', '.java', '.c', '.cpp', '.cc', '.h', '.hpp',
+  '.kt', '.kts', '.swift', '.java', '.c', '.cpp', '.cc', '.h', '.hpp',
   '.cs', '.scala', '.zig', '.lua', '.r', '.R', '.ex', '.exs', '.erl', '.hrl',
   '.hs', '.ml', '.mli', '.php', '.dart', '.v', '.sv',
 ]);
@@ -737,6 +1340,8 @@ function extractSymbolsForFile(filePath, exportsOnly) {
     case 'js': symbols = extractJsSymbols(content, exportsOnly); break;
     case 'python': symbols = extractPythonSymbols(content); break;
     case 'go': symbols = extractGoSymbols(content); break;
+    case 'rust': symbols = extractRustSymbols(content); break;
+    case 'ruby': symbols = extractRubySymbols(content); break;
     default: symbols = extractGenericSymbols(content); break;
   }
   return { symbols, lang };
@@ -805,9 +1410,10 @@ function extractName(sig) {
   const cleaned = sig
     .replace(/^export\s+(default\s+)?/, '')
     .replace(/^(async\s+)?(function\s+|const\s+|let\s+|var\s+|class\s+|abstract\s+class\s+|interface\s+|type\s+|enum\s+)/, '')
-    .replace(/^(pub\s+)?(fn\s+|struct\s+|enum\s+|trait\s+|impl\s+|mod\s+|type\s+|const\s+|static\s+|let\s+)/, '')
+    .replace(/^(pub(?:\([^)]+\))?\s+)?(?:async\s+)?(?:unsafe\s+)?(fn\s+|struct\s+|enum\s+|trait\s+|impl\s+|mod\s+|module\s+|type\s+|const\s+|static\s+|let\s+)/, '')
     .replace(/^(func\s+)/, '')
-    .replace(/^def\s+/, '')
+    .replace(/^def\s+(?:self\.)?/, '')
+    .replace(/^macro_rules!\s+/, '')
     .trim();
   const match = cleaned.match(/^(\w+)/);
   return match ? match[1] : null;
@@ -933,6 +1539,12 @@ switch (lang) {
     break;
   case 'go':
     symbols = extractGoSymbols(content);
+    break;
+  case 'rust':
+    symbols = extractRustSymbols(content);
+    break;
+  case 'ruby':
+    symbols = extractRubySymbols(content);
     break;
   default:
     symbols = extractGenericSymbols(content);
