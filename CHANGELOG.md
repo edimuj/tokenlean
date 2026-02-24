@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+## [0.21.0] - 2026-02-24
+
+### Added
+- `tl-component` state management detection now covers MobX, Zustand, Jotai, and Pinia (beyond Redux)
+- `tl-snippet` scope-aware Class.method extraction for precise member function selection
 ## [0.20.0] - 2026-02-24
 
 ### Added
