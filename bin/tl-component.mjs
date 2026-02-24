@@ -174,32 +174,78 @@ function extractStyles(content) {
   return styles;
 }
 
-function extractRedux(content) {
-  const redux = {
-    selectors: [],
-    actions: [],
-    dispatch: false
-  };
+function extractStateManagement(content) {
+  const state = { libraries: [] };
 
-  // useSelector calls
+  // Redux: useSelector, useDispatch
+  const reduxSelectors = [];
+  const reduxActions = [];
   const selectorRegex = /useSelector\(\s*(?:\([^)]*\)\s*=>)?\s*(\w+)/g;
   let match;
-  while ((match = selectorRegex.exec(content)) !== null) {
-    redux.selectors.push(match[1]);
-  }
-
-  // useDispatch
-  if (content.includes('useDispatch')) {
-    redux.dispatch = true;
-  }
-
-  // dispatch calls
+  while ((match = selectorRegex.exec(content)) !== null) reduxSelectors.push(match[1]);
   const dispatchRegex = /dispatch\(\s*(\w+)/g;
-  while ((match = dispatchRegex.exec(content)) !== null) {
-    redux.actions.push(match[1]);
+  while ((match = dispatchRegex.exec(content)) !== null) reduxActions.push(match[1]);
+  if (reduxSelectors.length > 0 || content.includes('useDispatch')) {
+    const info = { lib: 'Redux', details: [] };
+    if (reduxSelectors.length > 0) info.details.push(`selectors: ${reduxSelectors.join(', ')}`);
+    if (reduxActions.length > 0) info.details.push(`actions: ${reduxActions.join(', ')}`);
+    state.libraries.push(info);
   }
 
-  return redux;
+  // Zustand: useStore / create()
+  const zustandStores = [];
+  const zustandRegex = /(?:use(\w*Store)\b|(\w+)\s*=\s*create\s*[(<])/g;
+  while ((match = zustandRegex.exec(content)) !== null) {
+    const name = match[1] || match[2];
+    if (name && !zustandStores.includes(name)) zustandStores.push(name);
+  }
+  if (zustandStores.length > 0) {
+    state.libraries.push({ lib: 'Zustand', details: [`stores: ${zustandStores.join(', ')}`] });
+  }
+
+  // Jotai: useAtom, useAtomValue, useSetAtom, atom()
+  const jotaiHooks = [];
+  const jotaiRegex = /\b(useAtom|useAtomValue|useSetAtom)\s*\(\s*(\w+)/g;
+  while ((match = jotaiRegex.exec(content)) !== null) {
+    const entry = `${match[2]} (${match[1]})`;
+    if (!jotaiHooks.includes(entry)) jotaiHooks.push(entry);
+  }
+  if (jotaiHooks.length > 0) {
+    state.libraries.push({ lib: 'Jotai', details: [`atoms: ${jotaiHooks.join(', ')}`] });
+  }
+
+  // React Query / TanStack Query: useQuery, useMutation, useInfiniteQuery
+  const rqHooks = [];
+  const rqRegex = /\b(useQuery|useMutation|useInfiniteQuery|useSuspenseQuery)\s*\(/g;
+  while ((match = rqRegex.exec(content)) !== null) {
+    if (!rqHooks.includes(match[1])) rqHooks.push(match[1]);
+  }
+  if (rqHooks.length > 0) {
+    state.libraries.push({ lib: 'React Query', details: [`hooks: ${rqHooks.join(', ')}`] });
+  }
+
+  // Recoil: useRecoilState, useRecoilValue, useSetRecoilState
+  const recoilHooks = [];
+  const recoilRegex = /\b(useRecoilState|useRecoilValue|useSetRecoilState)\s*\(\s*(\w+)/g;
+  while ((match = recoilRegex.exec(content)) !== null) {
+    const entry = `${match[2]} (${match[1]})`;
+    if (!recoilHooks.includes(entry)) recoilHooks.push(entry);
+  }
+  if (recoilHooks.length > 0) {
+    state.libraries.push({ lib: 'Recoil', details: [`atoms: ${recoilHooks.join(', ')}`] });
+  }
+
+  // React Context: useContext
+  const contexts = [];
+  const ctxRegex = /useContext\(\s*(\w+)/g;
+  while ((match = ctxRegex.exec(content)) !== null) {
+    if (!contexts.includes(match[1])) contexts.push(match[1]);
+  }
+  if (contexts.length > 0) {
+    state.libraries.push({ lib: 'Context', details: [`providers: ${contexts.join(', ')}`] });
+  }
+
+  return state;
 }
 
 // Main
@@ -232,7 +278,7 @@ const analysis = {
   components: extractComponents(content),
   renders: null, // filled after components is known
   styles: extractStyles(content),
-  redux: extractRedux(content)
+  state: extractStateManagement(content)
 };
 analysis.renders = extractChildComponents(content, analysis.components);
 
@@ -248,7 +294,7 @@ out.setData('props', analysis.propsInfo);
 out.setData('hooks', analysis.hooks);
 out.setData('imports', analysis.imports);
 out.setData('styles', analysis.styles);
-out.setData('redux', analysis.redux);
+out.setData('state', analysis.state);
 
 // Headers
 out.header(`Component Analysis: ${analysis.file}`);
@@ -281,15 +327,12 @@ if (analysis.hooks.length > 0) {
   out.add(`Hooks: ${analysis.hooks.join(', ')}`);
 }
 
-// Redux
-if (analysis.redux.dispatch || analysis.redux.selectors.length > 0) {
+// State management
+if (analysis.state.libraries.length > 0) {
   out.blank();
-  out.add('Redux:');
-  if (analysis.redux.selectors.length > 0) {
-    out.add(`  Selectors: ${analysis.redux.selectors.join(', ')}`);
-  }
-  if (analysis.redux.actions.length > 0) {
-    out.add(`  Actions: ${analysis.redux.actions.join(', ')}`);
+  out.add('State:');
+  for (const { lib, details } of analysis.state.libraries) {
+    out.add(`  ${lib}: ${details.join(', ')}`);
   }
 }
 
