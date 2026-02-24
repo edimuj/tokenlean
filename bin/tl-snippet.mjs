@@ -79,7 +79,7 @@ function findDefinitions(name, searchPath) {
     `(?:export\\s+)?type\\s+${name}\\s*[=<]`,    // type Name =
     `(?:export\\s+)?enum\\s+${name}`,            // enum Name
     `(?:pub(?:\\([^)]*\\))?\\s+)?fn\\s+${name}\\s*[(<]`,  // Rust: fn name( / pub fn name(
-    `def\\s+${name}\\s*[(<]`,                    // Ruby/Python: def name(
+    `def\\s+${name}\\s*($|[(<])`,                 // Ruby/Python: def name / def name(
     `(?:pub(?:\\([^)]*\\))?\\s+)?struct\\s+${name}`,  // Rust: struct Name
     `(?:pub(?:\\([^)]*\\))?\\s+)?trait\\s+${name}`,   // Rust: trait Name
     `impl(?:\\s+\\w+\\s+for)?\\s+${name}`,       // Rust: impl Name / impl Trait for Name
@@ -496,6 +496,99 @@ function parseQualifiedName(raw) {
   return { name, className: cls, targetFile: file };
 }
 
+// Find the enclosing class/impl/module for a method at a given line
+function findEnclosingClass(filePath, lineNum) {
+  let content;
+  try {
+    content = readFileSync(filePath, 'utf-8');
+  } catch {
+    return null;
+  }
+
+  const lines = content.split('\n');
+  const defIdx = lineNum - 1; // 0-based
+  if (defIdx < 0 || defIdx >= lines.length) return null;
+
+  const ext = extname(filePath);
+
+  // Python: indentation-based
+  if (ext === '.py') {
+    const defLine = lines[defIdx];
+    const defIndent = defLine.match(/^(\s*)/)[1].length;
+    for (let i = defIdx - 1; i >= 0; i--) {
+      const line = lines[i];
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const indent = line.match(/^(\s*)/)[1].length;
+      if (indent < defIndent) {
+        const classMatch = trimmed.match(/^class\s+(\w+)/);
+        if (classMatch) return classMatch[1];
+        return null; // hit a non-class scope (function, module-level) — no enclosing class
+      }
+    }
+    return null;
+  }
+
+  // Ruby: end-keyword based
+  if (ext === '.rb') {
+    let depth = 0;
+    for (let i = defIdx - 1; i >= 0; i--) {
+      const stripped = stripStringsAndComments(lines[i], filePath);
+      const opens = [...stripped.matchAll(RUBY_OPEN_RE)].length;
+      const closes = [...stripped.matchAll(BLOCK_CLOSE_RE)].length;
+      depth += closes - opens; // reversed: scanning backwards
+      if (depth < 0) {
+        const trimmed = lines[i].trim();
+        const classMatch = trimmed.match(/^(?:class|module)\s+(\w+)/);
+        if (classMatch) return classMatch[1];
+        return null;
+      }
+    }
+    return null;
+  }
+
+  // Elixir
+  if (ext === '.ex' || ext === '.exs') {
+    let depth = 0;
+    for (let i = defIdx - 1; i >= 0; i--) {
+      const stripped = stripStringsAndComments(lines[i], filePath);
+      const opens = [...stripped.matchAll(ELIXIR_OPEN_RE)].length;
+      const closes = [...stripped.matchAll(BLOCK_CLOSE_RE)].length;
+      depth += closes - opens;
+      if (depth < 0) {
+        const trimmed = lines[i].trim();
+        const modMatch = trimmed.match(/^defmodule\s+([\w.]+)/);
+        if (modMatch) return modMatch[1];
+        return null;
+      }
+    }
+    return null;
+  }
+
+  // Brace-delimited languages (Rust, Java, TS, Go, C#, etc.)
+  let braceDepth = 0;
+  for (let i = defIdx - 1; i >= 0; i--) {
+    const { open, close } = countBraces(lines[i]);
+    braceDepth += close - open; // reversed: scanning backwards
+    if (braceDepth < 0) {
+      // We've exited a block — check this line for class/impl/struct/interface
+      const trimmed = lines[i].trim();
+      const implMatch = trimmed.match(/impl(?:<[^{]*?>)?\s+(?:\w+\s+for\s+)?(\w+)/);
+      if (implMatch) return implMatch[1];
+      const classMatch = trimmed.match(/(?:class|struct|interface|trait|enum|protocol|record|union)\s+(\w+)/);
+      if (classMatch) return classMatch[1];
+      // Go: type Name struct
+      const goMatch = trimmed.match(/type\s+(\w+)\s+(?:struct|interface)/);
+      if (goMatch) return goMatch[1];
+      // Module/namespace
+      const modMatch = trimmed.match(/(?:module|namespace)\s+(\w+)/);
+      if (modMatch) return modMatch[1];
+      return null; // found a block but not a class-like construct
+    }
+  }
+  return null;
+}
+
 // Split comma-separated names (but not if name contains file:method with commas in path)
 const nameList = rawName.includes(',') ? rawName.split(',').filter(Boolean) : [rawName];
 
@@ -519,19 +612,11 @@ for (let ni = 0; ni < nameList.length; ni++) {
     defs = findDefinitions(name, projectRoot);
   }
 
-  // Filter by className if specified
+  // Filter by className if specified — scope-aware check
   if (className && defs.length > 0) {
     const filtered = defs.filter(def => {
-      const fileName = basename(def.file, extname(def.file));
-      if (fileName === className || fileName.toLowerCase() === className.toLowerCase()) {
-        return true;
-      }
-      try {
-        const content = readFileSync(def.file, 'utf-8');
-        return content.includes(`class ${className}`) ||
-               content.includes(`interface ${className}`) ||
-               content.includes(`const ${className}`);
-      } catch { return false; }
+      const enclosing = findEnclosingClass(def.file, def.line);
+      return enclosing === className;
     });
     if (filtered.length > 0) defs = filtered;
   }
