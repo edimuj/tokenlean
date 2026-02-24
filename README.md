@@ -21,8 +21,7 @@
   <a href="#language-support">Language Support</a> •
   <a href="#ai-agent-integration">AI Integration</a> •
   <a href="#agent-skills">Skills</a> •
-  <a href="#workflows">Workflows</a> •
-  <a href="#changelog">Changelog</a>
+  <a href="#workflows">Workflows</a>
 </p>
 
 ---
@@ -479,7 +478,13 @@ tl-playwright example.com --screenshot p  # Save screenshot
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for a full list of changes in each release.
+Use `tl-changelog` to generate changelogs from git history on demand:
+
+```bash
+tl-changelog                      # Since last tag
+tl-changelog v0.19.0..v0.21.0    # Between versions
+tl-changelog --unreleased         # What's new since last release
+```
 
 ## Contributing
 

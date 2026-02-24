@@ -13,4 +13,3 @@ What problem does this solve?
 - [ ] No new dependencies added
 - [ ] README.md updated (if new tool)
 - [ ] CLAUDE.md updated (if new tool)
-- [ ] CHANGELOG.md updated

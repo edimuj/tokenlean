@@ -6,7 +6,7 @@ Thanks for your interest in making AI-assisted coding more token-efficient! Whet
 
 - [Issues](https://github.com/edimuj/tokenlean/issues) — Bug reports and feature requests
 - [Discussions](https://github.com/edimuj/tokenlean/discussions) — Questions and ideas
-- [Changelog](CHANGELOG.md) — What's changed
+- Changelog — Run `tl-changelog` to see what's changed
 
 ## Getting Started
 
@@ -121,7 +121,6 @@ tl-<name> src/ --json
 
 - Add to the appropriate table in `README.md`
 - Add to the tools table in `CLAUDE.md`
-- Update `CHANGELOG.md`
 
 ## Design Principles
 
@@ -149,7 +148,7 @@ We practice what we preach — keep it lean:
 1. **Fork & branch** — Create a branch from `main`
 2. **Keep it focused** — One feature or fix per PR
 3. **Test manually** — Run your tool against a real project
-4. **Update docs** — README, CLAUDE.md, CHANGELOG
+4. **Update docs** — README, CLAUDE.md
 5. **Open a PR** — Describe what and why (not how — the code shows how)
 
 ## Reporting Bugs
