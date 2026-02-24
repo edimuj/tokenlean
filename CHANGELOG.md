@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+## [0.20.0] - 2026-02-24
+
+### Added
+- `tl-snippet` end-keyword body extraction for Ruby, Elixir, and Lua (methods, functions, blocks)
+- Python `__all__` awareness in `tl-exports` and `tl-symbols` for accurate public API detection
+- `tl-component` child component rendering detection for React/Vue/Angular templates
+- `tl-symbols` paren-aware TypeScript signature extraction (improves multi-line parameter handling)
+
 
 ## [0.19.0] - 2026-02-23
 
