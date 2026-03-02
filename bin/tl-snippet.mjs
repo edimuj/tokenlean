@@ -67,27 +67,32 @@ Examples:
 // Definition Finding (via ripgrep)
 // ─────────────────────────────────────────────────────────────
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function findDefinitions(name, searchPath) {
+  const escapedName = escapeRegExp(name);
   const patterns = [
-    `function ${name}\\s*[(<]`,                 // function name( or name<T>(
-    `(const|let|var)\\s+${name}\\s*=`,          // const name =
-    `${name}\\s*:\\s*\\(`,                       // name: ( (object method shorthand)
-    `(?:async\\s+)?${name}\\s*\\([^)]*\\)\\s*(?::\\s*\\w[^{]*)?\\{`, // name() { (class method, single-line)
-    `(?:(?:public|private|protected|static|abstract|override|readonly)\\s+)*(?:async\\s+)?${name}\\s*\\(`, // name( (class method, multi-line params)
-    `(?:export\\s+)?(?:abstract\\s+)?class\\s+${name}`,  // class Name
-    `(?:export\\s+)?interface\\s+${name}`,       // interface Name
-    `(?:export\\s+)?type\\s+${name}\\s*[=<]`,    // type Name =
-    `(?:export\\s+)?enum\\s+${name}`,            // enum Name
-    `(?:pub(?:\\([^)]*\\))?\\s+)?fn\\s+${name}\\s*[(<]`,  // Rust: fn name( / pub fn name(
-    `def\\s+${name}\\s*($|[(<])`,                 // Ruby/Python: def name / def name(
-    `(?:pub(?:\\([^)]*\\))?\\s+)?struct\\s+${name}`,  // Rust: struct Name
-    `(?:pub(?:\\([^)]*\\))?\\s+)?trait\\s+${name}`,   // Rust: trait Name
-    `impl(?:\\s+\\w+\\s+for)?\\s+${name}`,       // Rust: impl Name / impl Trait for Name
-    `(?:public|private|protected)?\\s*(?:static\\s+)?(?:class|interface)\\s+${name}`, // Java/C#/Kotlin
-    `func\\s+${name}\\s*[(<]`,                   // Go/Swift: func name(
-    `func\\s*\\([^)]*\\)\\s*${name}\\s*\\(`,      // Go: func (recv) name(
-    `type\\s+${name}\\s+(?:struct|interface)`,     // Go: type Name struct/interface
-    `function\\s+\\w+\\.${name}\\s*\\(`,           // Lua: function M.name(
+    `function ${escapedName}\\s*[(<]`,                 // function name( or name<T>(
+    `(const|let|var)\\s+${escapedName}\\s*=`,          // const name =
+    `${escapedName}\\s*:\\s*\\(`,                       // name: ( (object method shorthand)
+    `(?:async\\s+)?${escapedName}\\s*\\([^)]*\\)\\s*(?::\\s*\\w[^{]*)?\\{`, // name() { (class method, single-line)
+    `(?:(?:public|private|protected|static|abstract|override|readonly)\\s+)*(?:async\\s+)?${escapedName}\\s*\\(`, // name( (class method, multi-line params)
+    `(?:export\\s+)?(?:abstract\\s+)?class\\s+${escapedName}`,  // class Name
+    `(?:export\\s+)?interface\\s+${escapedName}`,       // interface Name
+    `(?:export\\s+)?type\\s+${escapedName}\\s*[=<]`,    // type Name =
+    `(?:export\\s+)?enum\\s+${escapedName}`,            // enum Name
+    `(?:pub(?:\\([^)]*\\))?\\s+)?fn\\s+${escapedName}\\s*[(<]`,  // Rust: fn name( / pub fn name(
+    `def\\s+${escapedName}\\s*($|[(<])`,                 // Ruby/Python: def name / def name(
+    `(?:pub(?:\\([^)]*\\))?\\s+)?struct\\s+${escapedName}`,  // Rust: struct Name
+    `(?:pub(?:\\([^)]*\\))?\\s+)?trait\\s+${escapedName}`,   // Rust: trait Name
+    `impl(?:\\s+\\w+\\s+for)?\\s+${escapedName}`,       // Rust: impl Name / impl Trait for Name
+    `(?:public|private|protected)?\\s*(?:static\\s+)?(?:class|interface)\\s+${escapedName}`, // Java/C#/Kotlin
+    `func\\s+${escapedName}\\s*[(<]`,                   // Go/Swift: func name(
+    `func\\s*\\([^)]*\\)\\s*${escapedName}\\s*\\(`,      // Go: func (recv) name(
+    `type\\s+${escapedName}\\s+(?:struct|interface)`,     // Go: type Name struct/interface
+    `function\\s+\\w+\\.${escapedName}\\s*\\(`,           // Lua: function M.name(
   ];
 
   const pattern = `(${patterns.join('|')})`;
@@ -111,9 +116,9 @@ function findDefinitions(name, searchPath) {
       if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) continue;
       // Skip call sites: this.name(, obj.name(, foo?.name(, await this.name(
       // But not Lua-style definitions: function M.name(
-      if (new RegExp(`[.?]\\s*${name}\\s*\\(`).test(trimmed) && !trimmed.startsWith('function ')) continue;
+      if (new RegExp(`[.?]\\s*${escapedName}\\s*\\(`).test(trimmed) && !trimmed.startsWith('function ')) continue;
       // Skip variable assignments that just call the function: const x = name(
-      if (new RegExp(`(?:const|let|var)\\s+\\w+\\s*=\\s*(?:await\\s+)?${name}\\s*\\(`).test(trimmed)) continue;
+      if (new RegExp(`(?:const|let|var)\\s+\\w+\\s*=\\s*(?:await\\s+)?${escapedName}\\s*\\(`).test(trimmed)) continue;
 
       defs.push({
         file,
@@ -170,23 +175,35 @@ function countBraces(line) {
   return { open, close };
 }
 
+function getFileLines(filePath, fileLinesCache = null) {
+  if (fileLinesCache && fileLinesCache.has(filePath)) {
+    return fileLinesCache.get(filePath);
+  }
+
+  let lines = null;
+  try {
+    lines = readFileSync(filePath, 'utf-8').split('\n');
+  } catch {
+    lines = null;
+  }
+
+  if (fileLinesCache) fileLinesCache.set(filePath, lines);
+  return lines;
+}
+
 /**
  * Indentation-based body extraction for Python.
  * Finds the end of a block by tracking indent level.
  */
-function extractPythonBody(filePath, startLine, contextLines = 0) {
-  let content;
-  try {
-    content = readFileSync(filePath, 'utf-8');
-  } catch {
-    return null;
-  }
-
-  const lines = content.split('\n');
+function extractPythonBody(filePath, startLine, contextLines = 0, fileLinesCache = null) {
+  const lines = getFileLines(filePath, fileLinesCache);
+  if (!lines) return null;
   const defIdx = startLine - 1;
+  if (defIdx < 0 || defIdx >= lines.length) return null;
 
   // Get indent of the definition line
   const defLine = lines[defIdx];
+  if (typeof defLine !== 'string') return null;
   const defIndent = defLine.match(/^(\s*)/)[1].length;
 
   // For multi-line signatures (e.g., def foo(\n    arg1,\n    arg2\n):)
@@ -248,16 +265,11 @@ const BLOCK_CLOSE_RE = /\bend\b/g;
  * End-keyword body extraction for Ruby, Elixir, Lua.
  * Tracks nested block-open/close keywords to find the matching `end`.
  */
-function extractEndKeywordBody(filePath, startLine, contextLines = 0) {
-  let content;
-  try {
-    content = readFileSync(filePath, 'utf-8');
-  } catch {
-    return null;
-  }
-
-  const lines = content.split('\n');
+function extractEndKeywordBody(filePath, startLine, contextLines = 0, fileLinesCache = null) {
+  const lines = getFileLines(filePath, fileLinesCache);
+  if (!lines) return null;
   const defIdx = startLine - 1;
+  if (defIdx < 0 || defIdx >= lines.length) return null;
 
   const ext = extname(filePath);
   const openRe = ext === '.rb' ? RUBY_OPEN_RE
@@ -329,26 +341,21 @@ function stripStringsAndComments(line, filePath) {
   return result;
 }
 
-function extractBody(filePath, startLine, contextLines = 0) {
+function extractBody(filePath, startLine, contextLines = 0, fileLinesCache = null) {
   // Python: use indentation-based extraction
   if (filePath.endsWith('.py')) {
-    return extractPythonBody(filePath, startLine, contextLines);
+    return extractPythonBody(filePath, startLine, contextLines, fileLinesCache);
   }
 
   // Ruby, Elixir, Lua: use end-keyword extraction
   if (END_KW_EXTS.has(extname(filePath))) {
-    return extractEndKeywordBody(filePath, startLine, contextLines);
+    return extractEndKeywordBody(filePath, startLine, contextLines, fileLinesCache);
   }
 
-  let content;
-  try {
-    content = readFileSync(filePath, 'utf-8');
-  } catch {
-    return null;
-  }
-
-  const lines = content.split('\n');
+  const lines = getFileLines(filePath, fileLinesCache);
+  if (!lines) return null;
   const defIdx = startLine - 1; // 0-based
+  if (defIdx < 0 || defIdx >= lines.length) return null;
 
   // Check if this line has an opening brace within 5 lines
   let foundOpen = false;
@@ -497,15 +504,9 @@ function parseQualifiedName(raw) {
 }
 
 // Find the enclosing class/impl/module for a method at a given line
-function findEnclosingClass(filePath, lineNum) {
-  let content;
-  try {
-    content = readFileSync(filePath, 'utf-8');
-  } catch {
-    return null;
-  }
-
-  const lines = content.split('\n');
+function findEnclosingClass(filePath, lineNum, fileLinesCache = null) {
+  const lines = getFileLines(filePath, fileLinesCache);
+  if (!lines) return null;
   const defIdx = lineNum - 1; // 0-based
   if (defIdx < 0 || defIdx >= lines.length) return null;
 
@@ -589,12 +590,101 @@ function findEnclosingClass(filePath, lineNum) {
   return null;
 }
 
+function extractSuggestionName(sig) {
+  if (!sig || typeof sig !== 'string') return null;
+  const cleaned = sig
+    .replace(/^export\s+(default\s+)?/, '')
+    .replace(/^(?:async\s+)?function\s+/, '')
+    .replace(/^(?:const|let|var)\s+/, '')
+    .replace(/^(?:class|interface|type|enum)\s+/, '')
+    .replace(/^(?:pub(?:\([^)]+\))?\s+)?(?:async\s+)?(?:unsafe\s+)?(?:fn|struct|trait|mod|type|const|static)\s+/, '')
+    .replace(/^def\s+(?:self\.)?/, '')
+    .replace(/^func\s+(?:\([^)]*\)\s*)?/, '')
+    .trim();
+
+  const match = cleaned.match(/^([A-Za-z_$][\w$]*[!?=]?)/);
+  return match ? match[1] : null;
+}
+
+function collectSymbolCandidates(symbols) {
+  if (!symbols || typeof symbols !== 'object') return [];
+  const seen = new Set();
+  const candidates = [];
+
+  function add(name) {
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    candidates.push(name);
+  }
+
+  for (const fn of symbols.functions || []) {
+    add(extractSuggestionName(typeof fn === 'string' ? fn : fn.signature || String(fn)));
+  }
+  for (const cls of symbols.classes || []) {
+    add(extractSuggestionName(typeof cls === 'string' ? cls : cls.signature || String(cls)));
+  }
+  for (const t of symbols.types || []) {
+    add(extractSuggestionName(typeof t === 'string' ? t : t.signature || String(t)));
+  }
+  for (const c of symbols.constants || []) {
+    add(extractSuggestionName(typeof c === 'string' ? c : c.signature || String(c)));
+  }
+  for (const m of symbols.modules || []) {
+    add(extractSuggestionName(typeof m === 'string' ? m : m.signature || String(m)));
+  }
+
+  return candidates;
+}
+
+function rankSymbolSuggestions(candidates, query, limit = 12) {
+  const q = (query || '').toLowerCase();
+  const scored = candidates.map((name, idx) => {
+    const n = name.toLowerCase();
+    let score = 0;
+    if (n === q) score = 100;
+    else if (q && n.startsWith(q)) score = 80;
+    else if (q && n.includes(q)) score = 60;
+    else if (q && (n.replace(/[!?=]/g, '') === q.replace(/[!?=]/g, ''))) score = 50;
+    return { name, score, idx };
+  });
+
+  scored.sort((a, b) => (b.score - a.score) || (a.idx - b.idx));
+
+  const best = scored.filter(s => s.score > 0);
+  if (best.length > 0) {
+    return best.slice(0, limit).map(s => s.name);
+  }
+
+  return scored.slice(0, limit).map(s => s.name);
+}
+
+function getCompactSymbolSuggestions(filePath, query) {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const symbolsTool = join(__dirname, 'tl-symbols.mjs');
+  const result = spawnSync(process.execPath, [symbolsTool, filePath, '-j'], {
+    encoding: 'utf-8',
+    timeout: 5000
+  });
+  if (result.status !== 0 || !result.stdout) return null;
+
+  try {
+    const parsed = JSON.parse(result.stdout);
+    const candidates = collectSymbolCandidates(parsed.symbols);
+    const suggestions = rankSymbolSuggestions(candidates, query, 12);
+    return { suggestions, total: candidates.length };
+  } catch {
+    return null;
+  }
+}
+
 // Split comma-separated names (but not if name contains file:method with commas in path)
 const nameList = rawName.includes(',') ? rawName.split(',').filter(Boolean) : [rawName];
 
 const projectRoot = findProjectRoot();
 const out = createOutput(options);
 const allResults = [];
+const fileLinesCache = new Map();
+let hadErrors = false;
 
 for (let ni = 0; ni < nameList.length; ni++) {
   const parsed = parseQualifiedName(nameList[ni].trim());
@@ -604,18 +694,20 @@ for (let ni = 0; ni < nameList.length; ni++) {
 
   if (ni > 0) out.blank();
 
+  if (file && !getFileLines(file, fileLinesCache)) {
+    out.add(`Target file not found or unreadable: ${file}`);
+    hadErrors = true;
+    continue;
+  }
+
   // Find definitions
   const searchPath = file || projectRoot;
   let defs = findDefinitions(name, searchPath);
 
-  if (defs.length === 0 && file) {
-    defs = findDefinitions(name, projectRoot);
-  }
-
   // Filter by className if specified — scope-aware check
   if (className && defs.length > 0) {
     const filtered = defs.filter(def => {
-      const enclosing = findEnclosingClass(def.file, def.line);
+      const enclosing = findEnclosingClass(def.file, def.line, fileLinesCache);
       return enclosing === className;
     });
     if (filtered.length > 0) defs = filtered;
@@ -633,18 +725,19 @@ for (let ni = 0; ni < nameList.length; ni++) {
   if (defs.length === 0) {
     out.add(`No definition found for "${displayName}"`);
 
-    // Show available symbols only for single-name mode
+    // Show compact symbol suggestions only for single-name mode
     if (nameList.length === 1 && file) {
-      const __dirname = dirname(fileURLToPath(import.meta.url));
-      const symbolsTool = join(__dirname, 'tl-symbols.mjs');
-      const result = spawnSync(process.execPath, [symbolsTool, file], {
-        encoding: 'utf-8',
-        timeout: 5000
-      });
-      if (result.stdout && result.status === 0) {
+      const suggestionResult = getCompactSymbolSuggestions(file, name);
+      if (suggestionResult?.suggestions?.length > 0) {
         out.blank();
-        out.add('Available symbols:');
-        out.add(result.stdout.trimEnd());
+        out.add('Closest symbols:');
+        for (const s of suggestionResult.suggestions) {
+          out.add(`  ${s}`);
+        }
+        const remaining = suggestionResult.total - suggestionResult.suggestions.length;
+        if (remaining > 0) {
+          out.add(`  ... and ${remaining} more (use tl-symbols ${file} for full list)`);
+        }
       }
     }
     continue;
@@ -655,7 +748,7 @@ for (let ni = 0; ni < nameList.length; ni++) {
 
   for (let i = 0; i < Math.min(maxResults, defs.length); i++) {
     const def = defs[i];
-    const body = extractBody(def.file, def.line, contextLines);
+    const body = extractBody(def.file, def.line, contextLines, fileLinesCache);
     if (!body) continue;
 
     const relPath = relative(projectRoot, def.file);
@@ -708,3 +801,4 @@ out.setData('results', allResults);
 out.setData('totalDefinitions', allResults.length);
 
 out.print();
+if (hadErrors) process.exit(1);

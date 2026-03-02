@@ -34,7 +34,9 @@ src/
   config.mjs       # Config file loading (.tokenleanrc.json)
   shell.mjs        # Safe git/rg wrappers (spawnSync, no shell injection)
   generic-lang.mjs # Regex-based symbol/import extraction for non-JS/TS languages
-skills/        # Agent skills (code-review, explore-codebase, safe-refactor)
+skills/
+  claude/      # Claude Code skill variants
+  codex/       # Codex skill variants
 ```
 
 ## Adding a New Tool

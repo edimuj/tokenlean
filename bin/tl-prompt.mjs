@@ -9,6 +9,7 @@
  * Usage:
  *   tl-prompt                 # Full instructions (markdown)
  *   tl-prompt --minimal       # Compact version (for CLAUDE.md / .cursorrules)
+ *   tl-prompt --codex         # Codex-optimized instructions (for AGENTS.md)
  *   tl-prompt --list          # Simple name: desc list
  */
 
@@ -127,6 +128,68 @@ function generateFull(tools) {
   return output;
 }
 
+function generateFullCodex(tools) {
+  const rest = tools.filter(t => !CORE_NAMES.has(t.name));
+
+  let output = `## tokenlean - Codex agent profile
+
+### Codex workflow for token-efficient execution
+
+- **Unknown repository**: Start with \`tl-structure\` to map the project before opening files
+- **Before reading implementation**: Run \`tl-symbols <file>\` first; then use \`tl-snippet <name> <file>\` for focused code
+- **Before editing**: Run \`tl-impact <file>\` and \`tl-related <file>\` to avoid regressions
+- **Tests/build/lint**: Wrap commands with \`tl-run "<cmd>"\` to keep only actionable output
+- **Large outputs**: Prefer \`-t N\` and \`-l N\` to cap context usage
+
+### Core tools
+
+| Command | Purpose |
+|---------|---------|
+`;
+
+  for (const tool of CORE_TOOLS) {
+    output += `| \`${tool.usage}\` | ${tool.desc} |\n`;
+  }
+
+  output += `
+### Codex rules
+
+- Use \`tl-structure\` first when project layout is unclear.
+- Use \`tl-symbols\` before reading source files; pull full files only when signatures are insufficient.
+- Use \`tl-impact\` before edits and \`tl-guard\` before commit.
+- Use \`tl-run\` for noisy commands; use \`--raw\` only when summaries hide needed detail.
+- Use \`-j\` when machine-readable output helps chaining.
+- Use \`tl-context7 <lib> [query] -t N\` for current docs.
+- All tools support \`-j\`, \`-q\`, \`-l N\`, \`-t N\`, and \`--help\`.
+`;
+
+  if (rest.length > 0) {
+    output += `
+### Full catalog
+
+`;
+
+    const groups = {
+      'before-read': { title: 'Understanding code', tools: [] },
+      'before-modify': { title: 'Before changing code', tools: [] },
+      'search': { title: 'Search and utilities', tools: [] }
+    };
+
+    for (const tool of rest) {
+      const group = groups[tool.when] || groups['search'];
+      group.tools.push(tool);
+    }
+
+    for (const [, group] of Object.entries(groups)) {
+      if (group.tools.length === 0) continue;
+      const names = group.tools.map(t => `\`${t.name}\` ${t.desc}`).join(' | ');
+      output += `**${group.title}:** ${names}\n\n`;
+    }
+  }
+
+  return output;
+}
+
 function generateMinimal(tools) {
   let lines = [
     '## tokenlean',
@@ -158,6 +221,37 @@ function generateMinimal(tools) {
   return lines.join('\n');
 }
 
+function generateMinimalCodex(tools) {
+  let lines = [
+    '## tokenlean (Codex profile)',
+    '',
+    'Workflow: unknown repo -> `tl-structure`; before read -> `tl-symbols`; focused read -> `tl-snippet`; before edit -> `tl-impact` + `tl-related`; tests/build/lint -> `tl-run`.',
+    '',
+    'Core tools:',
+  ];
+
+  for (const tool of CORE_TOOLS) {
+    lines.push(`- \`${tool.usage}\` - ${tool.desc}`);
+  }
+
+  lines.push('');
+  lines.push('Rules:');
+  lines.push('- Prefer signatures first (`tl-symbols`) before full file reads.');
+  lines.push('- Run `tl-impact <file>` before edits and `tl-guard` before commit.');
+  lines.push('- Wrap noisy commands with `tl-run "<cmd>"`; use `--raw` only if needed.');
+  lines.push('- Use `-t N` and `-l N` aggressively to cap context.');
+  lines.push('- Use `-j` when output should be parsed or chained.');
+  lines.push('- For docs, use `tl-context7 <lib> [query] -t N`.');
+
+  const rest = tools.filter(t => !CORE_NAMES.has(t.name));
+  if (rest.length > 0) {
+    lines.push('');
+    lines.push(`Also available (${rest.length} more): ${rest.map(t => `\`${t.name}\``).join(', ')}`);
+  }
+
+  return lines.join('\n');
+}
+
 function generateList(tools) {
   return tools.map(t => `${t.name}: ${t.desc}`).join('\n');
 }
@@ -172,6 +266,8 @@ tl-prompt - Output AI agent instructions for tokenlean tools
 Usage:
   tl-prompt              Full markdown instructions (tiered by value)
   tl-prompt --minimal    Compact version (for CLAUDE.md / .cursorrules)
+  tl-prompt --codex      Codex-optimized markdown (for AGENTS.md)
+  tl-prompt --codex --minimal  Compact Codex profile
   tl-prompt --list       Simple list of tools
   tl-prompt --json       Raw JSON data
   tl-prompt --help       Show this help
@@ -182,6 +278,9 @@ Integration examples:
 
   # Compact version for .cursorrules
   tl-prompt --minimal >> .cursorrules
+
+  # Add Codex profile to AGENTS.md
+  tl-prompt --codex >> AGENTS.md
 
   # Use in a hook (regenerate on session start)
   tl-prompt > .ai-tools.md
@@ -199,9 +298,17 @@ if (tools.length === 0) {
 if (args.includes('--json')) {
   console.log(JSON.stringify(tools, null, 2));
 } else if (args.includes('--minimal') || args.includes('-m')) {
-  console.log(generateMinimal(tools));
+  if (args.includes('--codex')) {
+    console.log(generateMinimalCodex(tools));
+  } else {
+    console.log(generateMinimal(tools));
+  }
 } else if (args.includes('--list') || args.includes('-l')) {
   console.log(generateList(tools));
 } else {
-  console.log(generateFull(tools));
+  if (args.includes('--codex')) {
+    console.log(generateFullCodex(tools));
+  } else {
+    console.log(generateFull(tools));
+  }
 }

@@ -38,3 +38,7 @@ IMPROVEMENT_IDEAS.md
 .private
 # Nightshift plan artifacts (keep out of version control)
 .nightshift-plan
+
+# Local Codex agent setup
+AGENTS.md
+.codex/

@@ -79,6 +79,7 @@ npm link
 
 ```bash
 # What's in this file?           tl-symbols src/auth.ts
+# Functions only (dir/multi-file) tl-symbols src/ --filter function
 # Extract just one function      tl-snippet handleSubmit
 # What does this module export?  tl-exports src/lib/
 # How many tokens will this cost? tl-context src/api/
@@ -94,6 +95,8 @@ npm link
 # What's the tech stack?         tl-stack
 ```
 
+`tl-snippet` with an explicit target file now fails fast if the file is missing/unreadable (it no longer falls back to a project-wide scan).
+
 Every tool supports `-l N` (limit lines), `-t N` (limit tokens), `-j` (JSON output), `-q` (quiet), and `-h` (help).
 
 ## AI Agent Integration
@@ -103,33 +106,66 @@ Add tokenlean instructions to your AI tool's config with a single command:
 | AI Tool        | Command                                        |
 |----------------|------------------------------------------------|
 | Claude Code    | `tl-prompt >> CLAUDE.md`                       |
+| Codex          | `tl-prompt --codex >> AGENTS.md`               |
 | Cursor         | `tl-prompt --minimal >> .cursorrules`          |
 | GitHub Copilot | `tl-prompt >> .github/copilot-instructions.md` |
 | Windsurf       | `tl-prompt --minimal >> .windsurfrules`        |
 
 ## Agent Skills
 
-Ready-made workflows following the [Agent Skills](https://agentskills.io) open format. Copy to your skills directory or use directly.
+Ready-made workflows following the [Agent Skills](https://agentskills.io) open format, organized for both Claude Code and Codex runtimes.
+
+```text
+skills/
+  claude/   # Claude Code skill variants
+  codex/    # Codex skill variants
+```
+
+### Claude Code skills
 
 | Skill | What it does |
 |-------|-------------|
-| [`code-review`](skills/code-review/SKILL.md) | Review PRs efficiently — scope, blast radius, complexity, then targeted code reading |
-| [`explore-codebase`](skills/explore-codebase/SKILL.md) | Understand an unfamiliar project in minutes without reading everything |
-| [`safe-refactor`](skills/safe-refactor/SKILL.md) | Rename, move, or extract code with impact analysis and verification at each step |
-| [`add-feature`](skills/add-feature/SKILL.md) | Add functionality by studying existing patterns first — locate, learn conventions, implement, verify |
-| [`debug-bug`](skills/debug-bug/SKILL.md) | Systematic bug investigation — reproduce, localize with blame/history, trace call path, verify fix |
-| [`debug-performance`](skills/debug-performance/SKILL.md) | Measure before optimizing — establish baselines, identify bottlenecks, confirm improvements with numbers |
-| [`write-tests`](skills/write-tests/SKILL.md) | Write tests by studying existing patterns and code under test before writing assertions |
-| [`upgrade-deps`](skills/upgrade-deps/SKILL.md) | Upgrade dependencies safely — audit usage, research breaking changes, scale effort to version jump |
-| [`migrate-framework`](skills/migrate-framework/SKILL.md) | Incremental framework/API migration with verification at each step, batched by dependency order |
+| [`code-review`](skills/claude/code-review/SKILL.md) | Review PRs efficiently — scope, blast radius, complexity, then targeted code reading |
+| [`explore-codebase`](skills/claude/explore-codebase/SKILL.md) | Understand an unfamiliar project in minutes without reading everything |
+| [`safe-refactor`](skills/claude/safe-refactor/SKILL.md) | Rename, move, or extract code with impact analysis and verification at each step |
+| [`add-feature`](skills/claude/add-feature/SKILL.md) | Add functionality by studying existing patterns first — locate, learn conventions, implement, verify |
+| [`debug-bug`](skills/claude/debug-bug/SKILL.md) | Systematic bug investigation — reproduce, localize with blame/history, trace call path, verify fix |
+| [`debug-performance`](skills/claude/debug-performance/SKILL.md) | Measure before optimizing — establish baselines, identify bottlenecks, confirm improvements with numbers |
+| [`write-tests`](skills/claude/write-tests/SKILL.md) | Write tests by studying existing patterns and code under test before writing assertions |
+| [`upgrade-deps`](skills/claude/upgrade-deps/SKILL.md) | Upgrade dependencies safely — audit usage, research breaking changes, scale effort to version jump |
+| [`migrate-framework`](skills/claude/migrate-framework/SKILL.md) | Incremental framework/API migration with verification at each step, batched by dependency order |
+
+### Codex skills
+
+| Skill | What it does |
+|-------|-------------|
+| [`code-review`](skills/codex/code-review/SKILL.md) | Risk-first code review workflow for Codex using git diff + targeted validation |
+| [`explore-codebase`](skills/codex/explore-codebase/SKILL.md) | Build a fast architecture map in Codex with targeted reads and dependency tracing |
+| [`safe-refactor`](skills/codex/safe-refactor/SKILL.md) | Refactor safely in Codex using blast-radius checks and incremental verification |
+| [`add-feature`](skills/codex/add-feature/SKILL.md) | Add features in Codex by mapping precedent first, then implementing minimal safe changes |
+| [`debug-bug`](skills/codex/debug-bug/SKILL.md) | Repro-first bug fixing workflow in Codex with root-cause tracing and regression checks |
+| [`debug-performance`](skills/codex/debug-performance/SKILL.md) | Performance debugging in Codex with baseline metrics and before/after proof |
+| [`write-tests`](skills/codex/write-tests/SKILL.md) | Write behavior-focused tests in Codex that match project conventions |
+| [`upgrade-deps`](skills/codex/upgrade-deps/SKILL.md) | Dependency upgrade workflow in Codex with changelog-driven risk control |
+| [`migrate-framework`](skills/codex/migrate-framework/SKILL.md) | Incremental framework/API migrations in Codex with batch-level verification |
 
 ```bash
 # Claude Code — copy a skill
-cp -r node_modules/tokenlean/skills/code-review ~/.claude/skills/
+cp -r node_modules/tokenlean/skills/claude/code-review ~/.claude/skills/
+
+# Claude Code — copy all skills
+cp -r node_modules/tokenlean/skills/claude/* ~/.claude/skills/
+
+# Codex — copy a skill
+cp -r node_modules/tokenlean/skills/codex/code-review ~/.codex/skills/
+
+# Codex — copy all skills
+cp -r node_modules/tokenlean/skills/codex/* ~/.codex/skills/
 
 # Or clone and pick what you need
 git clone https://github.com/edimuj/tokenlean.git
-cp -r tokenlean/skills/code-review ~/.claude/skills/
+cp -r tokenlean/skills/claude/code-review ~/.claude/skills/
+cp -r tokenlean/skills/codex/code-review ~/.codex/skills/
 ```
 
 ## All Tools
@@ -353,6 +389,7 @@ tl-complexity src/core/auth.ts  # How complex is it?
 ```bash
 tl-component src/Button.tsx     # Props, hooks, dependencies
 tl-symbols src/Button.tsx       # Function signatures (or src/ for all)
+tl-symbols src/ --filter function # Functions only across directory
 tl-history src/Button.tsx       # Recent changes
 tl-blame src/Button.tsx         # Who wrote what
 ```
@@ -422,6 +459,8 @@ tl-npm express fastify koa         # Compare framework options
 tl-run "npm test"                  # Summarize test results
 tl-run "npm run build"             # Extract build errors only
 tl-run "eslint src/"               # Summarize lint violations
+tl-run "npm test" --raw            # Full output with stdout/stderr preserved
+tl-run "npm test" --raw -j         # Raw JSON includes separate stdout/stderr fields
 tl-run "npm test" -j               # Structured JSON output
 ```
 

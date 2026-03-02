@@ -22,7 +22,7 @@ if (process.argv.includes('--prompt')) {
 }
 
 import { spawnSync } from 'child_process';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import {
@@ -57,6 +57,33 @@ Examples:
 `;
 
 const VALID_TYPES = ['test', 'build', 'lint', 'generic'];
+const ANALYSIS_CHAR_LIMIT = 300000;
+const GENERIC_FAST_PATH_CHAR_LIMIT = 120000;
+
+function sampleTextForAnalysis(text, maxChars = ANALYSIS_CHAR_LIMIT) {
+  if (!text || text.length <= maxChars) return text;
+  const headChars = Math.floor(maxChars * 0.45);
+  const tailChars = maxChars - headChars;
+  const omittedChars = text.length - maxChars;
+  return `${text.slice(0, headChars)}\n... ${omittedChars} chars omitted for analysis ...\n${text.slice(-tailChars)}`;
+}
+
+function countLines(text) {
+  if (!text) return 0;
+  let lines = 1;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '\n') lines++;
+  }
+  return lines;
+}
+
+function headLines(text, maxLines, maxChars = 60000) {
+  return text.slice(0, maxChars).split('\n').slice(0, maxLines);
+}
+
+function tailLines(text, maxLines, maxChars = 60000) {
+  return text.slice(-maxChars).split('\n').slice(-maxLines);
+}
 
 // ─────────────────────────────────────────────────────────────
 // ANSI Stripping
@@ -165,7 +192,7 @@ function detectType(command, stdout, stderr) {
   }
 
   // Tier 2: Output content matching (require 2+ matches, then fallback to 1)
-  const combined = stdout + '\n' + stderr;
+  const combined = sampleTextForAnalysis(stdout + '\n' + stderr, ANALYSIS_CHAR_LIMIT);
 
   let bestType = null;
   let bestCount = 0;
@@ -413,19 +440,23 @@ function summarizeLint(stdout, stderr, exitCode) {
 
 function summarizeGeneric(stdout, stderr, exitCode) {
   const combined = (stdout + (stderr ? '\n' + stderr : '')).trim();
-  const lines = combined.split('\n');
   const result = { summary: '', lines: [] };
 
-  if (lines.length <= 50) {
-    // Short output: pass through as-is
-    result.lines = lines;
+  if (!combined) {
     result.summary = exitCode === 0 ? '' : `exited with code ${exitCode}`;
-  } else {
-    // Long output: head + errors from middle + tail
+    return result;
+  }
+
+  if (combined.length <= GENERIC_FAST_PATH_CHAR_LIMIT) {
+    const lines = combined.split('\n');
+    if (lines.length <= 50) {
+      result.lines = lines;
+      result.summary = exitCode === 0 ? '' : `exited with code ${exitCode}`;
+      return result;
+    }
+
     const head = lines.slice(0, 10);
     const tail = lines.slice(-10);
-
-    // Extract error-like lines from the middle
     const middle = lines.slice(10, -10);
     const errorLines = [];
     for (const line of middle) {
@@ -448,7 +479,40 @@ function summarizeGeneric(stdout, stderr, exitCode) {
 
     result.lines.push(...tail);
     result.summary = `${lines.length} total lines`;
+    return result;
   }
+
+  // Large-output fast path: avoid splitting the entire output into an array.
+  const totalLines = countLines(combined);
+  const head = headLines(combined, 10);
+  const tail = tailLines(combined, 10);
+  const omitted = Math.max(0, totalLines - head.length - tail.length);
+  const errorLines = [];
+
+  const middleStart = Math.floor(combined.length * 0.2);
+  const middleEnd = Math.floor(combined.length * 0.8);
+  const middleSample = sampleTextForAnalysis(combined.slice(middleStart, middleEnd), 80000);
+
+  for (const line of middleSample.split('\n')) {
+    if (errorLines.length >= 10) break;
+    if (/\b(error|Error|ERROR|fatal|FATAL|panic|PANIC|exception|Exception)\b/.test(line)) {
+      errorLines.push(line);
+    }
+  }
+
+  result.lines = [
+    ...head,
+    '',
+    `... ${omitted} lines omitted` + (errorLines.length > 0 ? ` (${errorLines.length} error lines shown below)` : ''),
+    ''
+  ];
+
+  if (errorLines.length > 0) {
+    result.lines.push(...errorLines, '');
+  }
+
+  result.lines.push(...tail);
+  result.summary = `${totalLines} total lines`;
 
   return result;
 }
@@ -621,17 +685,22 @@ function main() {
 
   // Raw mode: output everything as-is
   if (raw) {
-    const combined = result.stdout + (result.stderr ? result.stderr : '');
+    const combined = result.stdout + (result.stderr
+      ? `${result.stdout && !result.stdout.endsWith('\n') ? '\n' : ''}${result.stderr}`
+      : '');
     if (opts.json) {
       const out = createOutput(opts);
       out.setData('command', command);
       out.setData('exitCode', result.exitCode);
       out.setData('elapsed', formatElapsed(result.elapsed));
       out.setData('type', 'raw');
+      out.setData('stdout', result.stdout);
+      out.setData('stderr', result.stderr);
       out.setData('output', combined);
       out.print();
     } else {
-      process.stdout.write(combined);
+      if (result.stdout) process.stdout.write(result.stdout);
+      if (result.stderr) process.stderr.write(result.stderr);
     }
     process.exit(result.exitCode);
   }
@@ -639,17 +708,27 @@ function main() {
   // Detect type
   const type = typeArg || detectType(command, result.stdout, result.stderr);
 
+  // For very large successful outputs, summarize from sampled text only.
+  // On failures we keep full output to preserve diagnostics.
+  let summaryStdout = result.stdout;
+  let summaryStderr = result.stderr;
+  const totalOutputChars = result.stdout.length + result.stderr.length;
+  if (result.exitCode === 0 && totalOutputChars > ANALYSIS_CHAR_LIMIT && type !== 'generic') {
+    summaryStdout = sampleTextForAnalysis(result.stdout, Math.floor(ANALYSIS_CHAR_LIMIT * 0.8));
+    summaryStderr = sampleTextForAnalysis(result.stderr, Math.floor(ANALYSIS_CHAR_LIMIT * 0.2));
+  }
+
   // Summarize based on type
   let summary;
   switch (type) {
     case 'test':
-      summary = summarizeTest(result.stdout, result.stderr, result.exitCode);
+      summary = summarizeTest(summaryStdout, summaryStderr, result.exitCode);
       break;
     case 'build':
-      summary = summarizeBuild(result.stdout, result.stderr, result.exitCode);
+      summary = summarizeBuild(summaryStdout, summaryStderr, result.exitCode);
       break;
     case 'lint':
-      summary = summarizeLint(result.stdout, result.stderr, result.exitCode);
+      summary = summarizeLint(summaryStdout, summaryStderr, result.exitCode);
       break;
     default:
       summary = summarizeGeneric(result.stdout, result.stderr, result.exitCode);
@@ -710,7 +789,7 @@ function main() {
   // Fallback: when exit != 0 and the summarizer extracted no details,
   // show raw stderr/output so the agent can diagnose the actual error.
   if (result.exitCode !== 0 && type !== 'generic') {
-    const hasDetails = (type === 'test' && (summary.failures.length > 0 || summary.parsed)) ||
+    const hasDetails = (type === 'test' && summary.failures.length > 0) ||
                        (type === 'build' && summary.errors.length > 0) ||
                        (type === 'lint' && summary.violations.length > 0);
 

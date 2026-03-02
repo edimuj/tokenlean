@@ -127,8 +127,9 @@ function joinMultiLineSignatures(lines) {
       else if (ch === '>') angleDepth--;
     }
 
-    // Balanced or hit limit — flush
-    if (parenDepth <= 0 || accumLines >= MAX_ACCUM) {
+    // Flush when both parens and generic angle brackets are balanced,
+    // or when we've accumulated too many lines.
+    if ((parenDepth <= 0 && angleDepth <= 0) || accumLines >= MAX_ACCUM) {
       result.push(accumulator);
       accumulator = '';
       parenDepth = 0;
@@ -1347,6 +1348,54 @@ function extractSymbolsForFile(filePath, exportsOnly) {
   return { symbols, lang };
 }
 
+function applySymbolFilter(symbols, filterType) {
+  if (!filterType) return symbols;
+
+  const filterMap = {
+    function: () => {
+      symbols.classes = [];
+      symbols.types = symbols.types ? [] : undefined;
+      symbols.constants = symbols.constants ? [] : undefined;
+      symbols.exports = symbols.exports ? symbols.exports.filter(e =>
+        /\bfunction\b/.test(e) || /=>\s*$/.test(e)) : undefined;
+      symbols.modules = symbols.modules ? [] : undefined;
+    },
+    class: () => {
+      symbols.functions = symbols.functions ? [] : undefined;
+      symbols.types = symbols.types ? [] : undefined;
+      symbols.constants = symbols.constants ? [] : undefined;
+      symbols.exports = symbols.exports ? symbols.exports.filter(e => /\bclass\b/.test(e)) : undefined;
+      symbols.modules = symbols.modules ? [] : undefined;
+    },
+    type: () => {
+      symbols.functions = symbols.functions ? [] : undefined;
+      symbols.classes = symbols.classes ? [] : undefined;
+      symbols.constants = symbols.constants ? [] : undefined;
+      symbols.exports = symbols.exports ? symbols.exports.filter(e =>
+        /\b(type|interface|enum)\b/.test(e)) : undefined;
+      symbols.modules = symbols.modules ? [] : undefined;
+    },
+    constant: () => {
+      symbols.functions = symbols.functions ? [] : undefined;
+      symbols.classes = symbols.classes ? [] : undefined;
+      symbols.types = symbols.types ? [] : undefined;
+      symbols.exports = symbols.exports ? symbols.exports.filter(e =>
+        /\bconst\b/.test(e) && !/=>/.test(e)) : undefined;
+      symbols.modules = symbols.modules ? [] : undefined;
+    },
+    export: () => {
+      symbols.functions = [];
+      symbols.classes = [];
+      symbols.types = symbols.types ? [] : undefined;
+      symbols.constants = symbols.constants ? [] : undefined;
+      symbols.modules = symbols.modules ? [] : undefined;
+    }
+  };
+
+  if (filterMap[filterType]) filterMap[filterType]();
+  return symbols;
+}
+
 function extractSymbolNames(symbols, lang, exportsOnly) {
   const names = [];
 
@@ -1419,7 +1468,74 @@ function extractName(sig) {
   return match ? match[1] : null;
 }
 
-function runMultiFileMode(files, baseDir, exportsOnly, options) {
+const FAST_FUNCTION_FILTER_LANGS = new Set(['js', 'python', 'go', 'rust', 'ruby']);
+
+function extractFunctionNamesFast(content, lang) {
+  const names = [];
+  const seen = new Set();
+
+  function add(name) {
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    names.push(`${name}()`);
+  }
+
+  const lines = content.split('\n');
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('#') || trimmed.startsWith('*') || trimmed.startsWith('/*')) {
+      continue;
+    }
+
+    if (lang === 'js') {
+      const fn = trimmed.match(/^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*[(<]/);
+      if (fn) { add(fn[1]); continue; }
+
+      const arrow = trimmed.match(/^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/);
+      if (arrow) { add(arrow[1]); continue; }
+
+      const fnExpr = trimmed.match(/^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?function\b/);
+      if (fnExpr) { add(fnExpr[1]); continue; }
+    } else if (lang === 'python') {
+      const py = trimmed.match(/^(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/);
+      if (py) { add(py[1]); continue; }
+    } else if (lang === 'go') {
+      const go = trimmed.match(/^func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)\s*[(<]/);
+      if (go) { add(go[1]); continue; }
+    } else if (lang === 'rust') {
+      const rs = trimmed.match(/^(?:pub(?:\([^)]+\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+([A-Za-z_]\w*)\s*[(<]/);
+      if (rs) { add(rs[1]); continue; }
+    } else if (lang === 'ruby') {
+      const rb = trimmed.match(/^def\s+(?:self\.)?([A-Za-z_]\w*[!?=]?)/);
+      if (rb) { add(rb[1]); continue; }
+    }
+  }
+
+  return names;
+}
+
+function tryFastFunctionFilterNames(filePath, lang, exportsOnly, filterType) {
+  if (exportsOnly || filterType !== 'function' || !FAST_FUNCTION_FILTER_LANGS.has(lang)) {
+    return null;
+  }
+
+  const content = readFileSync(filePath, 'utf-8');
+  const indicatorByLang = {
+    js: /\bfunction\b|=>/,
+    python: /\bdef\b/,
+    go: /\bfunc\b/,
+    rust: /\bfn\b/,
+    ruby: /\bdef\b/
+  };
+  const hasIndicator = indicatorByLang[lang]?.test(content);
+  if (!hasIndicator) return [];
+
+  const names = extractFunctionNamesFast(content, lang);
+  // If indicators exist but extraction found nothing, fallback to full parser for correctness.
+  return names.length > 0 ? names : null;
+}
+
+function runMultiFileMode(files, baseDir, exportsOnly, filterType, options) {
   if (files.length === 0) {
     console.error(`No code files found`);
     process.exit(1);
@@ -1433,8 +1549,13 @@ function runMultiFileMode(files, baseDir, exportsOnly, options) {
 
   for (const file of files) {
     try {
-      const { symbols, lang } = extractSymbolsForFile(file, exportsOnly);
-      const names = extractSymbolNames(symbols, lang, exportsOnly);
+      const lang = detectLanguage(file);
+      let names = tryFastFunctionFilterNames(file, lang, exportsOnly, filterType);
+      if (!names) {
+        const { symbols } = extractSymbolsForFile(file, exportsOnly);
+        applySymbolFilter(symbols, filterType);
+        names = extractSymbolNames(symbols, lang, exportsOnly || filterType === 'export');
+      }
       if (names.length === 0) continue;
 
       totalFiles++;
@@ -1517,7 +1638,7 @@ if (paths.length > 1 || statSync(paths[0]).isDirectory()) {
     }
   }
   allFiles.sort();
-  runMultiFileMode(allFiles, baseDir, exportsOnly, options);
+  runMultiFileMode(allFiles, baseDir, exportsOnly, filterType, options);
   process.exit(0);
 }
 
@@ -1552,51 +1673,7 @@ switch (lang) {
     break;
 }
 
-// Apply filter if requested
-if (filterType) {
-  const filterMap = {
-    function: () => {
-      symbols.classes = [];
-      symbols.types = symbols.types ? [] : undefined;
-      symbols.constants = symbols.constants ? [] : undefined;
-      symbols.exports = symbols.exports ? symbols.exports.filter(e =>
-        /\bfunction\b/.test(e) || /=>\s*$/.test(e)) : undefined;
-      symbols.modules = symbols.modules ? [] : undefined;
-    },
-    class: () => {
-      symbols.functions = symbols.functions ? [] : undefined;
-      symbols.types = symbols.types ? [] : undefined;
-      symbols.constants = symbols.constants ? [] : undefined;
-      symbols.exports = symbols.exports ? symbols.exports.filter(e => /\bclass\b/.test(e)) : undefined;
-      symbols.modules = symbols.modules ? [] : undefined;
-    },
-    type: () => {
-      symbols.functions = symbols.functions ? [] : undefined;
-      symbols.classes = symbols.classes ? [] : undefined;
-      symbols.constants = symbols.constants ? [] : undefined;
-      symbols.exports = symbols.exports ? symbols.exports.filter(e =>
-        /\b(type|interface|enum)\b/.test(e)) : undefined;
-      symbols.modules = symbols.modules ? [] : undefined;
-    },
-    constant: () => {
-      symbols.functions = symbols.functions ? [] : undefined;
-      symbols.classes = symbols.classes ? [] : undefined;
-      symbols.types = symbols.types ? [] : undefined;
-      symbols.exports = symbols.exports ? symbols.exports.filter(e =>
-        /\bconst\b/.test(e) && !/=>/.test(e)) : undefined;
-      symbols.modules = symbols.modules ? [] : undefined;
-    },
-    export: () => {
-      // Keep only exports section, clear everything else
-      symbols.functions = [];
-      symbols.classes = [];
-      symbols.types = symbols.types ? [] : undefined;
-      symbols.constants = symbols.constants ? [] : undefined;
-      symbols.modules = symbols.modules ? [] : undefined;
-    }
-  };
-  if (filterMap[filterType]) filterMap[filterType]();
-}
+applySymbolFilter(symbols, filterType);
 
 const symbolCount = countSymbols(symbols);
 const out = createOutput(options);
