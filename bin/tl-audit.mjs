@@ -29,6 +29,7 @@ Options:
   -n <count>       Analyze the N most recent sessions
   --project <dir>  Override project directory detection
   --verbose        Show individual findings
+  --savings        Also show tokens saved by existing tokenlean usage
   -j, --json       JSON output
   -h, --help       Show help`;
 
@@ -88,6 +89,21 @@ const RATIOS = {
   WEBFETCH_TO_BROWSE: 0.30,         // tl-browse returns cleaner markdown ~70% savings
 };
 
+// Reverse ratios: given tokenlean output size, estimate what the raw output would have been
+// e.g. tl-symbols returns 20% of file → raw would be output / 0.20 = 5x
+const SAVINGS_RATIOS = {
+  'tl-symbols':  0.20,   // output is ~20% of full file
+  'tl-snippet':  0.10,   // output is ~10% of full file
+  'tl-run':      0.35,   // output is ~35% of raw build/test output
+  'tl-browse':   0.30,   // output is ~30% of raw HTML/WebFetch
+  'tl-tail':     0.30,   // output is ~30% of raw tail
+  'tl-diff':     0.40,   // output is ~40% of raw git diff
+  'tl-impact':   0.25,   // output is ~25% of manually grepping imports
+  'tl-structure': 0.15,  // output is ~15% of exploring with find+cat
+  'tl-deps':     0.20,   // output is ~20% of reading full file for imports
+  'tl-exports':  0.20,   // output is ~20% of reading full file for exports
+};
+
 const CHARS_PER_TOKEN = 4;
 const LARGE_FILE_THRESHOLD = 150;   // lines - below this, just Read
 const SIGNIFICANT_RESULT = 500;     // chars - ignore tiny results
@@ -101,6 +117,7 @@ function parseSession(jsonlContent) {
   const lines = jsonlContent.trim().split('\n');
   const toolCalls = new Map();
   const findings = [];
+  const savings = [];
   let sessionMeta = null;
 
   for (const line of lines) {
@@ -144,6 +161,27 @@ function parseSession(jsonlContent) {
         if (chars < SIGNIFICANT_RESULT) continue;
 
         const tokens = Math.ceil(chars / CHARS_PER_TOKEN);
+
+        // --- Savings: detect existing tokenlean usage ---
+        if (call.name === 'Bash') {
+          const cmd = call.input.command || '';
+          const tlMatch = cmd.match(/\b(tl-\w+)\b/);
+          if (tlMatch) {
+            const tool = tlMatch[1];
+            const ratio = SAVINGS_RATIOS[tool];
+            if (ratio) {
+              const rawTokens = Math.round(tokens / ratio);
+              const saved = rawTokens - tokens;
+              savings.push({
+                tool,
+                command: cmd.split('\n')[0].slice(0, 120),
+                actualTokens: tokens,
+                rawEstimate: rawTokens,
+                savedTokens: saved,
+              });
+            }
+          }
+        }
 
         // Pattern: Read on large files (only code files, not markdown/config/etc)
         if (call.name === 'Read') {
@@ -285,7 +323,7 @@ function parseSession(jsonlContent) {
     }
   }
 
-  return { findings, meta: sessionMeta };
+  return { findings, savings, meta: sessionMeta };
 }
 
 function summarizeFindings(findings) {
@@ -305,6 +343,26 @@ function summarizeFindings(findings) {
   }
 
   return { byCategory, totalActual, totalSaved, totalFindings: findings.length };
+}
+
+function summarizeSavings(savings) {
+  const byTool = {};
+  let totalActual = 0;
+  let totalSaved = 0;
+
+  for (const s of savings) {
+    if (!byTool[s.tool]) {
+      byTool[s.tool] = { count: 0, actualTokens: 0, rawEstimate: 0, savedTokens: 0 };
+    }
+    byTool[s.tool].count++;
+    byTool[s.tool].actualTokens += s.actualTokens;
+    byTool[s.tool].rawEstimate += s.rawEstimate;
+    byTool[s.tool].savedTokens += s.savedTokens;
+    totalActual += s.actualTokens;
+    totalSaved += s.savedTokens;
+  }
+
+  return { byTool, totalActual, totalSaved, totalUses: savings.length };
 }
 
 async function findProjectDir(cwd) {
@@ -350,6 +408,7 @@ async function main() {
   let latest = true;
   let count = 1;
   let verbose = false;
+  let showSavings = false;
   let projectOverride = null;
   const positional = [];
 
@@ -358,6 +417,7 @@ async function main() {
     if (a === '--all') { all = true; latest = false; }
     else if (a === '--latest') { latest = true; }
     else if (a === '--verbose') { verbose = true; }
+    else if (a === '--savings') { showSavings = true; }
     else if (a === '-n') { count = parseInt(args[++i], 10) || 1; latest = false; }
     else if (a === '--project') { projectOverride = args[++i]; }
     else positional.push(a);
@@ -406,9 +466,10 @@ async function main() {
 
   for (const sf of sessionFiles) {
     const content = await readFile(sf.path, 'utf8');
-    const { findings, meta } = parseSession(content);
+    const { findings, savings, meta } = parseSession(content);
     const summary = summarizeFindings(findings);
-    allResults.push({ file: sf.path, meta, findings, summary });
+    const savingsSummary = showSavings ? summarizeSavings(savings) : null;
+    allResults.push({ file: sf.path, meta, findings, savings, summary, savingsSummary });
   }
 
   // Output
@@ -425,6 +486,12 @@ async function main() {
         : 0,
       categories: r.summary.byCategory,
       ...(verbose ? { findings: r.findings } : {}),
+      ...(r.savingsSummary ? {
+        tokensSavedByTokenlean: r.savingsSummary.totalSaved,
+        tokenleanUses: r.savingsSummary.totalUses,
+        savingsByTool: r.savingsSummary.byTool,
+        ...(verbose ? { savingsDetail: r.savings } : {}),
+      } : {}),
     }));
     console.log(JSON.stringify(data.length === 1 ? data[0] : data, null, 2));
     return;
@@ -433,58 +500,89 @@ async function main() {
   const out = createOutput(options);
 
   for (const result of allResults) {
-    const { meta, findings, summary } = result;
+    const { meta, findings, savings, summary, savingsSummary } = result;
     const sessionLabel = meta?.slug || basename(result.file, '.jsonl');
     const date = meta?.timestamp ? new Date(meta.timestamp).toLocaleDateString() : '';
 
     out.header(`Session: ${sessionLabel}${date ? ` (${date})` : ''}`);
 
-    if (summary.totalFindings === 0) {
-      out.add('  No significant savings opportunities found.');
+    const hasWaste = summary.totalFindings > 0;
+    const hasSavings = savingsSummary && savingsSummary.totalUses > 0;
+
+    if (!hasWaste && !hasSavings) {
+      out.add('  No significant findings.');
       out.blank();
       continue;
     }
 
-    // Category breakdown
-    const cats = Object.entries(summary.byCategory)
-      .sort((a, b) => b[1].savedTokens - a[1].savedTokens);
+    // --- Waste: what could still be saved ---
+    if (hasWaste) {
+      const cats = Object.entries(summary.byCategory)
+        .sort((a, b) => b[1].savedTokens - a[1].savedTokens);
 
-    const rows = cats.map(([cat, data]) => [
-      cat,
-      `${data.count}x`,
-      formatTokens(data.actualTokens),
-      formatTokens(data.savedTokens),
-      `-> ${data.suggestion}`,
-    ]);
+      const rows = cats.map(([cat, data]) => [
+        cat,
+        `${data.count}x`,
+        formatTokens(data.actualTokens),
+        formatTokens(data.savedTokens),
+        `-> ${data.suggestion}`,
+      ]);
 
-    out.add('  Category                Count  Actual     Saveable   Suggestion');
-    out.add('  ' + '-'.repeat(76));
-    for (const [cat, count, actual, saved, suggestion] of rows) {
-      out.add(`  ${cat.padEnd(22)} ${count.padStart(5)}  ${actual.padStart(8)}  ${saved.padStart(10)}   ${suggestion}`);
-    }
-    out.blank();
-
-    // Totals
-    const pct = summary.totalActual > 0
-      ? Math.round((summary.totalSaved / summary.totalActual) * 100)
-      : 0;
-    out.add(`  Total tool output:  ${formatTokens(summary.totalActual)}`);
-    out.add(`  Saveable:           ${formatTokens(summary.totalSaved)} (${pct}%)`);
-    out.blank();
-
-    // Verbose: individual findings
-    if (verbose) {
-      out.add('  Findings:');
-      const sorted = [...findings].sort((a, b) => b.savedTokens - a.savedTokens);
-      for (const f of sorted.slice(0, 20)) {
-        const label = f.file || f.command || '';
-        out.add(`    [${formatTokens(f.savedTokens).trim()} saveable] ${label}`);
-        out.add(`      ${f.detail}`);
-      }
-      if (sorted.length > 20) {
-        out.add(`    ... and ${sorted.length - 20} more`);
+      if (hasSavings) out.add('  Opportunities:');
+      out.add('  Category                Count  Actual     Saveable   Suggestion');
+      out.add('  ' + '-'.repeat(76));
+      for (const [cat, count, actual, saved, suggestion] of rows) {
+        out.add(`  ${cat.padEnd(22)} ${count.padStart(5)}  ${actual.padStart(8)}  ${saved.padStart(10)}   ${suggestion}`);
       }
       out.blank();
+
+      const pct = summary.totalActual > 0
+        ? Math.round((summary.totalSaved / summary.totalActual) * 100)
+        : 0;
+      out.add(`  Still saveable:     ${formatTokens(summary.totalSaved)} of ${formatTokens(summary.totalActual)} (${pct}%)`);
+      out.blank();
+
+      if (verbose) {
+        out.add('  Findings:');
+        const sorted = [...findings].sort((a, b) => b.savedTokens - a.savedTokens);
+        for (const f of sorted.slice(0, 20)) {
+          const label = f.file || f.command || '';
+          out.add(`    [${formatTokens(f.savedTokens).trim()} saveable] ${label}`);
+          out.add(`      ${f.detail}`);
+        }
+        if (sorted.length > 20) {
+          out.add(`    ... and ${sorted.length - 20} more`);
+        }
+        out.blank();
+      }
+    }
+
+    // --- Savings: what tokenlean already saved ---
+    if (hasSavings) {
+      out.add('  Already saved by tokenlean:');
+      const tools = Object.entries(savingsSummary.byTool)
+        .sort((a, b) => b[1].savedTokens - a[1].savedTokens);
+
+      out.add('  Tool              Count  Compressed   Raw estimate   Saved');
+      out.add('  ' + '-'.repeat(66));
+      for (const [tool, data] of tools) {
+        out.add(`  ${tool.padEnd(18)} ${(data.count + 'x').padStart(5)}  ${formatTokens(data.actualTokens).padStart(10)}  ${formatTokens(data.rawEstimate).padStart(14)}   ${formatTokens(data.savedTokens)}`);
+      }
+      out.blank();
+      out.add(`  Tokens saved:       ${formatTokens(savingsSummary.totalSaved)} (${savingsSummary.totalUses} uses)`);
+      out.blank();
+
+      if (verbose) {
+        out.add('  Savings detail:');
+        const sorted = [...savings].sort((a, b) => b.savedTokens - a.savedTokens);
+        for (const s of sorted.slice(0, 20)) {
+          out.add(`    [${formatTokens(s.savedTokens).trim()} saved] ${s.command}`);
+        }
+        if (sorted.length > 20) {
+          out.add(`    ... and ${sorted.length - 20} more`);
+        }
+        out.blank();
+      }
     }
   }
 
@@ -495,8 +593,17 @@ async function main() {
     const pct = totalActual > 0 ? Math.round((totalSaved / totalActual) * 100) : 0;
 
     out.header(`Aggregate (${allResults.length} sessions)`);
-    out.add(`  Total tool output:  ${formatTokens(totalActual)}`);
-    out.add(`  Saveable:           ${formatTokens(totalSaved)} (${pct}%)`);
+    out.add(`  Still saveable:     ${formatTokens(totalSaved)} of ${formatTokens(totalActual)} (${pct}%)`);
+
+    if (showSavings) {
+      const totalAlreadySaved = allResults.reduce((s, r) => s + (r.savingsSummary?.totalSaved || 0), 0);
+      const totalUses = allResults.reduce((s, r) => s + (r.savingsSummary?.totalUses || 0), 0);
+      out.add(`  Already saved:      ${formatTokens(totalAlreadySaved)} (${totalUses} tokenlean uses)`);
+      if (totalAlreadySaved > 0 && totalSaved > 0) {
+        const captured = Math.round((totalAlreadySaved / (totalAlreadySaved + totalSaved)) * 100);
+        out.add(`  Capture rate:       ${captured}% of potential savings realized`);
+      }
+    }
   }
 
   out.print();
