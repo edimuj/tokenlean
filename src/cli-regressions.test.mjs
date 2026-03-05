@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,43 @@ function runCli(args, cwd = repoRoot) {
     cwd,
     encoding: 'utf-8'
   });
+}
+
+function waitFor(predicate, timeoutMs = 8000, intervalMs = 25) {
+  const started = Date.now();
+  return new Promise((resolvePromise, rejectPromise) => {
+    const tick = () => {
+      if (predicate()) {
+        resolvePromise();
+        return;
+      }
+      if (Date.now() - started >= timeoutMs) {
+        rejectPromise(new Error(`Timed out after ${timeoutMs}ms`));
+        return;
+      }
+      setTimeout(tick, intervalMs);
+    };
+    tick();
+  });
+}
+
+function waitForExit(child, timeoutMs = 5000) {
+  if (child.exitCode !== null) {
+    return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
+  }
+
+  return Promise.race([
+    new Promise(resolvePromise => {
+      child.once('exit', (code, signal) => {
+        resolvePromise({ code, signal });
+      });
+    }),
+    new Promise((_, rejectPromise) => {
+      setTimeout(() => {
+        rejectPromise(new Error(`Timed out waiting for process exit after ${timeoutMs}ms`));
+      }, timeoutMs);
+    })
+  ]);
 }
 
 describe('CLI regressions', () => {
@@ -221,6 +258,91 @@ describe('CLI regressions', () => {
       const lineCount = result.stdout.trim().split('\n').length;
       assert.ok(lineCount < 25, `Expected compact fallback, got ${lineCount} lines`);
     } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-011: tl-tail collapses repeats and surfaces error/warn clusters', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-tail-'));
+    const filePath = join(tempDir, 'app.log');
+    writeFileSync(filePath, [
+      'INFO boot complete',
+      'WARN cache nearing limit',
+      'ERROR db connection failed',
+      'ERROR db connection failed',
+      'INFO heartbeat ok',
+      'INFO heartbeat ok',
+      'INFO heartbeat ok',
+      'WARN retrying request'
+    ].join('\n') + '\n', 'utf-8');
+
+    try {
+      const result = runCli(['bin/tl-tail.mjs', filePath, '-q']);
+      assert.strictEqual(result.status, 0);
+      assert.match(result.stdout, /errors:/);
+      assert.match(result.stdout, /2x ERROR db connection failed/);
+      assert.match(result.stdout, /warnings:/);
+      assert.match(result.stdout, /repeated clusters:/);
+      assert.match(result.stdout, /3x INFO heartbeat ok/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-012: tl-tail --follow emits updated summary when log grows', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-tail-follow-'));
+    const filePath = join(tempDir, 'app.log');
+    writeFileSync(filePath, [
+      'INFO boot complete',
+      'WARN warmup retry'
+    ].join('\n') + '\n', 'utf-8');
+
+    const child = spawn(process.execPath, ['bin/tl-tail.mjs', filePath, '--follow', '-q'], {
+      cwd: repoRoot,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf-8');
+    child.stderr.setEncoding('utf-8');
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+
+    try {
+      await waitFor(() => (stdout.match(/^summary:/gm) || []).length >= 1, 6000);
+
+      appendFileSync(filePath, [
+        'ERROR downstream failed',
+        'ERROR downstream failed',
+        'WARN retrying request'
+      ].join('\n') + '\n', 'utf-8');
+
+      await waitFor(() => {
+        const summaryCount = (stdout.match(/^summary:/gm) || []).length;
+        return summaryCount >= 2 &&
+          /errors:/.test(stdout) &&
+          /2x ERROR downstream failed/.test(stdout) &&
+          /warnings:/.test(stdout);
+      }, 10000);
+
+      child.kill('SIGINT');
+      const exited = await waitForExit(child, 5000);
+      assert.strictEqual(
+        exited.code,
+        0,
+        `Expected exit code 0, got ${exited.code} (signal=${exited.signal || 'none'})\nstderr:\n${stderr}`
+      );
+      assert.match(stdout, /repeated clusters:/);
+    } finally {
+      if (child.exitCode === null) {
+        child.kill('SIGTERM');
+        try {
+          await waitForExit(child, 2000);
+        } catch {
+          child.kill('SIGKILL');
+        }
+      }
       rmSync(tempDir, { recursive: true, force: true });
     }
   });

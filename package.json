@@ -65,6 +65,7 @@
     "tl-style": "bin/tl-style.mjs",
     "tl-structure": "bin/tl-structure.mjs",
     "tl-symbols": "bin/tl-symbols.mjs",
+    "tl-tail": "bin/tl-tail.mjs",
     "tl-test": "bin/tl-test.mjs",
     "tl-test-map": "bin/tl-test-map.mjs",
     "tl-todo": "bin/tl-todo.mjs",

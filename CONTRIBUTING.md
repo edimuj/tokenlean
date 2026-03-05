@@ -20,6 +20,7 @@ Verify it works:
 
 ```bash
 tl-structure --help
+tl-tail --help
 ```
 
 ## Project Structure
@@ -123,6 +124,7 @@ tl-<name> src/ --json
 
 - Add to the appropriate table in `README.md`
 - Add to the tools table in `CLAUDE.md`
+- If the tool changes common workflow, add a short usage note/example in `CONTRIBUTING.md`
 
 ## Design Principles
 

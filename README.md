@@ -5,7 +5,7 @@
 <h1 align="center">tokenlean</h1>
 
 <p align="center">
-  <strong>46 CLI tools that let AI agents understand codebases without burning tokens</strong>
+  <strong>51 CLI tools that let AI agents understand codebases without burning tokens</strong>
 </p>
 
 <p align="center">
@@ -50,6 +50,7 @@ tokenlean fixes this:
 | Guessing what a change might break        | `tl-impact`         | **Know for sure**     |
 | Reading a file to extract one function    | `tl-snippet`        | **~85% fewer tokens** |
 | Running `npm test` and reading all output | `tl-run "npm test"` | **Errors only**       |
+| Scanning long logs for real failures      | `tl-tail app.log`   | **Errors/warns + dedupe** |
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/edimuj/tokenlean/main/assets/demo.gif" alt="tokenlean demo — tl-structure, tl-symbols, and tl-exports in action" width="800" />
@@ -92,6 +93,7 @@ npm link
 # What changed recently?         tl-diff --staged
 # Is it safe to commit?          tl-guard
 # Find real usage examples       tl-example useAuth
+# Summarize noisy logs            tl-tail logs/app.log
 # What's the tech stack?         tl-stack
 ```
 
@@ -179,6 +181,7 @@ cp -r tokenlean/skills/codex/code-review ~/.codex/skills/
 | `tl-snippet`   | Extract one function/class by name             | `tl-snippet handleSubmit`        |
 | `tl-impact`    | Blast radius — what depends on this file       | `tl-impact src/auth.ts`          |
 | `tl-run`       | Token-efficient command output (tests, builds) | `tl-run "npm test"`              |
+| `tl-tail`      | Token-efficient log tailing and summarization  | `tl-tail logs/app.log`           |
 | `tl-guard`     | Pre-commit check (secrets, TODOs, unused, circular) | `tl-guard`                  |
 | `tl-structure` | Project overview with token estimates          | `tl-structure src/`              |
 | `tl-browse`    | Fetch any URL as clean markdown                | `tl-browse https://docs.example.com` |
@@ -285,7 +288,7 @@ Code analysis tools are JS/TS-first, but many work across languages. Git-based a
 
 **✓** full support &nbsp; **◐** partial (regex-based patterns, may miss language-specific constructs) &nbsp; **-** not supported
 
-Tools not listed (tl-structure, tl-search, tl-diff, tl-todo, tl-secrets, tl-guard, tl-blame, tl-history, tl-hotspots, tl-example, tl-env, tl-run, etc.) are language-agnostic and work with any codebase.
+Tools not listed (tl-structure, tl-search, tl-diff, tl-todo, tl-secrets, tl-guard, tl-blame, tl-history, tl-hotspots, tl-example, tl-env, tl-run, tl-tail, etc.) are language-agnostic and work with any codebase.
 
 ## Configuration
 
@@ -462,6 +465,9 @@ tl-run "eslint src/"               # Summarize lint violations
 tl-run "npm test" --raw            # Full output with stdout/stderr preserved
 tl-run "npm test" --raw -j         # Raw JSON includes separate stdout/stderr fields
 tl-run "npm test" -j               # Structured JSON output
+tl-tail logs/app.log               # Collapse repeats + surface errors/warnings
+tl-tail logs/app.log -f            # Follow file updates with compact summaries
+npm test 2>&1 | tl-tail            # Summarize piped logs
 ```
 
 </details>
