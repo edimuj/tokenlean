@@ -22,6 +22,8 @@
   "bin": {
     "tl-analyze": "bin/tl-analyze.mjs",
     "tl-api": "bin/tl-api.mjs",
+    "tl-audit": "bin/tl-audit.mjs",
+    "tl-hook": "bin/tl-hook.mjs",
     "tl-blame": "bin/tl-blame.mjs",
     "tl-browse": "bin/tl-browse.mjs",
     "tl-cache": "bin/tl-cache.mjs",
