@@ -5,7 +5,7 @@
 <h1 align="center">tokenlean</h1>
 
 <p align="center">
-  <strong>51 CLI tools that let AI agents understand codebases without burning tokens</strong>
+  <strong>53 CLI tools that let AI agents understand codebases without burning tokens</strong>
 </p>
 
 <p align="center">
@@ -112,6 +112,13 @@ Add tokenlean instructions to your AI tool's config with a single command:
 | Cursor         | `tl-prompt --minimal >> .cursorrules`          |
 | GitHub Copilot | `tl-prompt >> .github/copilot-instructions.md` |
 | Windsurf       | `tl-prompt --minimal >> .windsurfrules`        |
+
+**Hooks** — automatically nudge agents toward token-efficient tool usage:
+
+```bash
+tl-hook install claude-code    # Gentle reminders when agents waste tokens
+tl-audit --all --savings       # Measure actual savings across sessions
+```
 
 ## Agent Skills
 
@@ -259,6 +266,8 @@ cp -r tokenlean/skills/codex/code-review ~/.codex/skills/
 
 | Tool            | Description                              | Example                     |
 |-----------------|------------------------------------------|-----------------------------|
+| `tl-audit`      | Analyze sessions, estimate token savings | `tl-audit --all --savings`  |
+| `tl-hook`       | Install token-saving agent hooks         | `tl-hook install claude-code` |
 | `tl-cache`      | Manage ripgrep result cache              | `tl-cache stats`            |
 | `tl-config`     | Show/manage configuration                | `tl-config --init`          |
 | `tl-name`       | Check name availability (npm/GH/domains) | `tl-name myproject -s`      |
@@ -481,6 +490,37 @@ tl-context7 react "useEffect"           # Look up React docs via Context7
 tl-context7 nextjs "app router"         # Next.js docs
 tl-npm lodash --deps                    # Check package dependencies
 tl-npm chalk --versions                 # Version history
+```
+
+</details>
+
+<details>
+<summary><strong>Measuring token savings</strong></summary>
+
+```bash
+tl-audit --latest                  # Analyze most recent session
+tl-audit --all --savings           # All sessions: waste + savings
+tl-audit -n 10 --savings --verbose # Last 10 sessions with detail
+tl-audit session.jsonl             # Analyze a specific session file
+```
+
+`tl-audit` analyzes Claude Code sessions and shows:
+- **Opportunities** — tokens wasted on large file reads, verbose build output, raw grep/cat/tail
+- **Savings** (with `--savings`) — tokens already saved by tokenlean usage, with capture rate
+
+```
+Aggregate (270 sessions, React Native/Expo app)
+  Still saveable:     496k of 661k (75%)
+  Already saved:      2.3M (531 tokenlean uses)
+  Capture rate:       82% of potential savings realized
+```
+
+Install hooks to automatically nudge agents toward token-efficient alternatives:
+
+```bash
+tl-hook install claude-code        # Install PreToolUse hooks
+tl-hook status claude-code         # Check what's active
+tl-hook uninstall claude-code      # Remove hooks
 ```
 
 </details>
