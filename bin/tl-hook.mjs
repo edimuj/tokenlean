@@ -12,10 +12,11 @@
  * Supported tools: claude-code
  */
 
-import { readFile, writeFile } from 'node:fs/promises';
-import { execFileSync } from 'node:child_process';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { readFile, writeFile, mkdir, unlink } from 'node:fs/promises';
+import { readFileSync, writeFileSync, statSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { homedir, tmpdir } from 'node:os';
 
 const HELP = `Usage: tl-hook <command> [options]
 
@@ -29,14 +30,21 @@ Commands:
 
 Supported tools:
   claude-code            Claude Code (~/.claude/settings.json)
+  opencode               Open Code (~/.config/opencode/plugins/)
 
-Options:
-  -h, --help             Show help
+Options (claude-code only):
+  --global               Install to ~/.claude/ (global user config)
+  --rig <name>           Install to a specific claude-rig profile
+
+By default, claude-code auto-detects if running inside a claude-rig
+session (via CLAUDE_CONFIG_DIR) and installs there. Falls back to --global.
 
 Examples:
   tl-hook install claude-code
-  tl-hook uninstall claude-code
-  tl-hook status claude-code`;
+  tl-hook install claude-code --global
+  tl-hook install claude-code --rig cli-node
+  tl-hook install opencode
+  tl-hook status opencode`;
 
 // --- Patterns (shared with tl-audit) ---
 
@@ -64,7 +72,34 @@ const NON_CODE_EXTS = new Set([
   'lock', 'svg', 'html', 'css', 'log', 'env',
 ]);
 
-const LARGE_FILE_THRESHOLD = 300;
+const LARGE_FILE_BYTES = 12000; // ~300 lines of code
+
+// --- Nudge dedup (once per type, re-nudge after TTL) ---
+
+const NUDGE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+function getSeenPath() {
+  const port = process.env.CLAUDE_CODE_SSE_PORT;
+  if (!port) return null;
+  return join(tmpdir(), `tl-hook-${port}.seen`);
+}
+
+function loadSeen(p) {
+  try {
+    return JSON.parse(readFileSync(p, 'utf8'));
+  } catch { return {}; }
+}
+
+function nudgeOnce(key, message) {
+  const p = getSeenPath();
+  if (p) {
+    const seen = loadSeen(p);
+    if (seen[key] && (Date.now() - seen[key]) < NUDGE_TTL_MS) return;
+    seen[key] = Date.now();
+    writeFileSync(p, JSON.stringify(seen), 'utf8');
+  }
+  console.log(makeNudge(message));
+}
 
 // --- Hook runner ---
 
@@ -108,16 +143,11 @@ async function runHook() {
     if (NON_CODE_EXTS.has(ext)) return;
 
     // Check file size
-    let lineCount = 0;
-    try {
-      const result = execFileSync('wc', ['-l', filePath], { encoding: 'utf8', timeout: 2000 });
-      lineCount = parseInt(result.trim().split(/\s/)[0], 10) || 0;
-    } catch { return; }
+    let size;
+    try { size = statSync(filePath).size; } catch { return; }
 
-    if (lineCount > LARGE_FILE_THRESHOLD) {
-      console.log(makeNudge(
-        `[tokenlean] This file has ${lineCount} lines. Consider: tl-symbols ${filePath} for structure overview, then tl-snippet <name> ${filePath} for specific functions.`
-      ));
+    if (size > LARGE_FILE_BYTES) {
+      nudgeOnce('read-large', `[tl] ${Math.round(size / 1024)}KB — use tl-symbols + tl-snippet`);
     }
     return;
   }
@@ -131,58 +161,43 @@ async function runHook() {
 
     // Build/test commands
     if (BUILD_TEST_PATTERNS.some(p => p.test(cmd))) {
-      const shortCmd = cmd.split('\n')[0].slice(0, 80);
-      console.log(makeNudge(
-        `[tokenlean] Consider: tl-run "${shortCmd}" — compresses build/test output ~65%, saving tokens.`
-      ));
+      nudgeOnce('bash-test', `[tl] wrap with tl-run`);
       return;
     }
 
     // Tail commands
     if (TAIL_PATTERNS.some(p => p.test(cmd))) {
-      console.log(makeNudge(
-        `[tokenlean] Consider: tl-tail — collapses repeated lines and summarizes log output, saving ~70% tokens.`
-      ));
+      nudgeOnce('bash-tail', `[tl] use tl-tail instead`);
       return;
     }
 
     // grep/rg/ag — nudge to built-in Grep tool
     if (/^\s*(grep|rg|ag)\s/.test(cmd)) {
-      console.log(makeNudge(
-        `[tokenlean] Consider using the Grep tool instead of ${cmd.trim().split(/\s/)[0]} via Bash — better integration, avoids shell overhead.`
-      ));
+      nudgeOnce('bash-grep', `[tl] use Grep tool, not Bash`);
       return;
     }
 
     // cat — nudge to Read tool or tl-symbols
     if (/^\s*cat\s+[^|]/.test(cmd)) {
-      console.log(makeNudge(
-        `[tokenlean] Consider using the Read tool instead of cat via Bash. For large code files, use tl-symbols for structure overview.`
-      ));
+      nudgeOnce('bash-cat', `[tl] use Read tool, not cat`);
       return;
     }
 
     // head — nudge to Read with limit
     if (/^\s*head\s/.test(cmd)) {
-      console.log(makeNudge(
-        `[tokenlean] Consider using the Read tool with offset/limit parameters instead of head via Bash.`
-      ));
+      nudgeOnce('bash-head', `[tl] use Read with offset/limit`);
       return;
     }
 
     // find/fd — nudge to Glob tool
     if (/^\s*(find|fd)\s/.test(cmd)) {
-      console.log(makeNudge(
-        `[tokenlean] Consider using the Glob tool instead of ${cmd.trim().split(/\s/)[0]} via Bash — faster and better integrated.`
-      ));
+      nudgeOnce('bash-find', `[tl] use Glob tool, not Bash`);
       return;
     }
 
     // curl on URLs (skip API calls with -X, -d, --data, -H with auth)
     if (/^\s*curl\s/.test(cmd) && !/(-X\s|--data|--header.*auth|-d\s)/i.test(cmd)) {
-      console.log(makeNudge(
-        `[tokenlean] Consider: tl-browse <url> — fetches as clean markdown with far fewer tokens than raw curl output.`
-      ));
+      nudgeOnce('bash-curl', `[tl] use tl-browse instead`);
       return;
     }
   }
@@ -191,9 +206,7 @@ async function runHook() {
   if (toolName === 'WebFetch') {
     const url = toolInput.url || '';
     if (url) {
-      console.log(makeNudge(
-        `[tokenlean] Consider: tl-browse "${url}" — returns clean markdown, typically 60-80% fewer tokens than WebFetch.`
-      ));
+      nudgeOnce('webfetch', `[tl] use tl-browse instead`);
     }
     return;
   }
@@ -201,11 +214,62 @@ async function runHook() {
 
 // --- Claude Code installer ---
 
-function getClaudeSettingsPath() {
-  return join(homedir(), '.claude', 'settings.json');
-}
+function resolveClaudeConfigDir(args) {
+  const globalDir = join(homedir(), '.claude');
 
-const HOOK_MARKER = 'tokenlean';
+  // Explicit --global flag
+  if (args.includes('--global')) {
+    try { statSync(globalDir); } catch {
+      console.error('Claude Code is not installed (~/.claude not found).');
+      console.error('Currently only Claude Code is supported.');
+      process.exit(1);
+    }
+    return { configDir: globalDir, label: 'global (~/.claude)' };
+  }
+
+  // Explicit --rig <name>
+  const rigIdx = args.indexOf('--rig');
+  if (rigIdx !== -1) {
+    const rigName = args[rigIdx + 1];
+    if (!rigName || rigName.startsWith('-')) {
+      console.error('Missing rig name. Usage: --rig <name>');
+      process.exit(1);
+    }
+    const rigDir = join(homedir(), '.claude-rig', 'rigs', rigName);
+    try {
+      statSync(rigDir);
+    } catch {
+      // Check if claude-rig is installed (rigs dir exists)
+      try {
+        statSync(join(homedir(), '.claude-rig', 'rigs'));
+      } catch {
+        console.error(`claude-rig is not installed. --rig requires claude-rig.`);
+        console.error(`Install it from: https://github.com/edimuj/claude-rig`);
+        process.exit(1);
+      }
+      console.error(`Rig "${rigName}" not found at ${rigDir}`);
+      process.exit(1);
+    }
+    return { configDir: rigDir, label: `rig "${rigName}"` };
+  }
+
+  // Auto-detect: CLAUDE_CONFIG_DIR set by claude-rig
+  const envDir = process.env.CLAUDE_CONFIG_DIR;
+  if (envDir) {
+    // Extract rig name from path for display
+    const rigMatch = envDir.match(/\.claude-rig\/rigs\/([^/]+)/);
+    const label = rigMatch ? `rig "${rigMatch[1]}" (auto-detected)` : envDir;
+    return { configDir: envDir, label };
+  }
+
+  // Default: global
+  try { statSync(globalDir); } catch {
+    console.error('Claude Code is not installed (~/.claude not found).');
+    console.error('Currently only Claude Code is supported.');
+    process.exit(1);
+  }
+  return { configDir: globalDir, label: 'global (~/.claude)' };
+}
 
 function buildHookConfig() {
   return {
@@ -256,8 +320,8 @@ function isTokenleanHook(hookEntry) {
   return hookEntry?.hooks?.some(h => h.command?.includes('tl-hook'));
 }
 
-async function installClaudeCode() {
-  const settingsPath = getClaudeSettingsPath();
+async function installClaudeCode(configDir, label) {
+  const settingsPath = join(configDir, 'settings.json');
   const settings = await loadSettings(settingsPath);
 
   if (!settings.hooks) settings.hooks = {};
@@ -278,7 +342,7 @@ async function installClaudeCode() {
   }
 
   await saveSettings(settingsPath, settings);
-  console.log('Installed tokenlean hooks into Claude Code.');
+  console.log(`Installed tokenlean hooks into Claude Code [${label}].`);
   console.log(`  Config: ${settingsPath}`);
   console.log('  Hooks: PreToolUse (Read, Bash, WebFetch)');
   console.log('');
@@ -293,12 +357,12 @@ async function installClaudeCode() {
   console.log('  - Using WebFetch — use tl-browse');
 }
 
-async function uninstallClaudeCode() {
-  const settingsPath = getClaudeSettingsPath();
+async function uninstallClaudeCode(configDir, label) {
+  const settingsPath = join(configDir, 'settings.json');
   const settings = await loadSettings(settingsPath);
 
   if (!settings.hooks) {
-    console.log('No hooks configured in Claude Code.');
+    console.log(`No hooks configured in Claude Code [${label}].`);
     return;
   }
 
@@ -318,15 +382,18 @@ async function uninstallClaudeCode() {
   await saveSettings(settingsPath, settings);
 
   if (removed > 0) {
-    console.log(`Removed ${removed} tokenlean hook(s) from Claude Code.`);
+    console.log(`Removed ${removed} tokenlean hook(s) from Claude Code [${label}].`);
   } else {
-    console.log('No tokenlean hooks found in Claude Code config.');
+    console.log(`No tokenlean hooks found in Claude Code [${label}].`);
   }
 }
 
-async function statusClaudeCode() {
-  const settingsPath = getClaudeSettingsPath();
+async function statusClaudeCode(configDir, label) {
+  const settingsPath = join(configDir, 'settings.json');
   const settings = await loadSettings(settingsPath);
+
+  console.log(`Claude Code [${label}]`);
+  console.log(`  Config: ${settingsPath}`);
 
   const hooks = settings.hooks || {};
   let found = 0;
@@ -341,10 +408,69 @@ async function statusClaudeCode() {
   }
 
   if (found === 0) {
-    console.log('No tokenlean hooks installed in Claude Code.');
-    console.log('Run: tl-hook install claude-code');
+    console.log('  No tokenlean hooks installed.');
+    console.log('  Run: tl-hook install claude-code');
   } else {
-    console.log(`\n${found} tokenlean hook(s) active.`);
+    console.log(`  ${found} hook(s) active.`);
+  }
+}
+
+// --- Open Code installer ---
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+function getOpenCodePluginPath() {
+  return join(homedir(), '.config', 'opencode', 'plugins', 'tokenlean.js');
+}
+
+async function installOpenCode() {
+  const configDir = join(homedir(), '.config', 'opencode');
+  try { statSync(configDir); } catch {
+    console.error('Open Code is not installed (~/.config/opencode not found).');
+    console.error('Install it from: https://opencode.ai');
+    process.exit(1);
+  }
+
+  const pluginDir = join(configDir, 'plugins');
+  await mkdir(pluginDir, { recursive: true });
+
+  const templatePath = join(__dirname, '..', 'src', 'opencode-plugin.js');
+  const content = await readFile(templatePath, 'utf8');
+  const pluginPath = getOpenCodePluginPath();
+  await writeFile(pluginPath, content, 'utf8');
+
+  console.log('Installed tokenlean plugin into Open Code.');
+  console.log(`  Plugin: ${pluginPath}`);
+  console.log('');
+  console.log('The plugin will automatically:');
+  console.log('  - Wrap build/test commands with tl-run (~65% output compression)');
+  console.log('  - Replace curl with tl-browse (clean markdown output)');
+}
+
+async function uninstallOpenCode() {
+  const pluginPath = getOpenCodePluginPath();
+  try {
+    await unlink(pluginPath);
+    console.log('Removed tokenlean plugin from Open Code.');
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      console.log('No tokenlean plugin found in Open Code.');
+    } else {
+      throw err;
+    }
+  }
+}
+
+async function statusOpenCode() {
+  const pluginPath = getOpenCodePluginPath();
+  console.log('Open Code');
+  console.log(`  Plugin: ${pluginPath}`);
+  try {
+    statSync(pluginPath);
+    console.log('  [active] tokenlean plugin installed');
+  } catch {
+    console.log('  Not installed.');
+    console.log('  Run: tl-hook install opencode');
   }
 }
 
@@ -352,6 +478,7 @@ async function statusClaudeCode() {
 
 const TOOL_HANDLERS = {
   'claude-code': { install: installClaudeCode, uninstall: uninstallClaudeCode, status: statusClaudeCode },
+  'opencode': { install: installOpenCode, uninstall: uninstallOpenCode, status: statusOpenCode },
 };
 
 async function main() {
@@ -381,12 +508,24 @@ async function main() {
     process.exit(1);
   }
 
-  if (command === 'install') await handler.install();
-  else if (command === 'uninstall') await handler.uninstall();
-  else if (command === 'status') await handler.status();
-  else {
-    console.error(`Unknown command: ${command}. Use install, uninstall, status, or run.`);
-    process.exit(1);
+  // Claude Code needs config dir resolution (--global, --rig, auto-detect)
+  if (tool === 'claude-code') {
+    const { configDir, label } = resolveClaudeConfigDir(args);
+    if (command === 'install') await handler.install(configDir, label);
+    else if (command === 'uninstall') await handler.uninstall(configDir, label);
+    else if (command === 'status') await handler.status(configDir, label);
+    else {
+      console.error(`Unknown command: ${command}. Use install, uninstall, status, or run.`);
+      process.exit(1);
+    }
+  } else {
+    if (command === 'install') await handler.install();
+    else if (command === 'uninstall') await handler.uninstall();
+    else if (command === 'status') await handler.status();
+    else {
+      console.error(`Unknown command: ${command}. Use install, uninstall, status, or run.`);
+      process.exit(1);
+    }
   }
 }
 

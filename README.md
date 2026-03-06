@@ -518,9 +518,17 @@ Aggregate (270 sessions, React Native/Expo app)
 Install hooks to automatically nudge agents toward token-efficient alternatives:
 
 ```bash
-tl-hook install claude-code        # Install PreToolUse hooks
+# Claude Code — PreToolUse hooks (nudge toward better tools)
+tl-hook install claude-code        # Install hooks (auto-detects claude-rig)
+tl-hook install claude-code --global   # Force install to ~/.claude/
+tl-hook install claude-code --rig dev  # Install to a specific rig
 tl-hook status claude-code         # Check what's active
 tl-hook uninstall claude-code      # Remove hooks
+
+# Open Code — plugin (auto-wraps commands with tl-run/tl-browse)
+tl-hook install opencode           # Install plugin to ~/.config/opencode/plugins/
+tl-hook status opencode            # Check if installed
+tl-hook uninstall opencode         # Remove plugin
 ```
 
 </details>
