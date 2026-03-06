@@ -50,7 +50,7 @@ function printHelp() {
   console.log([
     `tokenlean v${version} — CLI tools for AI agents`,
     '',
-    'Usage: tl <command> [options]',
+    'Usage: tl <command|tool> [options]',
     '',
     'Commands:',
     formatRows(commands, width),
@@ -58,8 +58,20 @@ function printHelp() {
     'Tools:',
     formatRows(tools, width),
     '',
-    'Run tl-<tool> --help for tool-specific help.'
+    'Run tl <tool> --help or tl-<tool> --help for tool-specific help.'
   ].join('\n'));
+}
+
+function resolveToolFile(command) {
+  const normalized = command.startsWith('tl-') ? command : `tl-${command}`;
+  const file = join(BIN_DIR, `${normalized}.mjs`);
+  return existsSync(file) ? file : null;
+}
+
+function runTool(toolFile, args) {
+  const child = spawn(process.execPath, [toolFile, ...args], { stdio: 'inherit' });
+  child.on('error', () => process.exit(1));
+  child.on('exit', code => process.exit(code ?? 1));
 }
 
 function captureCommand(file, args) {
@@ -158,7 +170,7 @@ function runUpdate() {
 }
 
 function main() {
-  const [command] = process.argv.slice(2);
+  const [command, ...rest] = process.argv.slice(2);
   if (!command || command === '-h' || command === '--help') {
     printHelp();
     return;
@@ -176,6 +188,12 @@ function main() {
 
   if (command === 'update') {
     runUpdate();
+    return;
+  }
+
+  const toolFile = resolveToolFile(command);
+  if (toolFile) {
+    runTool(toolFile, rest);
     return;
   }
 

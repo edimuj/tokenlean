@@ -21,7 +21,7 @@ if (process.argv.includes('--prompt')) {
 }
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
-import { join, dirname, basename, relative, extname } from 'path';
+import { join, dirname, basename, relative, extname, resolve } from 'path';
 import {
   createOutput,
   parseCommonArgs,
@@ -33,8 +33,8 @@ import { findProjectRoot } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
 import { ensureRipgrep } from '../src/traverse.mjs';
 import { rgCommand } from '../src/shell.mjs';
-
-ensureRipgrep();
+import { isJsTsFile } from '../src/semantic-js.mjs';
+import { getJsTsGraphImporters } from '../src/semantic-js-graph.mjs';
 
 const HELP = `
 tl-related - Find related files (tests, types, usages)
@@ -112,8 +112,48 @@ function findTypeFiles(filePath, projectRoot) {
 }
 
 function findImporters(filePath, projectRoot) {
+  if (isJsTsFile(filePath)) {
+    try {
+      return {
+        files: findImportersByGraph(filePath, projectRoot),
+        backend: 'semantic-graph'
+      };
+    } catch {
+      // Fall through to ripgrep when the semantic graph is unavailable.
+    }
+  }
+
+  return {
+    files: findImportersByRipgrep(filePath, projectRoot),
+    backend: 'ripgrep'
+  };
+}
+
+function findImportersByGraph(filePath, projectRoot) {
+  const { projectRoot: graphRoot, edges } = getJsTsGraphImporters(filePath, { projectRoot });
+  const importers = [];
+  const seen = new Set();
+
+  for (const edge of edges) {
+    if (!edge.importer) continue;
+    const importerPath = join(graphRoot, edge.importer);
+    if (importerPath === filePath) continue;
+    if (isTestFile(importerPath)) continue;
+
+    if (!seen.has(importerPath)) {
+      seen.add(importerPath);
+      importers.push(importerPath);
+    }
+  }
+
+  return importers;
+}
+
+function findImportersByRipgrep(filePath, projectRoot) {
   const name = basename(filePath, extname(filePath));
   const importers = new Set();
+
+  ensureRipgrep();
 
   // Search for files that might import this module (with caching)
   try {
@@ -127,7 +167,7 @@ function findImporters(filePath, projectRoot) {
     for (const line of result.trim().split('\n')) {
       if (!line) continue;
       if (line === filePath) continue;
-      if (line.includes('.test.') || line.includes('.spec.')) continue;
+      if (isTestFile(line)) continue;
       if (line.includes('node_modules')) continue;
 
       // Verify it's actually an import statement
@@ -143,6 +183,10 @@ function findImporters(filePath, projectRoot) {
   } catch { /* rg not found or no matches */ }
 
   return Array.from(importers);
+}
+
+function isTestFile(filePath) {
+  return filePath.includes('.test.') || filePath.includes('.spec.');
 }
 
 function findSiblings(filePath) {
@@ -193,20 +237,22 @@ if (options.help || !targetFile) {
   process.exit(options.help ? 0 : 1);
 }
 
-const fullPath = targetFile.startsWith('/') ? targetFile : join(process.cwd(), targetFile);
+const fullPath = resolve(targetFile);
 if (!existsSync(fullPath)) {
   console.error(`File not found: ${targetFile}`);
   process.exit(1);
 }
 
-const projectRoot = findProjectRoot();
+const projectRoot = findProjectRoot(dirname(fullPath));
 const relPath = relative(projectRoot, fullPath);
 const out = createOutput(options);
 
 const tests = findTestFiles(fullPath);
 const types = findTypeFiles(fullPath, projectRoot);
-const importers = findImporters(fullPath, projectRoot);
+const importerResult = findImporters(fullPath, projectRoot);
+const importers = importerResult.files;
 const siblings = findSiblings(fullPath);
+const importerBackend = importerResult.backend;
 
 // Collect file info for JSON
 const testsInfo = tests.map(f => ({ path: relative(projectRoot, f), ...getFileInfo(f) }));
@@ -221,6 +267,7 @@ out.setData('types', typesInfo);
 out.setData('importers', importersInfo);
 out.setData('siblings', siblingsInfo);
 out.setData('totalImporters', importers.length);
+out.setData('backend', importerBackend);
 
 // Header
 out.header(`Related files for: ${relPath}`);

@@ -1,6 +1,6 @@
 {
   "name": "tokenlean",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "description": "Lean CLI tools for AI agents and developers - reduce context, save tokens",
   "type": "module",
   "engines": {
@@ -20,6 +20,7 @@
     "README.md"
   ],
   "bin": {
+    "tokenlean": "bin/tl.mjs",
     "tl": "bin/tl.mjs",
     "tl-analyze": "bin/tl-analyze.mjs",
     "tl-api": "bin/tl-api.mjs",
@@ -89,7 +90,8 @@
     "developer"
   ],
   "dependencies": {
-    "node-html-markdown": "^2.0.0"
+    "node-html-markdown": "^2.0.0",
+    "typescript": "^5.9.3"
   },
   "author": "Edin Mujkanovic",
   "license": "MIT"

@@ -274,9 +274,9 @@ cp -r tokenlean/skills/codex/code-review ~/.codex/skills/
 
 | Tool            | Description                              | Example                     |
 |-----------------|------------------------------------------|-----------------------------|
-| `tl-audit`      | Analyze sessions, estimate token savings | `tl-audit --all --savings`  |
+| `tl-audit`      | Analyze Claude/Codex sessions and estimate token savings | `tl-audit --all --savings`  |
 | `tl-hook`       | Install token-saving agent hooks         | `tl-hook install claude-code` |
-| `tl-cache`      | Manage ripgrep result cache              | `tl-cache stats`            |
+| `tl-cache`      | Manage tokenlean caches                  | `tl-cache stats`            |
 | `tl-config`     | Show/manage configuration                | `tl-config --init`          |
 | `tl-name`       | Check name availability (npm/GH/domains) | `tl-name myproject -s`      |
 | `tl-playwright` | Headless browser content extraction      | `tl-playwright example.com` |
@@ -361,8 +361,9 @@ Config values extend built-in defaults (they don't replace them).
 <details>
 <summary>Caching</summary>
 
-tokenlean caches expensive ripgrep operations with **git-based invalidation** — automatically invalidates on commits or
-file changes.
+tokenlean caches expensive operations with **git-based invalidation** — including ripgrep-backed searches, cached
+JS/TS semantic facts for `tl-symbols` and `tl-snippet`, and the JS/TS dependency graph used by `tl-deps` and
+`tl-impact`. Cache entries invalidate automatically on commits or file changes.
 
 ```bash
 tl-cache stats      # View cache statistics
@@ -506,19 +507,32 @@ tl-npm chalk --versions                 # Version history
 <summary><strong>Measuring token savings</strong></summary>
 
 ```bash
-tl-audit --latest                  # Analyze most recent session
-tl-audit --all --savings           # All sessions: waste + savings
-tl-audit -n 10 --savings --verbose # Last 10 sessions with detail
-tl-audit session.jsonl             # Analyze a specific session file
+# run without install
+npx --package tokenlean tl-audit --latest                  # Direct tool invocation via npx
+npx tokenlean audit --all --savings                        # Package entrypoint via npx
+
+# provider-aware sessions
+tl-audit --provider claude --latest                       # Claude Code only
+tl-audit --codex --latest                                 # Codex only
+tl-audit --latest --savings                               # Auto-detect provider; combined summary
+
+# output detail levels
+tl-audit --all --savings                                  # Summary only, across all matching sessions
+tl-audit -n 5 --verbose --savings                         # Add per-session detail
+tl-audit session.jsonl                                    # Analyze a specific session file
 ```
 
-`tl-audit` analyzes Claude Code sessions and shows:
+`tl-audit` now analyzes both Codex and Claude Code sessions:
 - **Opportunities** — tokens wasted on large file reads, verbose build output, raw grep/cat/tail
 - **Savings** (with `--savings`) — tokens already saved by tokenlean usage, with capture rate
+- **Default output** — one combined summary, including per-provider totals; add `--verbose` to view per-session breakdown
 
 ```
-Aggregate (270 sessions, React Native/Expo app)
+Summary (270 sessions: 180 Claude Code, 90 Codex)
   Still saveable:     496k of 661k (75%)
+  By provider:
+  Claude Code       180 sessions     341k saveable     1.5M saved
+  Codex              90 sessions     155k saveable     820k saved
   Already saved:      2.3M (531 tokenlean uses)
   Capture rate:       82% of potential savings realized
 ```

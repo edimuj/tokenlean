@@ -21,7 +21,7 @@ if (process.argv.includes('--prompt')) {
 }
 
 import { existsSync, readFileSync } from 'fs';
-import { basename, dirname, extname, join, relative, resolve } from 'path';
+import { basename, dirname, extname, relative, resolve } from 'path';
 import {
   createOutput,
   parseCommonArgs,
@@ -29,11 +29,10 @@ import {
   formatTokens,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
-import { findProjectRoot, categorizeFile } from '../src/project.mjs';
+import { findProjectRoot, categorizeFile, detectLanguage } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
-import { ensureRipgrep, listFilesWithRipgrep } from '../src/traverse.mjs';
-
-ensureRipgrep();
+import { listFiles } from '../src/traverse.mjs';
+import { formatImportBindings, getJsTsProjectGraph } from '../src/semantic-js-graph.mjs';
 
 const HELP = `
 tl-impact - Analyze the blast radius of changing a file
@@ -62,8 +61,8 @@ Output shows:
 // Import Detection — single-pass reverse import map
 // ─────────────────────────────────────────────────────────────
 
-const CODE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.mts', '.cjs']);
-const RESOLVE_SUFFIXES = ['', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.mts', '.cjs', '/index.js', '/index.ts', '/index.tsx', '/index.mjs'];
+const CODE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.mts', '.cjs', '.cts']);
+const RESOLVE_SUFFIXES = ['', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.mts', '.cjs', '.cts', '/index.js', '/index.ts', '/index.tsx', '/index.mjs', '/index.mts', '/index.cjs', '/index.cts'];
 
 /**
  * Resolve an import specifier to an absolute path.
@@ -85,15 +84,16 @@ function resolveImportSpecifier(spec, importerDir) {
  * Returns { [targetAbsPath]: [ { importer, line, importType, statement }, ... ] }
  */
 function buildReverseImportMap(projectRoot) {
-  const files = listFilesWithRipgrep(projectRoot);
-  if (!files) return Object.create(null);
+  const files = listFiles(projectRoot);
+  if (!files || files.length === 0) return Object.create(null);
 
   // Filter to code files only
   const codeFiles = [];
-  for (const relPath of files) {
+  for (const file of files) {
+    const relPath = file.relativePath || relative(projectRoot, file.path);
     const ext = extname(relPath).toLowerCase();
     if (CODE_EXTENSIONS.has(ext)) {
-      codeFiles.push(join(projectRoot, relPath));
+      codeFiles.push(file.path);
     }
   }
 
@@ -213,6 +213,71 @@ function findTransitiveImporters(directImporters, targetPath, reverseMap, maxDep
   return allImporters;
 }
 
+function formatGraphImportType(edge) {
+  if (edge.importType === 'dynamic-import') return 'dynamic import';
+  if (edge.importType === 'reexport') return 'reexport';
+  if (edge.importType === 'require' || edge.importType === 'import-equals') return 'require';
+  if (edge.isTypeOnly) return 'type import';
+  return 'import';
+}
+
+function buildGraphImporterInfo(edge) {
+  return {
+    line: edge.line,
+    importType: formatGraphImportType(edge),
+    statement: edge.statement,
+    bindings: edge.bindings || [],
+    usedBindings: formatImportBindings(edge.bindings || [])
+  };
+}
+
+function findDirectJsTsImporters(relPath, graph) {
+  const importers = new Map();
+  const entries = graph.reverseImports[relPath] || [];
+
+  for (const entry of entries) {
+    if (entry.importer === relPath) continue;
+    if (importers.has(entry.importer)) continue;
+    importers.set(entry.importer, buildGraphImporterInfo(entry));
+  }
+
+  return importers;
+}
+
+function findTransitiveJsTsImporters(directImporters, targetRelPath, graph, maxDepth = 2) {
+  const allImporters = new Map(directImporters);
+  const processed = new Set([targetRelPath]);
+  let currentLevel = [...directImporters.keys()];
+
+  for (let depth = 1; depth < maxDepth && currentLevel.length > 0; depth++) {
+    const nextLevel = [];
+
+    for (const relPath of currentLevel) {
+      if (processed.has(relPath)) continue;
+      processed.add(relPath);
+
+      const importers = findDirectJsTsImporters(relPath, graph);
+
+      for (const [path, info] of importers) {
+        if (!allImporters.has(path) && !processed.has(path)) {
+          allImporters.set(path, { ...info, depth, via: basename(relPath) });
+          nextLevel.push(path);
+        }
+      }
+    }
+
+    currentLevel = nextLevel;
+  }
+
+  return allImporters;
+}
+
+function materializeGraphImporters(importers, projectRoot) {
+  return new Map(
+    [...importers.entries()].map(([relPath, info]) => [resolve(projectRoot, relPath), info])
+  );
+}
+
 
 // ─────────────────────────────────────────────────────────────
 // Import Statement Parsing (--why)
@@ -240,6 +305,16 @@ function extractImportedNames(statement) {
   if (reqDefault) return [`default (${reqDefault[1]})`];
   // Dynamic import
   if (statement.includes('import(')) return ['dynamic'];
+  return [];
+}
+
+function getUsedBindings(info) {
+  if (Array.isArray(info.usedBindings) && info.usedBindings.length > 0) {
+    return info.usedBindings;
+  }
+  if (typeof info.statement === 'string' && info.statement) {
+    return extractImportedNames(info.statement);
+  }
   return [];
 }
 
@@ -277,8 +352,7 @@ function buildExportSummary(categories) {
 
   for (const files of Object.values(categories)) {
     for (const file of files) {
-      if (!file.statement) continue;
-      const names = extractImportedNames(file.statement);
+      const names = getUsedBindings(file);
       for (const name of names) {
         if (name.startsWith('*') || name === 'dynamic') continue;
         const clean = name.startsWith('default (') ? name.slice(9, -1) : name;
@@ -304,8 +378,8 @@ function printCategory(out, title, files, emoji, showWhy) {
       line += ` [via ${file.via}]`;
     }
     out.add(line);
-    if (showWhy && file.statement) {
-      const names = extractImportedNames(file.statement);
+    if (showWhy) {
+      const names = getUsedBindings(file);
       if (names.length > 0) {
         out.add(`      uses: ${names.join(', ')}`);
       }
@@ -350,8 +424,10 @@ if (!existsSync(resolvedPath)) {
   process.exit(1);
 }
 
-const projectRoot = findProjectRoot();
+const projectRoot = findProjectRoot(dirname(resolvedPath));
 const relPath = relative(projectRoot, resolvedPath);
+const lang = detectLanguage(resolvedPath);
+const useJsTsGraph = lang === 'javascript' || lang === 'typescript';
 const targetTokens = estimateTokens(readFileSync(resolvedPath, 'utf-8'));
 
 const out = createOutput(options);
@@ -363,22 +439,34 @@ if (maxDepth > 1) {
   out.header(`   Analyzing ${maxDepth} levels of dependencies...`);
 }
 
-const reverseMap = withCache(
-  { op: 'reverse-import-map' },
-  () => buildReverseImportMap(projectRoot),
-  { projectRoot, headOnly: true }
-);
+let importers;
 
-const directImporters = findDirectImporters(resolvedPath, reverseMap);
-let importers = directImporters;
-if (maxDepth > 1) {
-  importers = findTransitiveImporters(directImporters, resolvedPath, reverseMap, maxDepth);
+if (useJsTsGraph) {
+  const graph = getJsTsProjectGraph(resolvedPath, { projectRoot });
+  const targetRelPath = relative(projectRoot, resolvedPath);
+  const directImporters = findDirectJsTsImporters(targetRelPath, graph);
+  const graphImporters = maxDepth > 1
+    ? findTransitiveJsTsImporters(directImporters, targetRelPath, graph, maxDepth)
+    : directImporters;
+  importers = materializeGraphImporters(graphImporters, projectRoot);
+} else {
+  const reverseMap = withCache(
+    { op: 'reverse-import-map' },
+    () => buildReverseImportMap(projectRoot),
+    { projectRoot, headOnly: true }
+  );
+
+  const directImporters = findDirectImporters(resolvedPath, reverseMap);
+  importers = maxDepth > 1
+    ? findTransitiveImporters(directImporters, resolvedPath, reverseMap, maxDepth)
+    : directImporters;
 }
 
 // Set JSON data
 out.setData('target', relPath);
 out.setData('targetTokens', targetTokens);
 out.setData('maxDepth', maxDepth);
+out.setData('backend', useJsTsGraph ? 'semantic-graph' : 'regex');
 
 if (importers.size === 0) {
   out.add('No importers found - this file has no dependents!');

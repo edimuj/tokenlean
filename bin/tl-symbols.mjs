@@ -32,6 +32,7 @@ import {
 } from '../src/output.mjs';
 import { extractGenericSymbols } from '../src/generic-lang.mjs';
 import { shouldSkip } from '../src/project.mjs';
+import { getJsTsSemanticFacts } from '../src/semantic-js.mjs';
 
 const HELP = `
 tl-symbols - Extract function/class/type signatures without bodies
@@ -1335,16 +1336,27 @@ function collectFiles(dir, files = []) {
 
 function extractSymbolsForFile(filePath, exportsOnly) {
   const lang = detectLanguage(filePath);
-  const content = readFileSync(filePath, 'utf-8');
   let symbols;
-  switch (lang) {
-    case 'js': symbols = extractJsSymbols(content, exportsOnly); break;
-    case 'python': symbols = extractPythonSymbols(content); break;
-    case 'go': symbols = extractGoSymbols(content); break;
-    case 'rust': symbols = extractRustSymbols(content); break;
-    case 'ruby': symbols = extractRubySymbols(content); break;
-    default: symbols = extractGenericSymbols(content); break;
+
+  if (lang === 'js') {
+    const facts = getJsTsSemanticFacts(filePath);
+    if (facts?.symbols) {
+      symbols = facts.symbols;
+    }
   }
+
+  if (!symbols) {
+    const content = readFileSync(filePath, 'utf-8');
+    switch (lang) {
+      case 'js': symbols = extractJsSymbols(content, exportsOnly); break;
+      case 'python': symbols = extractPythonSymbols(content); break;
+      case 'go': symbols = extractGoSymbols(content); break;
+      case 'rust': symbols = extractRustSymbols(content); break;
+      case 'ruby': symbols = extractRubySymbols(content); break;
+      default: symbols = extractGenericSymbols(content); break;
+    }
+  }
+
   return { symbols, lang };
 }
 
@@ -1394,6 +1406,19 @@ function applySymbolFilter(symbols, filterType) {
 
   if (filterMap[filterType]) filterMap[filterType]();
   return symbols;
+}
+
+function filterExportsOnlySymbols(symbols) {
+  return {
+    ...symbols,
+    classes: (symbols.classes || []).filter(cls => cls.signature.startsWith('export')),
+    functions: (symbols.functions || []).filter(sig => sig.startsWith('export')),
+    types: (symbols.types || []).filter(entry => {
+      const sig = typeof entry === 'string' ? entry : entry.signature;
+      return typeof sig === 'string' && sig.startsWith('export');
+    }),
+    constants: (symbols.constants || []).filter(sig => sig.startsWith('export'))
+  };
 }
 
 function extractSymbolNames(symbols, lang, exportsOnly) {
@@ -1468,7 +1493,7 @@ function extractName(sig) {
   return match ? match[1] : null;
 }
 
-const FAST_FUNCTION_FILTER_LANGS = new Set(['js', 'python', 'go', 'rust', 'ruby']);
+const FAST_FUNCTION_FILTER_LANGS = new Set(['python', 'go', 'rust', 'ruby']);
 
 function extractFunctionNamesFast(content, lang) {
   const names = [];
@@ -1651,26 +1676,36 @@ const fullFileTokens = estimateTokens(content);
 
 let symbols;
 let isGeneric = false;
-switch (lang) {
-  case 'js':
-    symbols = extractJsSymbols(content, exportsOnly);
-    break;
-  case 'python':
-    symbols = extractPythonSymbols(content);
-    break;
-  case 'go':
-    symbols = extractGoSymbols(content);
-    break;
-  case 'rust':
-    symbols = extractRustSymbols(content);
-    break;
-  case 'ruby':
-    symbols = extractRubySymbols(content);
-    break;
-  default:
-    symbols = extractGenericSymbols(content);
-    isGeneric = true;
-    break;
+if (lang === 'js') {
+  const facts = getJsTsSemanticFacts(filePath, { content });
+  symbols = facts?.symbols || null;
+  if (symbols && exportsOnly) {
+    symbols = filterExportsOnlySymbols(symbols);
+  }
+}
+
+if (!symbols) {
+  switch (lang) {
+    case 'js':
+      symbols = extractJsSymbols(content, exportsOnly);
+      break;
+    case 'python':
+      symbols = extractPythonSymbols(content);
+      break;
+    case 'go':
+      symbols = extractGoSymbols(content);
+      break;
+    case 'rust':
+      symbols = extractRustSymbols(content);
+      break;
+    case 'ruby':
+      symbols = extractRubySymbols(content);
+      break;
+    default:
+      symbols = extractGenericSymbols(content);
+      isGeneric = true;
+      break;
+  }
 }
 
 applySymbolFilter(symbols, filterType);

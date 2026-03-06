@@ -32,6 +32,7 @@ import {
 } from '../src/output.mjs';
 import { findProjectRoot, detectLanguage } from '../src/project.mjs';
 import { extractGenericImports } from '../src/generic-lang.mjs';
+import { getJsTsGraphFile, getJsTsProjectGraph } from '../src/semantic-js-graph.mjs';
 
 const HELP = `
 tl-deps - Show what a file imports/depends on
@@ -302,6 +303,84 @@ function resolveLocalImport(spec, fileDir, projectRoot) {
   return spec; // Return original if can't resolve
 }
 
+function graphImportsToCategories(graphFile) {
+  const imports = {
+    npm: [],
+    local: [],
+    builtin: [],
+    assets: [],
+    dynamic: []
+  };
+
+  for (const item of graphFile.imports || []) {
+    const entry = {
+      spec: item.spec,
+      line: item.line,
+      statement: item.statement,
+      isTypeOnly: !!item.isTypeOnly,
+      resolvedPath: item.resolvedPath || null
+    };
+
+    if (item.importType === 'dynamic-import') {
+      imports.dynamic.push(entry);
+      continue;
+    }
+
+    if (item.moduleType === 'builtin') imports.builtin.push(entry);
+    else if (item.moduleType === 'package') imports.npm.push(entry);
+    else if (item.moduleType === 'asset') imports.assets.push(entry);
+    else imports.local.push(entry);
+  }
+
+  return imports;
+}
+
+function buildJsTsDependencyTree(relPath, graph, projectRoot, maxDepth = 2, visited = new Set()) {
+  if (visited.has(relPath) || visited.size > 50) {
+    return { file: relPath, circular: true };
+  }
+
+  visited.add(relPath);
+
+  const fullPath = resolve(projectRoot, relPath);
+  let tokens = null;
+  try {
+    tokens = estimateTokens(readFileSync(fullPath, 'utf-8'));
+  } catch {
+    tokens = null;
+  }
+
+  const node = graph.files[relPath];
+  if (!node) {
+    return { file: relPath, error: true };
+  }
+
+  const tree = {
+    file: relPath,
+    tokens,
+    npm: [],
+    builtin: [],
+    local: []
+  };
+
+  for (const imp of node.imports || []) {
+    const target = imp.resolvedPath || imp.spec;
+
+    if (imp.importType === 'dynamic-import') continue;
+    if (imp.moduleType === 'package') tree.npm.push(imp.spec);
+    else if (imp.moduleType === 'builtin') tree.builtin.push(imp.spec);
+    else if (imp.moduleType === 'local') {
+      if (maxDepth > 0 && imp.resolvedPath && graph.files[imp.resolvedPath] && !visited.has(imp.resolvedPath)) {
+        tree.local.push(buildJsTsDependencyTree(imp.resolvedPath, graph, projectRoot, maxDepth - 1, visited));
+      } else {
+        tree.local.push({ file: target, circular: !!imp.resolvedPath && visited.has(imp.resolvedPath) });
+      }
+    }
+  }
+
+  return tree;
+}
+
 // ─────────────────────────────────────────────────────────────
 // Tree Mode
 // ─────────────────────────────────────────────────────────────
@@ -383,7 +462,9 @@ function printCategory(out, title, items, emoji, showResolved, fileDir, projectR
   for (const item of items) {
     let line = `   ${item.spec}`;
 
-    if (showResolved && item.spec.startsWith('.')) {
+    if (showResolved && item.resolvedPath) {
+      line += ` -> ${item.resolvedPath}`;
+    } else if (showResolved && item.spec.startsWith('.')) {
       const resolved = resolveLocalImport(item.spec, fileDir, projectRoot);
       line += ` -> ${resolved}`;
     }
@@ -430,11 +511,14 @@ if (!existsSync(resolvedPath)) {
   process.exit(1);
 }
 
-const projectRoot = findProjectRoot();
+const projectRoot = findProjectRoot(dirname(resolvedPath));
 const relPath = relative(projectRoot, resolvedPath);
 const content = readFileSync(resolvedPath, 'utf-8');
 const lang = detectLanguage(resolvedPath);
 const isGeneric = !lang || !['javascript', 'typescript', 'python', 'go'].includes(lang);
+const jsTsGraphFile = !isGeneric && (lang === 'javascript' || lang === 'typescript')
+  ? getJsTsGraphFile(resolvedPath, { projectRoot })
+  : null;
 
 const out = createOutput(options);
 
@@ -470,14 +554,16 @@ if (isGeneric) {
   out.header(`   Max depth: ${maxDepth}`);
   out.blank();
 
-  const tree = buildDependencyTree(resolvedPath, projectRoot, maxDepth);
+  const tree = jsTsGraphFile
+    ? buildJsTsDependencyTree(jsTsGraphFile.path, getJsTsProjectGraph(resolvedPath, { projectRoot }), jsTsGraphFile.projectRoot, maxDepth)
+    : buildDependencyTree(resolvedPath, projectRoot, maxDepth);
   printTree(tree, out, '', true);
   out.blank();
 
   out.setData('tree', tree);
 } else {
   // List mode
-  const imports = extractImports(content, lang);
+  const imports = jsTsGraphFile ? graphImportsToCategories(jsTsGraphFile) : extractImports(content, lang);
   const fileDir = dirname(resolvedPath);
   const totalImports = imports.npm.length + imports.local.length + imports.builtin.length + imports.assets.length + imports.dynamic.length;
 

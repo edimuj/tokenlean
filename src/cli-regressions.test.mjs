@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -343,6 +343,274 @@ describe('CLI regressions', () => {
           child.kill('SIGKILL');
         }
       }
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-013: tl-symbols exports-only stays scoped to exported JS/TS symbols on semantic path', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-symbols-semantic-'));
+    const filePath = join(tempDir, 'api.ts');
+    writeFileSync(filePath, [
+      'export function publicThing() {',
+      '  return 1;',
+      '}',
+      '',
+      'function privateThing() {',
+      '  return 2;',
+      '}',
+      '',
+      'export const VALUE = 42;',
+      'const HIDDEN = 7;'
+    ].join('\n') + '\n', 'utf-8');
+
+    try {
+      const result = runCli(['bin/tl-symbols.mjs', filePath, '--exports-only', '-q']);
+      assert.strictEqual(result.status, 0);
+      assert.match(result.stdout, /publicThing/);
+      assert.match(result.stdout, /\bVALUE\b/);
+      assert.doesNotMatch(result.stdout, /privateThing/);
+      assert.doesNotMatch(result.stdout, /\bHIDDEN\b/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-014: tl-snippet resolves JS/TS class field arrow methods via semantic facts', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-snippet-semantic-'));
+    const filePath = join(tempDir, 'service.ts');
+    writeFileSync(filePath, [
+      'export class SaveManager {',
+      '  save = async (value: number) => {',
+      '    return value + 1;',
+      '  };',
+      '',
+      '  other() {',
+      '    return 0;',
+      '  }',
+      '}'
+    ].join('\n') + '\n', 'utf-8');
+
+    try {
+      const result = runCli(['bin/tl-snippet.mjs', 'SaveManager.save', filePath, '-q']);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      assert.match(result.stdout, /^\s*\d+│\s*save = async \(value: number\) => \{$/m);
+      assert.match(result.stdout, /^\s*\d+│\s*return value \+ 1;$/m);
+      assert.doesNotMatch(result.stdout, /^\s*\d+│\s*other\(\) \{$/m);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-015: tl-deps resolves TS path aliases via the semantic graph', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-deps-graph-'));
+    const configPath = join(tempDir, 'tsconfig.json');
+    const targetPath = join(tempDir, 'core.ts');
+    const filePath = join(tempDir, 'app.ts');
+
+    writeFileSync(configPath, JSON.stringify({
+      compilerOptions: {
+        baseUrl: '.',
+        paths: {
+          '@core': ['core.ts']
+        }
+      }
+    }, null, 2) + '\n', 'utf-8');
+
+    writeFileSync(targetPath, [
+      'export function helper() {',
+      '  return 1;',
+      '}'
+    ].join('\n') + '\n', 'utf-8');
+
+    writeFileSync(filePath, [
+      'import { helper } from \'@core\';',
+      '',
+      'export function run() {',
+      '  return helper();',
+      '}'
+    ].join('\n') + '\n', 'utf-8');
+
+    try {
+      const result = runCli(['bin/tl-deps.mjs', filePath, '--resolve', '-j']);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      assert.strictEqual(parsed.totalImports, 1);
+      assert.deepStrictEqual(parsed.imports.local.map(item => item.resolvedPath), ['core.ts']);
+      assert.strictEqual(parsed.imports.npm.length, 0);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-016: tl-impact follows JS/TS re-export chains with semantic graph why data', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-impact-graph-'));
+    const basePath = join(tempDir, 'base.ts');
+    const midPath = join(tempDir, 'mid.ts');
+    const consumerPath = join(tempDir, 'consumer.ts');
+
+    writeFileSync(basePath, [
+      'export const foo = 1;'
+    ].join('\n') + '\n', 'utf-8');
+
+    writeFileSync(midPath, [
+      'export { foo } from \'./base\';'
+    ].join('\n') + '\n', 'utf-8');
+
+    writeFileSync(consumerPath, [
+      'import { foo } from \'./mid\';',
+      '',
+      'export function useFoo() {',
+      '  return foo;',
+      '}'
+    ].join('\n') + '\n', 'utf-8');
+
+    try {
+      const result = runCli(['bin/tl-impact.mjs', basePath, '--depth', '2', '--why', '-j']);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      const sourceImporters = parsed.importers.source;
+      const mid = sourceImporters.find(item => item.relPath === 'mid.ts');
+      const consumer = sourceImporters.find(item => item.relPath === 'consumer.ts');
+
+      assert.strictEqual(parsed.backend, 'semantic-graph');
+      assert.strictEqual(parsed.totalFiles, 2);
+      assert.strictEqual(parsed.exportUsage.foo, 2);
+      assert.ok(mid, result.stdout);
+      assert.ok(consumer, result.stdout);
+      assert.deepStrictEqual(mid.usedBindings, ['foo']);
+      assert.strictEqual(consumer.depth, 1);
+      assert.strictEqual(consumer.via, 'mid.ts');
+      assert.deepStrictEqual(consumer.usedBindings, ['foo']);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-017: semantic JS graph captures CommonJS export edge cases', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-graph-cjs-'));
+    const filePath = join(tempDir, 'legacy.cjs');
+    const consumerPath = join(tempDir, 'consumer.js');
+    const { getJsTsGraphFile, getJsTsProjectGraph } = await import('./semantic-js-graph.mjs');
+
+    writeFileSync(filePath, [
+      'const foo = () => 1;',
+      'const bar = () => 2;',
+      'exports[\'foo\'] = foo;',
+      'Object.assign(module.exports, {',
+      '  bar,',
+      '  baz() {',
+      '    return 3;',
+      '  }',
+      '});'
+    ].join('\n') + '\n', 'utf-8');
+
+    writeFileSync(consumerPath, [
+      'const { foo, bar } = require(\'./legacy.cjs\');',
+      '',
+      'module.exports = {',
+      '  run() {',
+      '    return foo() + bar();',
+      '  }',
+      '};'
+    ].join('\n') + '\n', 'utf-8');
+
+    try {
+      const legacyGraph = getJsTsGraphFile(filePath, { projectRoot: tempDir });
+      const projectGraph = getJsTsProjectGraph(filePath, { projectRoot: tempDir });
+      const exportNames = legacyGraph.exports.map(item => item.name).sort();
+      const reverseEdge = (projectGraph.reverseImports['legacy.cjs'] || [])[0];
+
+      assert.deepStrictEqual(exportNames, ['bar', 'baz', 'foo']);
+      assert.strictEqual(reverseEdge.importer, 'consumer.js');
+      assert.deepStrictEqual(reverseEdge.bindings.map(item => item.imported).sort(), ['bar', 'foo']);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-018: tl-related finds TS path-alias importers via the semantic graph from the target project root', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-related-graph-'));
+    const packagePath = join(tempDir, 'package.json');
+    const configPath = join(tempDir, 'tsconfig.json');
+    const dirPath = join(tempDir, 'src');
+    const targetPath = join(dirPath, 'core.ts');
+    const consumerPath = join(dirPath, 'consumer.ts');
+
+    writeFileSync(packagePath, JSON.stringify({ name: 'related-graph-test' }) + '\n', 'utf-8');
+    writeFileSync(configPath, JSON.stringify({
+      compilerOptions: {
+        baseUrl: '.',
+        paths: {
+          '@core': ['src/core.ts']
+        }
+      }
+    }, null, 2) + '\n', 'utf-8');
+
+    try {
+      mkdirSync(dirPath, { recursive: true });
+      writeFileSync(targetPath, [
+        'export function helper() {',
+        '  return 1;',
+        '}'
+      ].join('\n') + '\n', 'utf-8');
+
+      writeFileSync(consumerPath, [
+        'import { helper } from \'@core\';',
+        '',
+        'export function run() {',
+        '  return helper();',
+        '}'
+      ].join('\n') + '\n', 'utf-8');
+
+      const result = runCli(['bin/tl-related.mjs', targetPath, '-j']);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+
+      assert.strictEqual(parsed.backend, 'semantic-graph');
+      assert.strictEqual(parsed.file, 'src/core.ts');
+      assert.strictEqual(parsed.totalImporters, 1);
+      assert.deepStrictEqual(parsed.importers.map(item => item.path), ['src/consumer.ts']);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-019: tl-related keeps adjacent tests out of importer results on the semantic path', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-related-tests-'));
+    const targetPath = join(tempDir, 'service.ts');
+    const testPath = join(tempDir, 'service.test.ts');
+    const consumerPath = join(tempDir, 'consumer.ts');
+
+    writeFileSync(targetPath, [
+      'export function save() {',
+      '  return 1;',
+      '}'
+    ].join('\n') + '\n', 'utf-8');
+
+    writeFileSync(testPath, [
+      'import { save } from \'./service\';',
+      '',
+      'save();'
+    ].join('\n') + '\n', 'utf-8');
+
+    writeFileSync(consumerPath, [
+      'import { save } from \'./service\';',
+      '',
+      'export function run() {',
+      '  return save();',
+      '}'
+    ].join('\n') + '\n', 'utf-8');
+
+    try {
+      const result = runCli(['bin/tl-related.mjs', targetPath, '-j']);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+
+      assert.strictEqual(parsed.backend, 'semantic-graph');
+      assert.deepStrictEqual(parsed.tests.map(item => item.path), ['service.test.ts']);
+      assert.deepStrictEqual(parsed.importers.map(item => item.path), ['consumer.ts']);
+      assert.strictEqual(parsed.totalImporters, 1);
+    } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });

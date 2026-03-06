@@ -32,6 +32,11 @@ import {
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot } from '../src/project.mjs';
+import {
+  findJsTsDefinitions,
+  getJsTsSuggestionCandidates,
+  isJsTsFile
+} from '../src/semantic-js.mjs';
 import { rgCommand } from '../src/shell.mjs';
 
 const HELP = `
@@ -435,6 +440,24 @@ function extractBody(filePath, startLine, contextLines = 0, fileLinesCache = nul
   };
 }
 
+function extractExactBody(filePath, def, contextLines = 0, fileLinesCache = null) {
+  const lines = getFileLines(filePath, fileLinesCache);
+  if (!lines) return null;
+
+  const startLine = Number.isInteger(def.line) ? def.line : null;
+  const endLine = Number.isInteger(def.endLine) ? def.endLine : startLine;
+  if (!startLine || !endLine) return null;
+
+  const startIdx = Math.max(0, startLine - 1 - contextLines);
+  const endIdx = Math.min(lines.length - 1, endLine - 1 + contextLines);
+
+  return {
+    lines: lines.slice(startIdx, endIdx + 1),
+    startLine: startIdx + 1,
+    endLine: endIdx + 1
+  };
+}
+
 // ─────────────────────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────────────────────
@@ -659,6 +682,14 @@ function rankSymbolSuggestions(candidates, query, limit = 12) {
 }
 
 function getCompactSymbolSuggestions(filePath, query) {
+  if (isJsTsFile(filePath)) {
+    const candidates = getJsTsSuggestionCandidates(filePath);
+    if (candidates.length > 0) {
+      const suggestions = rankSymbolSuggestions(candidates, query, 12);
+      return { suggestions, total: candidates.length };
+    }
+  }
+
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const symbolsTool = join(__dirname, 'tl-symbols.mjs');
   const result = spawnSync(process.execPath, [symbolsTool, filePath, '-j'], {
@@ -702,10 +733,11 @@ for (let ni = 0; ni < nameList.length; ni++) {
 
   // Find definitions
   const searchPath = file || projectRoot;
-  let defs = findDefinitions(name, searchPath);
+  const semanticDefs = findJsTsDefinitions(name, searchPath, { className });
+  let defs = semanticDefs.length > 0 ? semanticDefs : findDefinitions(name, searchPath);
 
   // Filter by className if specified — scope-aware check
-  if (className && defs.length > 0) {
+  if (className && defs.length > 0 && semanticDefs.length === 0) {
     const filtered = defs.filter(def => {
       const enclosing = findEnclosingClass(def.file, def.line, fileLinesCache);
       return enclosing === className;
@@ -748,7 +780,9 @@ for (let ni = 0; ni < nameList.length; ni++) {
 
   for (let i = 0; i < Math.min(maxResults, defs.length); i++) {
     const def = defs[i];
-    const body = extractBody(def.file, def.line, contextLines, fileLinesCache);
+    const body = semanticDefs.length > 0
+      ? extractExactBody(def.file, def, contextLines, fileLinesCache)
+      : extractBody(def.file, def.line, contextLines, fileLinesCache);
     if (!body) continue;
 
     const relPath = relative(projectRoot, def.file);
