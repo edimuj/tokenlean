@@ -65,6 +65,14 @@ npm install -g tokenlean
 Requires **Node.js >= 18**, **[ripgrep](https://github.com/BurntSushi/ripgrep)** for search tools, and **git** for
 history tools.
 
+Use `tl` as the global entry point for discovery and health checks:
+
+```bash
+tl          # List available tokenlean commands and tools
+tl doctor   # Verify Node.js, ripgrep, git, hooks, and config
+tl update   # Update the global tokenlean install
+```
+
 <details>
 <summary>Development setup</summary>
 

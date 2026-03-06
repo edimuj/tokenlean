@@ -1,0 +1,187 @@
+#!/usr/bin/env node
+
+/**
+ * tl - Tokenlean global CLI entry point
+ *
+ * Usage: tl <command> [options]
+ */
+
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const require = createRequire(import.meta.url);
+const { version } = require('../package.json');
+const BIN_DIR = fileURLToPath(new URL('.', import.meta.url));
+const CONFIG_PATH = join(process.cwd(), '.tokenleanrc.json');
+const HOOK_SCRIPT = join(BIN_DIR, 'tl-hook.mjs');
+const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
+function truncate(text, max = 60) {
+  return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
+}
+
+function readToolMetadata(fileName) {
+  const content = readFileSync(join(BIN_DIR, fileName), 'utf8');
+  const match = content.match(/^\s*\*\s+(tl-[\w-]+)\s+-\s+(.+)$/m);
+  if (!match) return null;
+  return { name: match[1], desc: match[2].trim().replace(/\.$/, '') };
+}
+
+function listTools() {
+  return readdirSync(BIN_DIR)
+    .filter(name => /^tl-[\w-]+\.mjs$/.test(name))
+    .map(readToolMetadata)
+    .filter(Boolean)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function formatRows(rows, width) {
+  return rows.map(({ name, desc }) => `  ${name.padEnd(width)}${desc}`).join('\n');
+}
+
+function printHelp() {
+  const commands = [{ name: 'tl doctor', desc: 'Check environment health' }, { name: 'tl update', desc: 'Update tokenlean to latest version' }];
+  const tools = listTools().map(({ name, desc }) => ({ name, desc: truncate(desc) }));
+  const width = Math.max(...commands.map(row => row.name.length), ...tools.map(row => row.name.length)) + 2;
+  console.log([
+    `tokenlean v${version} — CLI tools for AI agents`,
+    '',
+    'Usage: tl <command> [options]',
+    '',
+    'Commands:',
+    formatRows(commands, width),
+    '',
+    'Tools:',
+    formatRows(tools, width),
+    '',
+    'Run tl-<tool> --help for tool-specific help.'
+  ].join('\n'));
+}
+
+function captureCommand(file, args) {
+  try {
+    return {
+      ok: true,
+      output: execFileSync(file, args, { encoding: 'utf8' }).trim()
+    };
+  } catch (error) {
+    const output = [error.stdout, error.stderr].filter(Boolean).join('\n').trim();
+    if (error.status === 0) return { ok: true, output };
+    return { ok: false, output, error };
+  }
+}
+
+function versionLine(file, args, label, pattern) {
+  const result = captureCommand(file, args);
+  if (!result.ok) return { kind: 'fail', text: `${label}: not found` };
+  const firstLine = result.output.split('\n')[0] || '';
+  const match = firstLine.match(pattern);
+  return { kind: 'pass', text: `${label} ${match ? match[1] : firstLine.trim()}` };
+}
+
+function countActiveClaudeHooks() {
+  const configDir = process.env.CLAUDE_CONFIG_DIR || (existsSync(join(homedir(), '.claude')) ? join(homedir(), '.claude') : '');
+  if (!configDir) return null;
+  const settingsPath = join(configDir, 'settings.json');
+  if (!existsSync(settingsPath)) return 0;
+  try {
+    const hooks = JSON.parse(readFileSync(settingsPath, 'utf8')).hooks || {};
+    return Object.values(hooks)
+      .flatMap(entries => Array.isArray(entries) ? entries : [])
+      .filter(entry => entry?.hooks?.some(hook => hook.command?.includes('tl-hook'))).length;
+  } catch {
+    return -1;
+  }
+}
+
+function runDoctor() {
+  const results = [];
+  const nodeMajor = Number(process.versions.node.split('.')[0]);
+  results.push(
+    nodeMajor >= 24
+      ? { kind: 'pass', text: `Node.js ${process.version}` }
+      : { kind: 'warn', text: `Node.js ${process.version} (recommended >= 24)` }
+  );
+
+  results.push(versionLine('rg', ['--version'], 'ripgrep', /^ripgrep\s+([^\s]+)/));
+  results.push(versionLine('git', ['--version'], 'git', /^git version\s+(.+)$/));
+
+  const hooks = captureCommand(process.execPath, [HOOK_SCRIPT, 'status', 'claude-code']);
+  let activeHooks = (hooks.output.match(/^\s*\[active\]/gm) || []).length;
+  if (!activeHooks && hooks.ok && !hooks.output) activeHooks = countActiveClaudeHooks();
+  if (activeHooks > 0) {
+    results.push({ kind: 'pass', text: `tokenlean hooks: ${activeHooks} active (claude-code)` });
+  } else if (
+    activeHooks === 0 ||
+    activeHooks === null ||
+    hooks.ok ||
+    /not installed|\.claude not found|Run: tl-hook install claude-code/i.test(hooks.output)
+  ) {
+    results.push({ kind: 'warn', text: 'tokenlean hooks: not installed (claude-code)' });
+  } else {
+    results.push({ kind: 'fail', text: 'tokenlean hooks: check failed' });
+  }
+
+  if (!existsSync(CONFIG_PATH)) {
+    results.push({ kind: 'skip', text: 'config: no .tokenleanrc.json in current directory' });
+  } else {
+    try {
+      JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
+      results.push({ kind: 'pass', text: 'config: .tokenleanrc.json is valid JSON' });
+    } catch {
+      results.push({ kind: 'fail', text: 'config: invalid .tokenleanrc.json' });
+    }
+  }
+
+  const symbols = { pass: '✓', warn: '⚠', fail: '✗', skip: '-' };
+  const counts = { pass: 0, warn: 0, fail: 0 };
+  console.log(`tokenlean v${version} doctor\n`);
+  for (const result of results) {
+    if (result.kind in counts) counts[result.kind]++;
+    console.log(`  ${symbols[result.kind]} ${result.text}`);
+  }
+
+  const summary = [`${counts.pass} checks passed`, `${counts.warn} warnings`];
+  if (counts.fail > 0) summary.push(`${counts.fail} failed`);
+  console.log(`\n${summary.join(', ')}`);
+  process.exit(counts.fail > 0 ? 1 : 0);
+}
+
+function runUpdate() {
+  const child = spawn(NPM_BIN, ['update', '-g', 'tokenlean'], { stdio: 'inherit' });
+  child.on('error', () => process.exit(1));
+  child.on('exit', code => process.exit(code ?? 1));
+}
+
+function main() {
+  const [command] = process.argv.slice(2);
+  if (!command || command === '-h' || command === '--help') {
+    printHelp();
+    return;
+  }
+
+  if (command === '-v' || command === '--version') {
+    console.log(version);
+    return;
+  }
+
+  if (command === 'doctor') {
+    runDoctor();
+    return;
+  }
+
+  if (command === 'update') {
+    runUpdate();
+    return;
+  }
+
+  console.error(`Unknown command: ${command}`);
+  console.error('Run tl --help for usage.');
+  process.exit(1);
+}
+
+main();
