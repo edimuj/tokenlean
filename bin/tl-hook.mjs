@@ -13,7 +13,7 @@
  */
 
 import { readFile, writeFile, mkdir, unlink } from 'node:fs/promises';
-import { readFileSync, writeFileSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, statSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir } from 'node:os';
@@ -35,6 +35,7 @@ Supported tools:
 Options (claude-code only):
   --global               Install to ~/.claude/ (global user config)
   --rig <name>           Install to a specific claude-rig profile
+  --all-rigs             Install to all claude-rig profiles
 
 By default, claude-code auto-detects if running inside a claude-rig
 session (via CLAUDE_CONFIG_DIR) and installs there. Falls back to --global.
@@ -43,6 +44,7 @@ Examples:
   tl-hook install claude-code
   tl-hook install claude-code --global
   tl-hook install claude-code --rig cli-node
+  tl-hook install claude-code --all-rigs
   tl-hook install opencode
   tl-hook status opencode`;
 
@@ -213,6 +215,17 @@ async function runHook() {
 }
 
 // --- Claude Code installer ---
+
+function listAllRigs() {
+  const rigsDir = join(homedir(), '.claude-rig', 'rigs');
+  try {
+    return readdirSync(rigsDir).filter(name => {
+      try { return statSync(join(rigsDir, name)).isDirectory(); } catch { return false; }
+    });
+  } catch {
+    return [];
+  }
+}
 
 function resolveClaudeConfigDir(args) {
   const globalDir = join(homedir(), '.claude');
@@ -508,15 +521,28 @@ async function main() {
     process.exit(1);
   }
 
-  // Claude Code needs config dir resolution (--global, --rig, auto-detect)
+  // Claude Code needs config dir resolution (--global, --rig, --all-rigs, auto-detect)
   if (tool === 'claude-code') {
-    const { configDir, label } = resolveClaudeConfigDir(args);
-    if (command === 'install') await handler.install(configDir, label);
-    else if (command === 'uninstall') await handler.uninstall(configDir, label);
-    else if (command === 'status') await handler.status(configDir, label);
-    else {
+    if (!['install', 'uninstall', 'status'].includes(command)) {
       console.error(`Unknown command: ${command}. Use install, uninstall, status, or run.`);
       process.exit(1);
+    }
+
+    if (args.includes('--all-rigs')) {
+      const rigs = listAllRigs();
+      if (rigs.length === 0) {
+        console.error('No claude-rig profiles found.');
+        console.error('Install claude-rig from: https://github.com/edimuj/claude-rig');
+        process.exit(1);
+      }
+      const rigsDir = join(homedir(), '.claude-rig', 'rigs');
+      for (const name of rigs) {
+        await handler[command](join(rigsDir, name), `rig "${name}"`);
+        console.log('');
+      }
+    } else {
+      const { configDir, label } = resolveClaudeConfigDir(args);
+      await handler[command](configDir, label);
     }
   } else {
     if (command === 'install') await handler.install();
