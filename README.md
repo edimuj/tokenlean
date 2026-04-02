@@ -52,6 +52,42 @@ tokenlean fixes this:
 | Running `npm test` and reading all output | `tl-run "npm test"` | **Errors only**       |
 | Scanning long logs for real failures      | `tl-tail app.log`   | **Errors/warns + dedupe** |
 
+### How much are you wasting?
+
+Find out in one command, no install needed:
+
+```bash
+npx tokenlean audit --all --savings --claudecode
+```
+
+```
+Summary (348 Claude Code sessions)
+  Opportunities:
+  Category                Count  Actual     Saveable   Suggestion
+  ----------------------------------------------------------------------------
+  read-large-file          75x    253.4k      202.7k   -> tl-symbols + tl-snippet
+  build-test-output        34x     28.2k       18.3k   -> tl-run
+  grep-command            115x     59.6k       11.9k   -> Grep tool
+  tail-command              7x      4.8k        3.3k   -> tl-tail
+  find-command             25x      8.6k        2.6k   -> Glob tool
+  curl-command             13x      3.2k        2.3k   -> tl-browse
+  cat-large-file            1x      1.1k         902   -> tl-symbols + tl-snippet
+  webfetch                  4x      1.2k         823   -> tl-browse
+  head-command             11x      3.8k         759   -> Read tool (with limit)
+
+  Still saveable:     243.6k of 363.9k (67%)
+
+  Already saved by tokenlean:
+  Tool              Count  Compressed   Raw estimate   Saved
+  ------------------------------------------------------------------
+  tl-snippet          233x      215.7k            2.2M   1.9M
+  tl-symbols           93x       59.0k          295.0k   236.0k
+  tl-run               98x       28.7k           82.0k   53.3k
+
+  Tokens saved:       2.2M (424 uses)
+  Capture rate:       90% of potential savings realized
+```
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/edimuj/tokenlean/main/assets/demo.gif" alt="tokenlean demo — tl-structure, tl-symbols, and tl-exports in action" width="800" />
 </p>
