@@ -56,6 +56,7 @@
     "tl-playwright": "bin/tl-playwright.mjs",
     "tl-pr": "bin/tl-pr.mjs",
     "tl-prompt": "bin/tl-prompt.mjs",
+    "tl-quota": "bin/tl-quota.mjs",
     "tl-run": "bin/tl-run.mjs",
     "tl-related": "bin/tl-related.mjs",
     "tl-risk-assess": "bin/tl-risk-assess.mjs",

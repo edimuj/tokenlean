@@ -449,32 +449,43 @@ function summarizeGeneric(stdout, stderr, exitCode) {
 
   if (combined.length <= GENERIC_FAST_PATH_CHAR_LIMIT) {
     const lines = combined.split('\n');
-    if (lines.length <= 50) {
+    // Non-zero exits get a higher "show everything" threshold — diagnostics matter
+    const showAllLimit = exitCode !== 0 ? 80 : 50;
+    if (lines.length <= showAllLimit) {
       result.lines = lines;
       result.summary = exitCode === 0 ? '' : `exited with code ${exitCode}`;
       return result;
     }
 
-    const head = lines.slice(0, 10);
-    const tail = lines.slice(-10);
-    const middle = lines.slice(10, -10);
-    const errorLines = [];
+    // Non-zero exits: more head/tail lines, broader pattern, higher cap
+    const headCount = exitCode !== 0 ? 20 : 10;
+    const tailCount = exitCode !== 0 ? 20 : 10;
+    const diagCap = exitCode !== 0 ? 20 : 10;
+    const diagPattern = exitCode !== 0
+      ? /\b(error|Error|ERROR|fatal|FATAL|panic|PANIC|exception|Exception|warn|Warn|WARN|warning|Warning|WARNING|fail|Fail|FAIL|invalid|Invalid|INVALID)\b/
+      : /\b(error|Error|ERROR|fatal|FATAL|panic|PANIC|exception|Exception)\b/;
+
+    const head = lines.slice(0, headCount);
+    const tail = lines.slice(-tailCount);
+    const middle = lines.slice(headCount, -tailCount);
+    const diagLines = [];
     for (const line of middle) {
-      if (errorLines.length >= 10) break;
-      if (/\b(error|Error|ERROR|fatal|FATAL|panic|PANIC|exception|Exception)\b/.test(line)) {
-        errorLines.push(line);
+      if (diagLines.length >= diagCap) break;
+      if (diagPattern.test(line)) {
+        diagLines.push(line);
       }
     }
 
+    const label = exitCode !== 0 ? 'diagnostic' : 'error';
     result.lines = [
       ...head,
       '',
-      `... ${middle.length} lines omitted` + (errorLines.length > 0 ? ` (${errorLines.length} error lines shown below)` : ''),
+      `... ${middle.length} lines omitted` + (diagLines.length > 0 ? ` (${diagLines.length} ${label} lines shown below)` : ''),
       ''
     ];
 
-    if (errorLines.length > 0) {
-      result.lines.push(...errorLines, '');
+    if (diagLines.length > 0) {
+      result.lines.push(...diagLines, '');
     }
 
     result.lines.push(...tail);
@@ -484,31 +495,38 @@ function summarizeGeneric(stdout, stderr, exitCode) {
 
   // Large-output fast path: avoid splitting the entire output into an array.
   const totalLines = countLines(combined);
-  const head = headLines(combined, 10);
-  const tail = tailLines(combined, 10);
+  const headCount = exitCode !== 0 ? 20 : 10;
+  const tailCount = exitCode !== 0 ? 20 : 10;
+  const diagCap = exitCode !== 0 ? 20 : 10;
+  const diagPattern = exitCode !== 0
+    ? /\b(error|Error|ERROR|fatal|FATAL|panic|PANIC|exception|Exception|warn|Warn|WARN|warning|Warning|WARNING|fail|Fail|FAIL|invalid|Invalid|INVALID)\b/
+    : /\b(error|Error|ERROR|fatal|FATAL|panic|PANIC|exception|Exception)\b/;
+  const head = headLines(combined, headCount);
+  const tail = tailLines(combined, tailCount);
   const omitted = Math.max(0, totalLines - head.length - tail.length);
-  const errorLines = [];
+  const diagLines = [];
 
   const middleStart = Math.floor(combined.length * 0.2);
   const middleEnd = Math.floor(combined.length * 0.8);
   const middleSample = sampleTextForAnalysis(combined.slice(middleStart, middleEnd), 80000);
 
   for (const line of middleSample.split('\n')) {
-    if (errorLines.length >= 10) break;
-    if (/\b(error|Error|ERROR|fatal|FATAL|panic|PANIC|exception|Exception)\b/.test(line)) {
-      errorLines.push(line);
+    if (diagLines.length >= diagCap) break;
+    if (diagPattern.test(line)) {
+      diagLines.push(line);
     }
   }
 
+  const label = exitCode !== 0 ? 'diagnostic' : 'error';
   result.lines = [
     ...head,
     '',
-    `... ${omitted} lines omitted` + (errorLines.length > 0 ? ` (${errorLines.length} error lines shown below)` : ''),
+    `... ${omitted} lines omitted` + (diagLines.length > 0 ? ` (${diagLines.length} ${label} lines shown below)` : ''),
     ''
   ];
 
-  if (errorLines.length > 0) {
-    result.lines.push(...errorLines, '');
+  if (diagLines.length > 0) {
+    result.lines.push(...diagLines, '');
   }
 
   result.lines.push(...tail);

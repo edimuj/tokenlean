@@ -5,7 +5,7 @@
 <h1 align="center">tokenlean</h1>
 
 <p align="center">
-  <strong>53 CLI tools that let AI agents understand codebases without burning tokens</strong>
+  <strong>54 CLI tools that let AI agents understand codebases without burning tokens</strong>
 </p>
 
 <p align="center">
@@ -275,6 +275,7 @@ cp -r tokenlean/skills/codex/code-review ~/.codex/skills/
 | Tool            | Description                              | Example                     |
 |-----------------|------------------------------------------|-----------------------------|
 | `tl-audit`      | Analyze Claude/Codex sessions and estimate token savings | `tl-audit --all --savings`  |
+| `tl-quota`      | Check AI subscription quota (Claude, Codex) | `tl-quota`               |
 | `tl-hook`       | Install token-saving agent hooks         | `tl-hook install claude-code` |
 | `tl-cache`      | Manage tokenlean caches                  | `tl-cache stats`            |
 | `tl-config`     | Show/manage configuration                | `tl-config --init`          |
