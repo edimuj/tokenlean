@@ -120,6 +120,34 @@ npm link
 
 </details>
 
+## Performance Benchmarking
+
+Use the built-in hotpath benchmark to decide whether TS migration is enough or a native rewrite is justified:
+
+```bash
+npm run bench:hotpaths
+```
+
+The benchmark runs a startup baseline plus common agent commands (`tl-structure`, `tl-symbols`, `tl-snippet`,
+`tl-impact`, `tl-related`, `tl-run`) and reports `p50`/`p95` latency plus runtime attribution.
+
+Useful options:
+
+```bash
+npm run bench:hotpaths -- --runs 20 --warmup 3
+npm run bench:hotpaths -- --filter tl_impact
+npm run bench:hotpaths -- -j > bench.json
+npm run bench:hotpaths:refresh
+npm run bench:hotpaths:refresh -- --since-days 30
+```
+
+`bench:hotpaths:refresh` rebuilds `benchmarks/agent-hotpaths.json` from observed `tl-*` usage in local Claude/Codex
+session logs (including the common legacy path `~/projects/<repo-name>` when present).
+
+Interpretation:
+- High startup share (around 30%+) means process startup dominates; TS helps safety but runtime speed gains require startup-focused changes (daemon, single binary, or native rewrite).
+- Low startup share with high `p95` means workload dominates; optimize I/O, subprocess usage, caching, and algorithms before considering Rust.
+
 ## Quick Reference
 
 ```bash

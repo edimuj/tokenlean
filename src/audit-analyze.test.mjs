@@ -168,6 +168,50 @@ describe('parseSession — Claude', () => {
     assert.ok(savings[0].savedTokens > 0);
   });
 
+  it('keeps Claude detection with non-tool lines present', () => {
+    const lines = [
+      JSON.stringify({
+        type: 'assistant',
+        sessionId: 'noise-session',
+        timestamp: '2026-01-01T00:00:00Z',
+        cwd: '/project',
+        slug: 'noise',
+        message: { content: 'plain assistant text' },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        sessionId: 'noise-session',
+        timestamp: '2026-01-01T00:00:01Z',
+        cwd: '/project',
+        slug: 'noise',
+        message: { content: [{ type: 'tool_use', id: 'noise-call', name: 'Bash', input: { command: 'npm test' } }] },
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        sessionId: 'noise-session',
+        timestamp: '2026-01-01T00:00:02Z',
+        cwd: '/project',
+        slug: 'noise',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'noise-call', content: 'x'.repeat(2000) }] },
+      }),
+    ];
+    const { findings, meta } = parseSession(lines.join('\n'), 'claude', { includeSavings: false });
+    assert.ok(findings.some(f => f.category === 'build-test-output'));
+    assert.equal(meta.sessionId, 'noise-session');
+  });
+
+  it('skips savings analysis when includeSavings is false', () => {
+    const tlOutput = 'x'.repeat(2000);
+    const jsonl = makeClaudeJsonl([{
+      id: 'call-4b',
+      name: 'Bash',
+      input: { command: 'tl-run npm test' },
+      result: tlOutput,
+    }]);
+    const { savings } = parseSession(jsonl, 'claude', { includeSavings: false });
+    assert.deepEqual(savings, []);
+  });
+
   it('populates session meta', () => {
     const jsonl = makeClaudeJsonl([{
       id: 'call-5',
@@ -216,6 +260,18 @@ describe('parseSession — Codex', () => {
     assert.equal(findings[0].category, 'build-test-output');
     assert.equal(meta.provider, 'codex');
     assert.equal(meta.sessionId, 'codex-1');
+  });
+
+  it('skips codex savings analysis when includeSavings is false', () => {
+    const bigOutput = '\nOutput:\n' + 'x'.repeat(2000);
+    const jsonl = makeCodexJsonl([{
+      callId: 'c1b',
+      name: 'exec_command',
+      args: { cmd: 'tl-run npm test' },
+      output: bigOutput,
+    }]);
+    const { savings } = parseSession(jsonl, 'codex', { includeSavings: false });
+    assert.deepEqual(savings, []);
   });
 
   it('throws on unsupported provider', () => {

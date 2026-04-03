@@ -9,7 +9,7 @@ import { builtinModules } from 'module';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs';
 import { dirname, extname, join, relative, resolve, sep } from 'path';
 import ts from 'typescript';
-import { getCacheConfig, getCacheDir } from './cache.mjs';
+import { getCacheConfig, getCacheDir, getGitState, withCache } from './cache.mjs';
 import { findProjectRoot } from './project.mjs';
 import { isJsTsFile } from './semantic-js.mjs';
 import { listFiles } from './traverse.mjs';
@@ -89,6 +89,18 @@ function metadataMatches(a = [], b = []) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     if (!sameMetadata(a[i], b[i])) return false;
+  }
+  return true;
+}
+
+function gitStateMatches(a, b) {
+  if (!a || !b) return false;
+  if (a.head !== b.head) return false;
+  const aDirty = Array.isArray(a.dirtyFiles) ? a.dirtyFiles : [];
+  const bDirty = Array.isArray(b.dirtyFiles) ? b.dirtyFiles : [];
+  if (aDirty.length !== bDirty.length) return false;
+  for (let i = 0; i < aDirty.length; i++) {
+    if (aDirty[i] !== bDirty[i]) return false;
   }
   return true;
 }
@@ -711,7 +723,7 @@ function buildFileGraph(filePath, projectRoot) {
   };
 }
 
-function getProjectFileMetadata(projectRoot) {
+function collectProjectFileMetadata(projectRoot) {
   return listFiles(projectRoot)
     .filter(file => isJsTsFile(file.path))
     .map(file => {
@@ -725,6 +737,14 @@ function getProjectFileMetadata(projectRoot) {
       };
     })
     .sort((a, b) => a.relPath.localeCompare(b.relPath));
+}
+
+function getProjectFileMetadata(projectRoot) {
+  return withCache(
+    { op: 'semantic-js-graph-metadata', parser: GRAPH_PARSER_VERSION },
+    () => collectProjectFileMetadata(projectRoot),
+    { projectRoot }
+  );
 }
 
 function buildGraph(projectRoot, metadata) {
@@ -763,7 +783,7 @@ function buildGraph(projectRoot, metadata) {
   };
 }
 
-function readCachedGraph(projectRoot, metadata, configKey) {
+function readCachedGraph(projectRoot, configKey, gitState, metadata = null) {
   const config = getCacheConfig();
   if (!config.enabled) return null;
 
@@ -774,16 +794,22 @@ function readCachedGraph(projectRoot, metadata, configKey) {
     const cached = JSON.parse(readFileSync(cacheFile, 'utf-8'));
     if (cached.parser !== GRAPH_PARSER_VERSION) return null;
     if ((cached.configKey || 'default') !== configKey) return null;
-    if (!metadataMatches(cached.metadata || [], metadata.map(({ relPath, size, mtimeMs }) => ({ relPath, size, mtimeMs })))) {
-      return null;
+    if (gitState && cached.gitState && gitStateMatches(cached.gitState, gitState)) {
+      return cached.data || null;
     }
-    return cached.data || null;
+    if (metadata) {
+      if (!metadataMatches(cached.metadata || [], metadata.map(({ relPath, size, mtimeMs }) => ({ relPath, size, mtimeMs })))) {
+        return null;
+      }
+      return cached.data || null;
+    }
+    return null;
   } catch {
     return null;
   }
 }
 
-function writeCachedGraph(projectRoot, metadata, data, configKey) {
+function writeCachedGraph(projectRoot, metadata, data, configKey, gitState) {
   const config = getCacheConfig();
   if (!config.enabled) return;
 
@@ -793,6 +819,7 @@ function writeCachedGraph(projectRoot, metadata, data, configKey) {
     writeFileSync(cacheFile, JSON.stringify({
       parser: GRAPH_PARSER_VERSION,
       configKey,
+      gitState: gitState || null,
       metadata: metadata.map(({ relPath, size, mtimeMs }) => ({ relPath, size, mtimeMs })),
       data
     }));
@@ -803,13 +830,17 @@ function writeCachedGraph(projectRoot, metadata, data, configKey) {
 
 export function getJsTsProjectGraph(targetPath, options = {}) {
   const projectRoot = getProjectRootForPath(targetPath, options.projectRoot);
-  const metadata = getProjectFileMetadata(projectRoot);
   const { configKey } = getProjectCompilerConfig(projectRoot);
-  const cached = readCachedGraph(projectRoot, metadata, configKey);
+  const gitState = getGitState(projectRoot);
+  const cached = readCachedGraph(projectRoot, configKey, gitState);
   if (cached) return { projectRoot, ...cached };
 
+  const metadata = getProjectFileMetadata(projectRoot);
+  const cachedWithMetadata = readCachedGraph(projectRoot, configKey, gitState, metadata);
+  if (cachedWithMetadata) return { projectRoot, ...cachedWithMetadata };
+
   const data = buildGraph(projectRoot, metadata);
-  writeCachedGraph(projectRoot, metadata, data, configKey);
+  writeCachedGraph(projectRoot, metadata, data, configKey, gitState);
   return { projectRoot, ...data };
 }
 

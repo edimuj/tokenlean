@@ -5,9 +5,11 @@
  * by project path, session directory, or direct file path.
  */
 
+import { createReadStream } from 'node:fs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, resolve, relative, sep } from 'node:path';
 import { homedir } from 'node:os';
+import { createInterface } from 'node:readline';
 import { providerLabel } from './audit-analyze.mjs';
 
 // ─────────────────────────────────────────────────────────────
@@ -15,9 +17,11 @@ import { providerLabel } from './audit-analyze.mjs';
 // ─────────────────────────────────────────────────────────────
 
 export function normalizeProvider(provider) {
-  if (provider === 'claude-code' || provider === 'claudecode') return 'claude';
-  if (provider === 'codex') return 'codex';
-  if (provider === 'auto' || !provider) return 'auto';
+  if (provider == null || provider === '') return 'auto';
+  const normalized = String(provider).toLowerCase();
+  if (normalized === 'claude' || normalized === 'claude-code' || normalized === 'claudecode') return 'claude';
+  if (normalized === 'codex') return 'codex';
+  if (normalized === 'auto') return 'auto';
   throw new Error(`Unsupported provider: ${provider}`);
 }
 
@@ -119,15 +123,25 @@ function parseJson(line) {
   }
 }
 
-async function readCodexSessionMeta(filePath) {
-  let content;
+async function readFirstNonEmptyLine(filePath) {
+  const stream = createReadStream(filePath, { encoding: 'utf8' });
+  const rl = createInterface({ input: stream, crlfDelay: Infinity });
+
   try {
-    content = await readFile(filePath, 'utf8');
+    for await (const line of rl) {
+      if (line.trim()) return line;
+    }
+    return null;
   } catch {
     return null;
+  } finally {
+    rl.close();
+    stream.destroy();
   }
+}
 
-  const firstLine = content.split('\n').find(line => line.trim());
+async function readCodexSessionMeta(filePath) {
+  const firstLine = await readFirstNonEmptyLine(filePath);
   if (!firstLine) return null;
 
   const obj = parseJson(firstLine);
@@ -135,18 +149,33 @@ async function readCodexSessionMeta(filePath) {
   return obj.payload || null;
 }
 
-async function findCodexSessionsForProject(projectPath) {
+async function findCodexSessionsForProject(projectPath, count) {
   const root = codexSessionsRoot();
-  const files = await listRecursiveJsonlFiles(root, 'codex');
+  const allFiles = await listRecursiveJsonlFiles(root, 'codex');
   const resolvedProject = resolve(projectPath);
 
-  const matches = await Promise.all(files.map(async file => {
-    const meta = await readCodexSessionMeta(file.path);
-    if (!meta?.cwd) return null;
-    return isSameOrWithinPath(meta.cwd, resolvedProject) ? file : null;
-  }));
+  if (!Number.isFinite(count)) {
+    const matches = await Promise.all(allFiles.map(async file => {
+      const meta = await readCodexSessionMeta(file.path);
+      if (!meta?.cwd) return null;
+      return isSameOrWithinPath(meta.cwd, resolvedProject) ? file : null;
+    }));
+    return matches.filter(Boolean);
+  }
 
-  return matches.filter(Boolean);
+  const files = sortSessionsByNewest(allFiles);
+  const matches = [];
+  for (const file of files) {
+    // For --latest / -n, short-circuit once we have enough newest matches.
+    // eslint-disable-next-line no-await-in-loop
+    const meta = await readCodexSessionMeta(file.path);
+    if (!meta?.cwd) continue;
+    if (!isSameOrWithinPath(meta.cwd, resolvedProject)) continue;
+    matches.push(file);
+    if (matches.length >= count) break;
+  }
+
+  return matches;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -161,8 +190,7 @@ function detectSessionDirProvider(target) {
 }
 
 async function detectSessionFileProvider(filePath) {
-  const content = await readFile(filePath, 'utf8');
-  const firstLine = content.split('\n').find(line => line.trim());
+  const firstLine = await readFirstNonEmptyLine(filePath);
   if (!firstLine) return null;
 
   const obj = parseJson(firstLine);
@@ -195,7 +223,7 @@ export async function findProjectSessions(projectPath, provider, count) {
     files.push(...await findClaudeSessionsForProject(projectPath));
   }
   if (provider === 'auto' || provider === 'codex') {
-    files.push(...await findCodexSessionsForProject(projectPath));
+    files.push(...await findCodexSessionsForProject(projectPath, count));
   }
   return limitSessions(sortSessionsByNewest(files), count);
 }

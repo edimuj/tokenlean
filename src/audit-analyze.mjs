@@ -177,6 +177,7 @@ function extractShellFilePath(command) {
 import { basename } from 'node:path';
 
 function analyzeSavings(call, tokens, savings) {
+  if (!Array.isArray(savings)) return;
   const command = getShellCommand(call);
   if (!command) return;
 
@@ -354,7 +355,7 @@ function analyzeWebFetch(call, tokens, findings) {
   });
 }
 
-function analyzeToolResult(call, rawResultText, findings, savings) {
+function analyzeToolResult(call, rawResultText, findings, savings, includeSavings = true) {
   const resultText = typeof rawResultText === 'string'
     ? rawResultText
     : JSON.stringify(rawResultText ?? '');
@@ -362,7 +363,9 @@ function analyzeToolResult(call, rawResultText, findings, savings) {
   if (chars < SIGNIFICANT_RESULT) return;
 
   const tokens = Math.ceil(chars / CHARS_PER_TOKEN);
-  analyzeSavings(call, tokens, savings);
+  if (includeSavings) {
+    analyzeSavings(call, tokens, savings);
+  }
   analyzeRead(call, resultText, tokens, findings);
   analyzeShell(call, resultText, tokens, findings);
   analyzeWebFetch(call, tokens, findings);
@@ -372,16 +375,48 @@ function analyzeToolResult(call, rawResultText, findings, savings) {
 // Session JSONL parsing
 // ─────────────────────────────────────────────────────────────
 
-function parseClaudeSession(jsonlContent) {
-  const lines = jsonlContent.trim().split('\n');
+function shouldParseClaudeLine(line, hasMeta) {
+  if (typeof line !== 'string' || line.trim() === '') return false;
+  if (line.includes('"tool_use"') || line.includes('"tool_result"')) return true;
+  if (hasMeta) return false;
+  return line.includes('"sessionId"') || line.includes('"timestamp"') || line.includes('"cwd"') || line.includes('"slug"');
+}
+
+function forEachJsonlLine(jsonlContent, onLine) {
+  if (typeof jsonlContent !== 'string' || jsonlContent.length === 0) return;
+  const length = jsonlContent.length;
+  let start = 0;
+
+  while (start < length) {
+    let end = jsonlContent.indexOf('\n', start);
+    if (end === -1) end = length;
+
+    let line = jsonlContent.slice(start, end);
+    if (line.endsWith('\r')) line = line.slice(0, -1);
+    onLine(line);
+
+    start = end + 1;
+  }
+}
+
+function parseClaudeSession(jsonlContent, options = {}) {
+  const includeSavings = options.includeSavings !== false;
   const toolCalls = new Map();
   const findings = [];
   const savings = [];
   let sessionMeta = null;
 
-  for (const line of lines) {
+  forEachJsonlLine(jsonlContent, (line) => {
+    const hasMeta = !!(
+      sessionMeta?.sessionId ||
+      sessionMeta?.timestamp ||
+      sessionMeta?.cwd ||
+      sessionMeta?.slug
+    );
+    if (!shouldParseClaudeLine(line, hasMeta)) return;
+
     const obj = parseJson(line);
-    if (!obj) continue;
+    if (!obj) return;
 
     sessionMeta = mergeSessionMeta(sessionMeta, {
       provider: 'claude',
@@ -392,7 +427,7 @@ function parseClaudeSession(jsonlContent) {
     });
 
     const content = obj.message?.content;
-    if (!Array.isArray(content) && typeof content !== 'string') continue;
+    if (!Array.isArray(content) && typeof content !== 'string') return;
 
     const blocks = Array.isArray(content) ? content : [{ type: 'text', text: content }];
     for (const block of blocks) {
@@ -408,24 +443,24 @@ function parseClaudeSession(jsonlContent) {
       if (block.type === 'tool_result') {
         const call = toolCalls.get(block.tool_use_id);
         if (!call) continue;
-        analyzeToolResult(call, extractClaudeResultText(block.content), findings, savings);
+        analyzeToolResult(call, extractClaudeResultText(block.content), findings, savings, includeSavings);
       }
     }
-  }
+  });
 
   return { findings, savings, meta: sessionMeta };
 }
 
-function parseCodexSession(jsonlContent) {
-  const lines = jsonlContent.trim().split('\n');
+function parseCodexSession(jsonlContent, options = {}) {
+  const includeSavings = options.includeSavings !== false;
   const toolCalls = new Map();
   const findings = [];
   const savings = [];
   let sessionMeta = null;
 
-  for (const line of lines) {
+  forEachJsonlLine(jsonlContent, (line) => {
     const obj = parseJson(line);
-    if (!obj) continue;
+    if (!obj) return;
 
     if (obj.type === 'session_meta') {
       const payload = obj.payload || {};
@@ -436,10 +471,10 @@ function parseCodexSession(jsonlContent) {
         cwd: payload.cwd,
         slug: payload.agent_nickname || payload.agent_role || null,
       });
-      continue;
+      return;
     }
 
-    if (obj.type !== 'response_item') continue;
+    if (obj.type !== 'response_item') return;
 
     const payload = obj.payload || {};
     if (payload.type === 'function_call') {
@@ -448,21 +483,21 @@ function parseCodexSession(jsonlContent) {
         name: payload.name,
         input: parseToolArguments(payload.arguments),
       });
-      continue;
+      return;
     }
 
     if (payload.type === 'function_call_output') {
       const call = toolCalls.get(payload.call_id);
-      if (!call) continue;
-      analyzeToolResult(call, extractCodexResultText(payload.output), findings, savings);
+      if (!call) return;
+      analyzeToolResult(call, extractCodexResultText(payload.output), findings, savings, includeSavings);
     }
-  }
+  });
 
   return { findings, savings, meta: sessionMeta };
 }
 
-export function parseSession(jsonlContent, provider) {
-  if (provider === 'claude') return parseClaudeSession(jsonlContent);
-  if (provider === 'codex') return parseCodexSession(jsonlContent);
+export function parseSession(jsonlContent, provider, options = {}) {
+  if (provider === 'claude') return parseClaudeSession(jsonlContent, options);
+  if (provider === 'codex') return parseCodexSession(jsonlContent, options);
   throw new Error(`Unsupported provider: ${provider}`);
 }

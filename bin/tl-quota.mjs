@@ -23,6 +23,7 @@ import { homedir } from 'node:os';
 import { request } from 'node:https';
 import { spawn } from 'node:child_process';
 import { createOutput, parseCommonArgs, COMMON_OPTIONS_HELP } from '../src/output.mjs';
+import { getCachedQuota } from '../src/quota-cache.mjs';
 
 const HELP = `
 tl-quota - Check AI subscription quota usage
@@ -37,6 +38,13 @@ Providers:
 
 Options:
 ${COMMON_OPTIONS_HELP}
+
+Caching:
+  Quota responses are cached per provider for ${DEFAULT_CACHE_TTL_MS / 1000}s by default.
+  Env overrides:
+    TL_QUOTA_CACHE_TTL_MS       Fresh-cache window (default: ${DEFAULT_CACHE_TTL_MS})
+    TL_QUOTA_CACHE_MAX_STALE_MS Stale fallback window (default: ${DEFAULT_MAX_STALE_MS})
+
 Examples:
   tl-quota                  # all providers
   tl-quota claude           # Claude only
@@ -46,6 +54,17 @@ Examples:
 `;
 
 const PROVIDERS = ['claude', 'codex'];
+const DEFAULT_CACHE_TTL_MS = 60_000;
+const DEFAULT_MAX_STALE_MS = 5 * 60_000;
+
+function envPositiveInt(name, fallback) {
+  const value = Number.parseInt(process.env[name] || '', 10);
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return value;
+}
+
+const QUOTA_CACHE_TTL_MS = envPositiveInt('TL_QUOTA_CACHE_TTL_MS', DEFAULT_CACHE_TTL_MS);
+const QUOTA_CACHE_MAX_STALE_MS = envPositiveInt('TL_QUOTA_CACHE_MAX_STALE_MS', DEFAULT_MAX_STALE_MS);
 
 // ── Fetchers ──────────────────────────────────────────────────
 
@@ -244,7 +263,12 @@ async function main() {
   const results = await Promise.all(
     providers.map(async (name) => {
       const fetcher = FETCHER_MAP[name];
-      const quota = fetcher ? await fetcher() : null;
+      const quota = fetcher
+        ? await getCachedQuota(name, fetcher, {
+            ttlMs: QUOTA_CACHE_TTL_MS,
+            maxStaleMs: QUOTA_CACHE_MAX_STALE_MS,
+          })
+        : null;
       return { name, quota };
     })
   );

@@ -325,6 +325,15 @@ describe('tl-audit regressions', () => {
       const claudeData = JSON.parse(claudeResult.stdout);
       assert.strictEqual(claudeData.sessionsAnalyzed, 1);
       assert.deepStrictEqual(claudeData.providers, { claude: 1 });
+
+      const claudeProviderResult = runCli([auditBin, '--all', '--provider', 'claude', '--savings', '-j'], {
+        cwd: fixture.projectDir,
+        env: fixture.env,
+      });
+      assert.strictEqual(claudeProviderResult.status, 0, claudeProviderResult.stderr);
+      const claudeProviderData = JSON.parse(claudeProviderResult.stdout);
+      assert.strictEqual(claudeProviderData.sessionsAnalyzed, 1);
+      assert.deepStrictEqual(claudeProviderData.providers, { claude: 1 });
     } finally {
       rmSync(fixture.tempRoot, { recursive: true, force: true });
     }

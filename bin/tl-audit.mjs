@@ -9,8 +9,11 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { parseCommonArgs, createOutput } from '../src/output.mjs';
 import { parseSession, mergeSessionMeta, providerLabel } from '../src/audit-analyze.mjs';
+import { getCached, setCached } from '../src/cache.mjs';
 import {
   summarizeFindings,
   summarizeSavings,
@@ -24,6 +27,37 @@ import {
   renderSummaryBlock,
 } from '../src/audit-format.mjs';
 import { normalizeProvider, resolveSessionFiles } from '../src/audit-discover.mjs';
+
+const SESSION_PARSE_CACHE_VERSION = 1;
+
+function getSessionCacheRoot(provider) {
+  if (provider === 'claude') return join(homedir(), '.claude');
+  if (provider === 'codex') return join(homedir(), '.codex');
+  return homedir();
+}
+
+function getSessionParseBatchCacheKey(sessionFiles, includeSavings) {
+  const signature = sessionFiles
+    .map((sessionFile) => ({
+      provider: sessionFile.provider,
+      path: sessionFile.path,
+      size: sessionFile.size,
+      mtime: sessionFile.mtime,
+    }))
+    .sort((a, b) => (
+      a.path.localeCompare(b.path) ||
+      a.provider.localeCompare(b.provider) ||
+      (a.size - b.size) ||
+      (a.mtime - b.mtime)
+    ));
+
+  return {
+    op: 'tl-audit-session-parse-batch',
+    version: SESSION_PARSE_CACHE_VERSION,
+    sessions: signature,
+    includeSavings,
+  };
+}
 
 const HELP = `Usage: tl-audit [options] [session.jsonl | project-dir | session-dir]
 
@@ -49,6 +83,26 @@ Options:
   --savings             Also show tokens saved by existing tokenlean usage
   -j, --json            JSON output
   -h, --help            Show help`;
+
+async function mapLimit(items, limit, mapper) {
+  if (!Array.isArray(items) || items.length === 0) return [];
+  const concurrency = Math.max(1, Math.min(limit, items.length));
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (true) {
+      const current = nextIndex;
+      nextIndex += 1;
+      if (current >= items.length) return;
+      // eslint-disable-next-line no-await-in-loop
+      results[current] = await mapper(items[current], current);
+    }
+  }
+
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  return results;
+}
 
 async function main() {
   const options = parseCommonArgs(process.argv.slice(2));
@@ -99,22 +153,51 @@ async function main() {
     process.exit(1);
   }
 
-  const allResults = [];
-  for (const sessionFile of sessionFiles) {
-    const content = await readFile(sessionFile.path, 'utf8');
-    const { findings, savings, meta } = parseSession(content, sessionFile.provider);
-    const summary = summarizeFindings(findings);
-    const savingsSummary = showSavings ? summarizeSavings(savings) : null;
-    allResults.push({
-      file: sessionFile.path,
-      provider: sessionFile.provider,
-      meta: mergeSessionMeta(meta, { provider: sessionFile.provider }),
-      findings,
-      savings,
-      summary,
-      savingsSummary,
+  const shouldUseParseBatchCache = !verbose && !Number.isFinite(count);
+  let parsedResults = null;
+  if (shouldUseParseBatchCache) {
+    const parseCacheRoot = getSessionCacheRoot(provider === 'auto' ? null : provider);
+    const parseBatchCacheKey = getSessionParseBatchCacheKey(sessionFiles, showSavings);
+    parsedResults = getCached(parseBatchCacheKey, parseCacheRoot, { headOnly: true });
+    if (parsedResults === null) {
+      const sessionConcurrency = 8;
+      parsedResults = await mapLimit(sessionFiles, sessionConcurrency, async (sessionFile) => {
+        const content = await readFile(sessionFile.path, 'utf8');
+        const parsed = parseSession(content, sessionFile.provider, {
+          includeSavings: showSavings,
+        });
+        return {
+          file: sessionFile.path,
+          provider: sessionFile.provider,
+          meta: mergeSessionMeta(parsed.meta, { provider: sessionFile.provider }),
+          findings: parsed.findings,
+          savings: parsed.savings,
+        };
+      });
+      setCached(parseBatchCacheKey, parsedResults, parseCacheRoot);
+    }
+  } else {
+    const sessionConcurrency = Number.isFinite(count) ? 4 : 8;
+    parsedResults = await mapLimit(sessionFiles, sessionConcurrency, async (sessionFile) => {
+      const content = await readFile(sessionFile.path, 'utf8');
+      const parsed = parseSession(content, sessionFile.provider, {
+        includeSavings: showSavings,
+      });
+      return {
+        file: sessionFile.path,
+        provider: sessionFile.provider,
+        meta: mergeSessionMeta(parsed.meta, { provider: sessionFile.provider }),
+        findings: parsed.findings,
+        savings: parsed.savings,
+      };
     });
   }
+
+  const allResults = parsedResults.map((result) => ({
+    ...result,
+    summary: summarizeFindings(result.findings),
+    savingsSummary: showSavings ? summarizeSavings(result.savings) : null,
+  }));
 
   const aggregate = buildAggregateResults(allResults, showSavings);
   const providerBreakdowns = buildProviderBreakdowns(allResults, showSavings);

@@ -1,0 +1,203 @@
+{
+  "name": "agent-hotpaths",
+  "description": "Generated from local agent session logs for /home/edimuj/projects/oss/tokenlean, /home/edimuj/projects/tokenlean.",
+  "generatedAt": "2026-04-03T13:22:10.901Z",
+  "source": {
+    "filesScanned": 123,
+    "shellCommandsSeen": 2637,
+    "tlCommandsSeen": 257,
+    "sinceDays": null,
+    "topTools": [
+      {
+        "tool": "tl-snippet",
+        "count": 55,
+        "samples": [
+          "node bin/tl-snippet.mjs '[' src/output.mjs; echo EXIT:$?",
+          "node bin/tl-snippet.mjs 'estimateTokens' src/output.mjs -c 1 | sed -n '1,80p'",
+          "node bin/tl-snippet.mjs 'Output.render' src/output.mjs | sed -n '1,100p'"
+        ]
+      },
+      {
+        "tool": "tl-audit",
+        "count": 49,
+        "samples": [
+          "node bin/tl-audit.mjs --latest -j | sed -n '1,120p'",
+          "node bin/tl-audit.mjs --all | sed -n '1,120p'",
+          "node bin/tl-audit.mjs --help"
+        ]
+      },
+      {
+        "tool": "tl-symbols",
+        "count": 37,
+        "samples": [
+          "node bin/tl-symbols.mjs --help | sed -n '1,220p'",
+          "node bin/tl-symbols.mjs src/ --filter function -l 20 | sed -n '1,80p'",
+          "node bin/tl-symbols.mjs src/output.mjs --filter function | sed -n '1,120p'"
+        ]
+      },
+      {
+        "tool": "tl-hook",
+        "count": 29,
+        "samples": [
+          "node bin/tl-hook.mjs status claude-code",
+          "node bin/tl-hook.mjs status claude-code --global",
+          "node bin/tl-hook.mjs status claude-code --rig cli-node && echo \"=== nonexistent rig ===\" && node bin/tl-hook.mjs status claude-code --rig nonexistent 2>&1; echo \"exit: $?\""
+        ]
+      },
+      {
+        "tool": "tl-browse",
+        "count": 14,
+        "samples": [
+          "tl-browse \"https://github.com/openai/codex\" 2>&1 | head -80",
+          "tl-browse \"https://github.com/opencode-ai/opencode\" 2>&1 | head -80",
+          "tl-browse \"https://github.com/openai/codex/blob/main/codex-cli/README.md\" 2>&1 | grep -iE \"hook|plugin|event|pre.?tool|middleware|intercept|config\" | head -20"
+        ]
+      },
+      {
+        "tool": "tl-deps",
+        "count": 13,
+        "samples": [
+          "node bin/tl-deps.mjs --help >/tmp/tl-deps-help.txt && sed -n '1,80p' /tmp/tl-deps-help.txt",
+          "node bin/tl-deps.mjs --help"
+        ]
+      },
+      {
+        "tool": "tl-impact",
+        "count": 11,
+        "samples": [
+          "node bin/tl-impact.mjs --help",
+          "node bin/tl-impact.mjs src/output.mjs -q >/dev/null && echo impact_ok",
+          "node bin/tl-impact.mjs package.json -q"
+        ]
+      },
+      {
+        "tool": "tl-structure",
+        "count": 10,
+        "samples": [
+          "node bin/tl-structure.mjs --help | sed -n '1,220p'",
+          "node bin/tl-structure.mjs --help | sed -n '1,180p'",
+          "codex-mneme session-start --limit 8 && tl-structure -j"
+        ]
+      },
+      {
+        "tool": "tl-related",
+        "count": 10,
+        "samples": [
+          "node bin/tl-related.mjs --help",
+          "node bin/tl-related.mjs bin/tl-related.mjs",
+          "node bin/tl-related.mjs src/cache.mjs -j | head -n 20"
+        ]
+      },
+      {
+        "tool": "tl-run",
+        "count": 8,
+        "samples": [
+          "node bin/tl-run.mjs --help | sed -n '1,240p'",
+          "node bin/tl-run.mjs npm -- --version | sed -n '1,40p'; echo EXIT:$?",
+          "node bin/tl-run.mjs \"echo ok\" --timeout nope | sed -n '1,30p'; echo EXIT:$?"
+        ]
+      },
+      {
+        "tool": "tl-prompt",
+        "count": 6,
+        "samples": [
+          "node bin/tl-prompt.mjs --minimal | sed -n '1,220p'",
+          "node bin/tl-prompt.mjs | sed -n '1,260p'",
+          "node bin/tl-prompt.mjs --json | sed -n '1,160p'"
+        ]
+      },
+      {
+        "tool": "tl-tail",
+        "count": 4,
+        "samples": [
+          "cd /home/edimuj/projects/tokenlean && npm link && npm ls -g tokenlean --depth=0 && tl-tail --help | sed -n '1,8p'",
+          "tl-tail --help | sed -n '1,6p'",
+          "node bin/tl-tail.mjs --help"
+        ]
+      }
+    ]
+  },
+  "commands": [
+    {
+      "id": "node_startup_baseline",
+      "label": "Node startup baseline",
+      "argv": [
+        "node",
+        "-e",
+        ""
+      ]
+    },
+    {
+      "id": "log_tl_snippet",
+      "label": "tl-snippet (from logs, 55 uses)",
+      "argv": [
+        "node",
+        "bin/tl-snippet.mjs",
+        "parseCommonArgs",
+        "src/output.mjs",
+        "-q"
+      ]
+    },
+    {
+      "id": "log_tl_audit",
+      "label": "tl-audit (from logs, 49 uses)",
+      "argv": [
+        "node",
+        "bin/tl-audit.mjs",
+        "--latest",
+        "--provider",
+        "codex",
+        "-j"
+      ]
+    },
+    {
+      "id": "log_tl_symbols",
+      "label": "tl-symbols (from logs, 37 uses)",
+      "argv": [
+        "node",
+        "bin/tl-symbols.mjs",
+        "src/output.mjs",
+        "-q"
+      ]
+    },
+    {
+      "id": "log_tl_deps",
+      "label": "tl-deps (from logs, 13 uses)",
+      "argv": [
+        "node",
+        "bin/tl-deps.mjs",
+        "src/output.mjs",
+        "-q"
+      ]
+    },
+    {
+      "id": "log_tl_impact",
+      "label": "tl-impact (from logs, 11 uses)",
+      "argv": [
+        "node",
+        "bin/tl-impact.mjs",
+        "src/output.mjs",
+        "-q"
+      ]
+    },
+    {
+      "id": "log_tl_structure",
+      "label": "tl-structure (from logs, 10 uses)",
+      "argv": [
+        "node",
+        "bin/tl-structure.mjs",
+        "-q"
+      ]
+    },
+    {
+      "id": "log_tl_related",
+      "label": "tl-related (from logs, 10 uses)",
+      "argv": [
+        "node",
+        "bin/tl-related.mjs",
+        "src/output.mjs",
+        "-q"
+      ]
+    }
+  ]
+}
