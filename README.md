@@ -5,7 +5,7 @@
 <h1 align="center">tokenlean</h1>
 
 <p align="center">
-  <strong>54 CLI tools that let AI agents understand codebases without burning tokens</strong>
+  <strong>56 CLI tools that let AI agents understand codebases without burning tokens</strong>
 </p>
 
 <p align="center">
@@ -15,31 +15,32 @@
 </p>
 
 <p align="center">
+  <a href="#the-problem">Why</a> •
   <a href="#install">Install</a> •
   <a href="#quick-reference">Quick Reference</a> •
   <a href="#all-tools">All Tools</a> •
-  <a href="#language-support">Language Support</a> •
   <a href="#ai-agent-integration">AI Integration</a> •
-  <a href="#agent-skills">Skills</a> •
-  <a href="#workflows">Workflows</a>
+  <a href="#workflows">Workflows</a> •
+  <a href="#language-support">Languages</a>
 </p>
 
 ---
 
-**Minimal dependencies** — one optional dep (node-html-markdown), installs in seconds
+**Zero config** — `npm i -g tokenlean` and you're done
 &nbsp;&middot;&nbsp;
-**Token-conscious** — every tool outputs only what's needed, nothing more
+**Token-conscious** — every tool outputs only what's needed
 &nbsp;&middot;&nbsp;
-**Fast** — ripgrep-powered search with disk caching
+**Fast** — ripgrep-powered with disk caching
 &nbsp;&middot;&nbsp;
-**Universal** — JS/TS first, most tools work with Python and Go too
+**Multi-language** — JS/TS, Python, Go, Rust, Ruby
+&nbsp;&middot;&nbsp;
+**Minimal deps** — one optional dependency, installs in seconds
 
 ---
 
 ## The Problem
 
-AI coding assistants are powerful, but every file read and every search result eats context window tokens. That means
-higher costs, worse responses, slower processing, and hitting limits sooner.
+Every file read, every search result, every test run — they all eat context window tokens. More tokens means higher costs, worse responses, and hitting limits sooner.
 
 tokenlean fixes this:
 
@@ -120,34 +121,6 @@ npm link
 
 </details>
 
-## Performance Benchmarking
-
-Use the built-in hotpath benchmark to decide whether TS migration is enough or a native rewrite is justified:
-
-```bash
-npm run bench:hotpaths
-```
-
-The benchmark runs a startup baseline plus common agent commands (`tl-structure`, `tl-symbols`, `tl-snippet`,
-`tl-impact`, `tl-related`, `tl-run`) and reports `p50`/`p95` latency plus runtime attribution.
-
-Useful options:
-
-```bash
-npm run bench:hotpaths -- --runs 20 --warmup 3
-npm run bench:hotpaths -- --filter tl_impact
-npm run bench:hotpaths -- -j > bench.json
-npm run bench:hotpaths:refresh
-npm run bench:hotpaths:refresh -- --since-days 30
-```
-
-`bench:hotpaths:refresh` rebuilds `benchmarks/agent-hotpaths.json` from observed `tl-*` usage in local Claude/Codex
-session logs (including the common legacy path `~/projects/<repo-name>` when present).
-
-Interpretation:
-- High startup share (around 30%+) means process startup dominates; TS helps safety but runtime speed gains require startup-focused changes (daemon, single binary, or native rewrite).
-- Low startup share with high `p95` means workload dominates; optimize I/O, subprocess usage, caching, and algorithms before considering Rust.
-
 ## Quick Reference
 
 ```bash
@@ -168,8 +141,6 @@ Interpretation:
 # Summarize noisy logs            tl-tail logs/app.log
 # What's the tech stack?         tl-stack
 ```
-
-`tl-snippet` with an explicit target file now fails fast if the file is missing/unreadable (it no longer falls back to a project-wide scan).
 
 Every tool supports `-l N` (limit lines), `-t N` (limit tokens), `-j` (JSON output), `-q` (quiet), and `-h` (help).
 
@@ -334,6 +305,25 @@ cp -r tokenlean/skills/codex/code-review ~/.codex/skills/
 </details>
 
 <details>
+<summary><strong>GitHub Workflows</strong> — multi-step <code>gh</code> operations in single commands</summary>
+
+| Tool | Description | Example |
+|------|-------------|---------|
+| `tl-gh issue create-batch` | Create issues in bulk from JSON/JSONL | `echo '[...]' \| tl-gh issue create-batch -R owner/repo` |
+| `tl-gh issue create-tree` | Create parent + children with sub-issue links | `echo '{...}' \| tl-gh issue create-tree -R owner/repo` |
+| `tl-gh issue add-sub` | Link existing issues as sub-issues | `tl-gh issue add-sub -R owner/repo --parent 10 42 43` |
+| `tl-gh issue close-batch` | Close multiple issues with optional comment | `tl-gh issue close-batch -R owner/repo 1 2 3 -c "Done"` |
+| `tl-gh issue label-batch` | Add/remove labels across multiple issues | `tl-gh issue label-batch -R owner/repo --add "P0" 1 2 3` |
+| `tl-gh pr digest` | Full PR status: CI, reviews, comments, merge readiness | `tl-gh pr digest -R owner/repo 123` |
+| `tl-gh pr comments` | Review comments grouped by file with resolution status | `tl-gh pr comments -R owner/repo 123 --unresolved` |
+| `tl-gh pr land` | Check CI, merge, close linked issues, delete branch | `tl-gh pr land -R owner/repo 123` |
+| `tl-gh release notes` | Auto-changelog from commits/PRs, create release | `tl-gh release notes -R owner/repo --tag v1.2.0` |
+
+All issue-creating commands support `--project owner/N` to auto-add to a GitHub project board.
+
+</details>
+
+<details>
 <summary><strong>Utilities</strong></summary>
 
 | Tool            | Description                              | Example                     |
@@ -341,6 +331,7 @@ cp -r tokenlean/skills/codex/code-review ~/.codex/skills/
 | `tl-audit`      | Analyze Claude/Codex sessions and estimate token savings | `tl-audit --all --savings`  |
 | `tl-quota`      | Check AI subscription quota (Claude, Codex) | `tl-quota`               |
 | `tl-hook`       | Install token-saving agent hooks         | `tl-hook install claude-code` |
+| `tl-reddit`     | Read Reddit threads as clean text        | `tl-reddit <url> -c 20`    |
 | `tl-cache`      | Manage tokenlean caches                  | `tl-cache stats`            |
 | `tl-config`     | Show/manage configuration                | `tl-config --init`          |
 | `tl-name`       | Check name availability (npm/GH/domains) | `tl-name myproject -s`      |
@@ -512,6 +503,8 @@ tl-secrets --min-severity high     # Only high severity issues
 tl-pr feature-branch               # Summary of branch changes
 tl-pr 123                          # GitHub PR #123 (needs gh CLI)
 tl-pr --full                       # Include files, stats, commits
+tl-gh pr digest -R owner/repo 123  # Full status: CI, reviews, comments, readiness
+tl-gh pr comments -R owner/repo 123 --unresolved  # Unresolved review threads
 ```
 
 </details>
@@ -523,6 +516,8 @@ tl-pr --full                       # Include files, stats, commits
 tl-changelog --unreleased          # What's new since last tag
 tl-changelog v0.1.0..v0.2.0       # Between versions
 tl-changelog --format compact      # Quick summary
+tl-gh release notes -R owner/repo --tag v1.2.0 --dry-run  # Preview auto-changelog
+tl-gh release notes -R owner/repo --tag v1.2.0             # Create GitHub release
 ```
 
 </details>
@@ -587,10 +582,10 @@ tl-audit -n 5 --verbose --savings                         # Add per-session deta
 tl-audit session.jsonl                                    # Analyze a specific session file
 ```
 
-`tl-audit` now analyzes both Codex and Claude Code sessions:
+`tl-audit` analyzes both Codex and Claude Code sessions:
 - **Opportunities** — tokens wasted on large file reads, verbose build output, raw grep/cat/tail
 - **Savings** (with `--savings`) — tokens already saved by tokenlean usage, with capture rate
-- **Default output** — one combined summary, including per-provider totals; add `--verbose` to view per-session breakdown
+- Add `--verbose` for per-session breakdown
 
 ```
 Summary (270 sessions: 180 Claude Code, 90 Codex)
@@ -621,6 +616,30 @@ tl-hook uninstall opencode         # Remove plugin
 </details>
 
 <details>
+<summary><strong>GitHub batch operations</strong></summary>
+
+```bash
+# Create issues in bulk from JSON
+echo '[{"title":"Bug A","labels":["bug"]},{"title":"Bug B"}]' | \
+  tl-gh issue create-batch -R owner/repo --project edimuj/1
+
+# Create an epic with sub-issues
+echo '{"title":"Epic","children":[{"title":"Task 1"},{"title":"Task 2"}]}' | \
+  tl-gh issue create-tree -R owner/repo --project edimuj/1
+
+# Sprint cleanup — close a batch with comment
+tl-gh issue close-batch -R owner/repo 10 11 12 -c "Sprint complete"
+
+# Label triage
+tl-gh issue label-batch -R owner/repo --add "P1" --remove "triage" 5 6 7
+
+# Land a PR (wait for CI, merge, close linked issues, delete branch)
+tl-gh pr land -R owner/repo 123 --method squash
+```
+
+</details>
+
+<details>
 <summary><strong>Extracting web content</strong></summary>
 
 ```bash
@@ -635,26 +654,21 @@ tl-playwright example.com --screenshot p  # Save screenshot
 
 ## Design Principles
 
-1. **Single purpose** — Each tool does one thing well
-2. **Minimal output** — Show only what's needed
-3. **Token-conscious** — Every tool saves context tokens
-4. **Composable** — Tools work together with JSON output for piping
-5. **Fast** — No heavy parsing or external services
-6. **Universal** — Works with JS/TS projects, most tools support Python/Go too
+1. **Single purpose** — one tool, one job
+2. **Minimal output** — show what's needed, nothing more
+3. **Composable** — every tool supports `-j` for JSON piping
+4. **Fast** — no heavy parsing, no external services, aggressive caching
+5. **Multi-language** — JS/TS first, expanding to Python, Go, Rust, Ruby
 
-## When NOT to Use tokenlean
+## Also by Exelerus
 
-- **Non-AI workflows** — if you're not constrained by context windows, standard tools work fine
-- **Very small codebases** (<5K LOC) — you can read everything directly without token pressure
-- **Languages beyond JS/TS/Python/Go** — code analysis tools are JS/TS-first; git/search tools still work everywhere, but `tl-symbols`, `tl-deps`, etc. may miss language-specific constructs (see [Language Support](#language-support))
-
-## Other Tools for Claude Code
-
-| Project                                                                | Description                                                                    |
-|------------------------------------------------------------------------|--------------------------------------------------------------------------------|
-| [claude-mneme](https://github.com/edimuj/claude-mneme)                 | Persistent memory for Claude Code — remember context across sessions           |
-| [claude-simple-status](https://github.com/edimuj/claude-simple-status) | Minimal statusline showing model, context usage, and quota                     |
-| [vexscan-claude-code](https://github.com/edimuj/vexscan-claude-code)   | Security scanner protecting against untrusted plugins, skills, MCPs, and hooks |
+| Project | Description |
+|---------|-------------|
+| [claude-rig](https://github.com/edimuj/claude-rig) | Run multiple Claude Code profiles side-by-side — isolate or share settings, plugins, MCPs per rig |
+| [agent-awareness](https://github.com/edimuj/agent-awareness) | Modular awareness plugins for AI coding agents |
+| [claude-mneme](https://github.com/edimuj/claude-mneme) | Persistent memory for Claude Code — context across sessions |
+| [claude-simple-status](https://github.com/edimuj/claude-simple-status) | Minimal statusline — model, context usage, quota at a glance |
+| [vexscan-claude-code](https://github.com/edimuj/vexscan-claude-code) | Security scanner for untrusted plugins, skills, MCPs, and hooks |
 
 ## Changelog
 
