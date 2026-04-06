@@ -144,6 +144,122 @@ function hasFlag(args, flag) {
 
 // ── Commands ─────────────────────────────────────────────────────────
 
+async function issueView(args) {
+  const repo = extractArg(args, '--repo') || extractArg(args, '-R');
+  const issueNum = args.find(a => /^\d+$/.test(a));
+
+  if (!repo || !issueNum) {
+    console.error('Error: --repo/-R and issue number are required');
+    console.error('Usage: tl-gh issue view -R owner/repo 434');
+    process.exit(1);
+  }
+
+  const full = hasFlag(args, '--full');
+  const noBody = hasFlag(args, '--no-body');
+  const bodyLines = parseInt(extractArg(args, '--body-lines') || '5', 10);
+  const out = createOutput(parseCommonArgs(args));
+
+  const [owner, name] = repo.split('/');
+  let result;
+  try {
+    result = ghGraphQL(`{
+      repository(owner: "${owner}", name: "${name}") {
+        issue(number: ${issueNum}) {
+          number title state body url createdAt closedAt
+          author { login }
+          assignees(first: 5) { nodes { login } }
+          labels(first: 10) { nodes { name } }
+          comments { totalCount }
+          subIssues(first: 50) {
+            totalCount
+            nodes {
+              number title state body url
+              labels(first: 5) { nodes { name } }
+              assignees(first: 3) { nodes { login } }
+              comments { totalCount }
+            }
+          }
+        }
+      }
+    }`);
+  } catch {
+    console.error(`Error: Issue not found: ${repo}#${issueNum}`);
+    process.exit(1);
+  }
+
+  const issue = result?.data?.repository?.issue;
+  if (!issue) {
+    console.error(`Error: Issue not found: ${repo}#${issueNum}`);
+    process.exit(1);
+  }
+
+  const subs = issue.subIssues?.nodes || [];
+  const subCount = issue.subIssues?.totalCount || 0;
+
+  // ── Text output ──
+  const stateIcon = issue.state === 'OPEN' ? '○' : issue.state === 'CLOSED' ? '●' : '◆';
+  const labels = issue.labels?.nodes?.map(l => l.name) || [];
+  const assignees = issue.assignees?.nodes?.map(a => a.login) || [];
+
+  out.header(`${stateIcon} #${issue.number} ${issue.title}`);
+  const meta = [`${issue.state}`, issue.url];
+  if (labels.length) meta.push(`Labels: ${labels.join(', ')}`);
+  if (assignees.length) meta.push(`Assignees: ${assignees.join(', ')}`);
+  if (issue.comments?.totalCount) meta.push(`${issue.comments.totalCount} comments`);
+  out.add(`  ${meta.join(' | ')}`);
+
+  if (!noBody && issue.body) {
+    out.blank();
+    out.add(truncateBody(issue.body, full ? Infinity : bodyLines));
+  }
+
+  // ── Sub-issues ──
+  if (subCount > 0) {
+    out.blank();
+    const openCount = subs.filter(s => s.state === 'OPEN').length;
+    const closedCount = subs.filter(s => s.state !== 'OPEN').length;
+    out.add(`  Sub-issues: ${subCount} (${openCount} open, ${closedCount} closed)`);
+    out.add('  ─'.padEnd(60, '─'));
+
+    for (const sub of subs) {
+      const subIcon = sub.state === 'OPEN' ? '○' : '●';
+      const subLabels = sub.labels?.nodes?.map(l => l.name) || [];
+      const labelStr = subLabels.length ? ` [${subLabels.join(', ')}]` : '';
+      out.add(`  ${subIcon} #${sub.number} ${sub.title}${labelStr}`);
+
+      if (!noBody && sub.body) {
+        const lines = truncateBody(sub.body, full ? Infinity : bodyLines);
+        for (const line of lines.split('\n')) {
+          out.add(`    ${line}`);
+        }
+      }
+    }
+  }
+
+  out.setData('issue', {
+    ...issue,
+    labels,
+    assignees,
+    subIssues: subs.map(s => ({
+      number: s.number,
+      title: s.title,
+      state: s.state,
+      labels: s.labels?.nodes?.map(l => l.name) || [],
+      assignees: s.assignees?.nodes?.map(a => a.login) || [],
+      comments: s.comments?.totalCount || 0,
+      body: s.body,
+    })),
+  });
+  out.print();
+}
+
+function truncateBody(body, maxLines) {
+  if (!body) return '';
+  const lines = body.split('\n');
+  if (lines.length <= maxLines) return body;
+  return lines.slice(0, maxLines).join('\n') + `\n  … (${lines.length - maxLines} more lines)`;
+}
+
 async function issueCreateBatch(args) {
   const repo = extractArg(args, '--repo') || extractArg(args, '-R');
   const project = parseProject(extractArg(args, '--project'));
@@ -1005,6 +1121,7 @@ tl-gh - Token-efficient GitHub CLI wrapper
 Wraps multi-step gh workflows into single commands.
 
 Issue Commands:
+  issue view            View issue with sub-issues in one call
   issue create-batch    Create multiple issues from JSON/JSONL on stdin
   issue add-sub         Link existing issues as sub-issues
   issue create-tree     Create parent + children with sub-issue links
@@ -1023,6 +1140,22 @@ Global Options:
   --repo, -R <repo>     Target repository (owner/repo)
   --project <owner/num> Add created issues to a GitHub project board (e.g. edimuj/1)
 ${COMMON_OPTIONS_HELP}
+
+─── issue view ───
+
+  View an issue with all sub-issues in a single API call.
+  Bodies truncated to 5 lines by default — use --full for complete text.
+
+  Options:
+    --full                Show complete bodies (no truncation)
+    --no-body             Titles and metadata only (most compact)
+    --body-lines <n>      Lines of body to show per issue (default: 5)
+
+  Usage:
+    tl-gh issue view -R owner/repo 434
+    tl-gh issue view -R owner/repo 434 --no-body
+    tl-gh issue view -R owner/repo 434 --full
+    tl-gh issue view -R owner/repo 434 --body-lines 10
 
 ─── issue create-batch ───
 
@@ -1124,6 +1257,9 @@ if (hasFlag(args, '-h') || hasFlag(args, '--help') || args.length === 0) {
 const sub = `${args[0]} ${args[1] || ''}`.trim();
 
 switch (sub) {
+  case 'issue view':
+    await issueView(args.slice(2));
+    break;
   case 'issue create-batch':
     await issueCreateBatch(args.slice(2));
     break;

@@ -309,6 +309,7 @@ cp -r tokenlean/skills/codex/code-review ~/.codex/skills/
 
 | Tool | Description | Example |
 |------|-------------|---------|
+| `tl-gh issue view` | View issue + all sub-issues in one call | `tl-gh issue view -R owner/repo 434 --no-body` |
 | `tl-gh issue create-batch` | Create issues in bulk from JSON/JSONL | `echo '[...]' \| tl-gh issue create-batch -R owner/repo` |
 | `tl-gh issue create-tree` | Create parent + children with sub-issue links | `echo '{...}' \| tl-gh issue create-tree -R owner/repo` |
 | `tl-gh issue add-sub` | Link existing issues as sub-issues | `tl-gh issue add-sub -R owner/repo --parent 10 42 43` |
@@ -619,6 +620,11 @@ tl-hook uninstall opencode         # Remove plugin
 <summary><strong>GitHub batch operations</strong></summary>
 
 ```bash
+# View an issue with all its sub-issues (one API call)
+tl-gh issue view -R owner/repo 434              # Bodies truncated to 5 lines
+tl-gh issue view -R owner/repo 434 --no-body    # Compact: titles + labels only
+tl-gh issue view -R owner/repo 434 --full       # Complete bodies
+
 # Create issues in bulk from JSON
 echo '[{"title":"Bug A","labels":["bug"]},{"title":"Bug B"}]' | \
   tl-gh issue create-batch -R owner/repo --project edimuj/1
