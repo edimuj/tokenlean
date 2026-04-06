@@ -25,6 +25,10 @@ import { spawn } from 'node:child_process';
 import { createOutput, parseCommonArgs, COMMON_OPTIONS_HELP } from '../src/output.mjs';
 import { getCachedQuota } from '../src/quota-cache.mjs';
 
+const PROVIDERS = ['claude', 'codex'];
+const DEFAULT_CACHE_TTL_MS = 60_000;
+const DEFAULT_MAX_STALE_MS = 5 * 60_000;
+
 const HELP = `
 tl-quota - Check AI subscription quota usage
 
@@ -52,10 +56,6 @@ Examples:
   tl-quota -j               # JSON output
   tl-quota -q               # compact one-liner
 `;
-
-const PROVIDERS = ['claude', 'codex'];
-const DEFAULT_CACHE_TTL_MS = 60_000;
-const DEFAULT_MAX_STALE_MS = 5 * 60_000;
 
 function envPositiveInt(name, fallback) {
   const value = Number.parseInt(process.env[name] || '', 10);

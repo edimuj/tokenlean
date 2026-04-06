@@ -1,6 +1,6 @@
 {
   "name": "tokenlean",
-  "version": "0.30.0",
+  "version": "0.31.0",
   "description": "Lean CLI tools for AI agents and developers - reduce context, save tokens",
   "type": "module",
   "engines": {
@@ -45,6 +45,7 @@
     "tl-env": "bin/tl-env.mjs",
     "tl-exports": "bin/tl-exports.mjs",
     "tl-flow": "bin/tl-flow.mjs",
+    "tl-gh": "bin/tl-gh.mjs",
     "tl-guard": "bin/tl-guard.mjs",
     "tl-history": "bin/tl-history.mjs",
     "tl-hotspots": "bin/tl-hotspots.mjs",
@@ -55,6 +56,7 @@
     "tl-npm": "bin/tl-npm.mjs",
     "tl-playwright": "bin/tl-playwright.mjs",
     "tl-pr": "bin/tl-pr.mjs",
+    "tl-reddit": "bin/tl-reddit.mjs",
     "tl-prompt": "bin/tl-prompt.mjs",
     "tl-quota": "bin/tl-quota.mjs",
     "tl-run": "bin/tl-run.mjs",
