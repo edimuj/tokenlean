@@ -5,7 +5,7 @@
 <h1 align="center">tokenlean</h1>
 
 <p align="center">
-  <strong>56 CLI tools that let AI agents understand codebases without burning tokens</strong>
+  <strong>57 CLI tools + MCP server that let AI agents understand codebases without burning tokens</strong>
 </p>
 
 <p align="center">
@@ -34,13 +34,15 @@
 &nbsp;&middot;&nbsp;
 **Multi-language** — JS/TS, Python, Go, Rust, Ruby
 &nbsp;&middot;&nbsp;
-**Minimal deps** — one optional dependency, installs in seconds
+**MCP native** — structured tool access, no shell overhead
+&nbsp;&middot;&nbsp;
+**Minimal deps** — installs in seconds
 
 ---
 
 ## The Problem
 
-Every file read, every search result, every test run — they all eat context window tokens. More tokens means higher costs, worse responses, and hitting limits sooner.
+If you've ever checked your usage quota at 2 PM and decided whether to debug now or wait for the reset — this is for you. Enterprise teams with unlimited API keys don't feel the burn. Solo devs, small teams, anyone on a Pro subscription does. Every `cat` of a 2000-line file when you needed one function, every 300-line test run when only 3 lines failed, every full directory read to find a signature — that's your working day getting shorter.
 
 tokenlean fixes this:
 
@@ -155,6 +157,22 @@ Add tokenlean instructions to your AI tool's config with a single command:
 | Cursor         | `tl-prompt --minimal >> .cursorrules`          |
 | GitHub Copilot | `tl-prompt >> .github/copilot-instructions.md` |
 | Windsurf       | `tl-prompt --minimal >> .windsurfrules`        |
+
+**MCP Server** — expose tokenlean as native MCP tools for structured, faster access with no CLI overhead:
+
+```bash
+# Add to any project's .mcp.json (Claude Code, Codex, etc.)
+{
+  "mcpServers": {
+    "tokenlean": { "command": "tl-mcp" }
+  }
+}
+
+# Or pick just the tools you need
+{ "command": "tl-mcp", "args": ["--tools", "symbols,snippet,run"] }
+```
+
+8 core tools available via MCP: `tl_symbols`, `tl_snippet`, `tl_run`, `tl_impact`, `tl_browse`, `tl_tail`, `tl_guard`, `tl_diff`. Structured JSON in/out — no bash command construction, no argument parsing, no stdout scraping.
 
 **Hooks** — automatically nudge agents toward token-efficient tool usage:
 
