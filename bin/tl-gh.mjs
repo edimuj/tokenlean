@@ -38,7 +38,8 @@ function gh(args, { json = false } = {}) {
 function ghGraphQL(query, variables = {}) {
   const args = ['api', 'graphql', '-f', `query=${query}`];
   for (const [k, v] of Object.entries(variables)) {
-    args.push('-f', `${k}=${v}`);
+    const flag = typeof v === 'number' || typeof v === 'boolean' ? '-F' : '-f';
+    args.push(flag, `${k}=${v}`);
   }
   return JSON.parse(execFileSync('gh', args, {
     encoding: 'utf-8',
@@ -308,6 +309,13 @@ async function issueCreateBatch(args) {
     const projTag = r.project === true ? ' [+project]' : r.project ? ` [${r.project}]` : '';
     out.add(`  #${r.number} ${r.title}${projTag}`);
   }
+  const projFailed = created.filter(r => r.project && r.project !== true);
+  if (projFailed.length) {
+    out.add('');
+    for (const r of projFailed) {
+      out.add(`  ⚠ #${r.number} project add failed: ${r.project.replace('failed: ', '')}`);
+    }
+  }
   if (failed.length) {
     out.add('');
     for (const r of failed) {
@@ -315,7 +323,8 @@ async function issueCreateBatch(args) {
     }
   }
 
-  out.stats(`${created.length} created, ${failed.length} failed`);
+  const projNote = projFailed.length ? `, ${projFailed.length} project-add failed` : '';
+  out.stats(`${created.length} created, ${failed.length} failed${projNote}`);
   out.setData('results', results);
   out.print();
 }
@@ -448,8 +457,17 @@ async function issueCreateTree(args) {
           const childUrl = gh(childArgs);
           const childNum = childUrl.match(/\/(\d+)$/)?.[1];
 
-          // Link as sub-issue
-          const childId = getIssueNodeId(repo, parseInt(childNum));
+          // Link as sub-issue (retry — GitHub may not have indexed the new issue yet)
+          let childId;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              childId = getIssueNodeId(repo, parseInt(childNum));
+              break;
+            } catch {
+              if (attempt === 2) throw new Error(`Cannot resolve #${childNum} after 3 attempts`);
+              await new Promise(r => setTimeout(r, 2000));
+            }
+          }
           ghGraphQL(`mutation($parentId: ID!, $childId: ID!) {
             addSubIssue(input: {issueId: $parentId, subIssueId: $childId}) {
               issue { id }
@@ -1113,6 +1131,51 @@ async function releaseNotes(args) {
   out.print();
 }
 
+// ── Project Commands ─────────────────────────────────────────────────
+
+async function projectAddBatch(args) {
+  const repo = extractArg(args, '--repo') || extractArg(args, '-R');
+  const project = parseProject(extractArg(args, '--project'));
+
+  if (!repo || !project) {
+    console.error('Error: --repo/-R and --project are required');
+    console.error('Usage: tl-gh project add-batch -R owner/repo --project owner/N 452 453 454');
+    process.exit(1);
+  }
+
+  const issueNums = args.filter(a =>
+    !a.startsWith('-') && a !== 'project' && a !== 'add-batch'
+    && a !== repo && a !== `${project.owner}/${project.number}`
+  ).map(Number).filter(n => n > 0);
+
+  if (!issueNums.length) {
+    console.error('Error: Provide issue numbers as positional arguments');
+    process.exit(1);
+  }
+
+  const out = createOutput(parseCommonArgs(args));
+  out.header(`Adding ${issueNums.length} issues to project ${project.owner}/${project.number}`);
+
+  const results = [];
+  for (const num of issueNums) {
+    try {
+      const url = `https://github.com/${repo}/issues/${num}`;
+      addToProject(project.owner, project.number, url);
+      results.push({ number: num, status: 'added' });
+      out.add(`  #${num} → project ${project.owner}/${project.number}`);
+    } catch (e) {
+      results.push({ number: num, status: 'failed', error: e.message });
+      out.add(`  #${num} FAILED: ${e.message}`);
+    }
+  }
+
+  const added = results.filter(r => r.status === 'added').length;
+  const failed = results.filter(r => r.status === 'failed').length;
+  out.stats(`${added} added, ${failed} failed`);
+  out.setData('results', results);
+  out.print();
+}
+
 // ── Main ─────────────────────────────────────────────────────────────
 
 const HELP = `
@@ -1127,6 +1190,9 @@ Issue Commands:
   issue create-tree     Create parent + children with sub-issue links
   issue close-batch     Close multiple issues with optional comment
   issue label-batch     Add/remove labels across multiple issues
+
+Project Commands:
+  project add-batch     Add existing issues to a project board in bulk
 
 PR Commands:
   pr digest             Full PR status: CI, reviews, comments, merge readiness
@@ -1200,6 +1266,14 @@ ${COMMON_OPTIONS_HELP}
   Usage:
     tl-gh issue label-batch -R owner/repo --add "bug,P0" 1 2 3
     tl-gh issue label-batch -R owner/repo --add "P1" --remove "triage" 5 6 7
+
+─── project add-batch ───
+
+  Add existing issues to a GitHub project board in bulk.
+
+  Usage:
+    tl-gh project add-batch -R owner/repo --project edimuj/1 452 453 454
+    tl-gh project add-batch -R owner/repo --project edimuj/1 $(seq 450 500)
 
 ─── pr digest ───
 
@@ -1286,6 +1360,9 @@ switch (sub) {
     break;
   case 'release notes':
     await releaseNotes(args.slice(2));
+    break;
+  case 'project add-batch':
+    await projectAddBatch(args.slice(2));
     break;
   default:
     console.error(`Unknown command: ${sub}`);
