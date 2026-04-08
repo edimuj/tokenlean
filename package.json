@@ -77,7 +77,8 @@
     "tl-test-map": "bin/tl-test-map.mjs",
     "tl-todo": "bin/tl-todo.mjs",
     "tl-types": "bin/tl-types.mjs",
-    "tl-unused": "bin/tl-unused.mjs"
+    "tl-unused": "bin/tl-unused.mjs",
+    "tl-mcp": "bin/tl-mcp.mjs"
   },
   "scripts": {
     "test": "node --test src/*.test.mjs",
@@ -95,8 +96,10 @@
     "developer"
   ],
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "node-html-markdown": "^2.0.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "zod": "^4.3.6"
   },
   "author": "Edin Mujkanovic",
   "license": "MIT"

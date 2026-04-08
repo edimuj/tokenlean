@@ -62,20 +62,26 @@ function getIssueNodeId(repo, number) {
   return issueId;
 }
 
+function resolveProjectId(owner, number) {
+  // Try user first, then org — can't query both in one request because
+  // GitHub returns a top-level error if either field fails to resolve.
+  try {
+    const r = ghGraphQL(`query($owner: String!, $number: Int!) {
+      user(login: $owner) { projectV2(number: $number) { id } }
+    }`, { owner, number });
+    if (r?.data?.user?.projectV2?.id) return r.data.user.projectV2.id;
+  } catch { /* not a user, try org */ }
+  try {
+    const r = ghGraphQL(`query($owner: String!, $number: Int!) {
+      organization(login: $owner) { projectV2(number: $number) { id } }
+    }`, { owner, number });
+    if (r?.data?.organization?.projectV2?.id) return r.data.organization.projectV2.id;
+  } catch { /* not an org either */ }
+  throw new Error(`Project not found: ${owner}/${number}`);
+}
+
 function addToProject(projectOwner, projectNumber, issueUrl) {
-  // Get project node ID
-  const projResult = ghGraphQL(`query($owner: String!, $number: Int!) {
-    user(login: $owner) {
-      projectV2(number: $number) { id }
-    }
-    organization(login: $owner) {
-      projectV2(number: $number) { id }
-    }
-  }`, { owner: projectOwner, number: projectNumber });
-  const projectId = projResult?.data?.user?.projectV2?.id || projResult?.data?.organization?.projectV2?.id;
-  if (!projectId) {
-    throw new Error(`Project not found: ${projectOwner}/${projectNumber}`);
-  }
+  const projectId = resolveProjectId(projectOwner, projectNumber);
 
   // Get issue node ID from URL (extract owner/repo#number)
   const match = issueUrl.match(/repos\/(.+?)\/(.+?)\/issues\/(\d+)/);
