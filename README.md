@@ -181,15 +181,113 @@ MCP tools include the core context reducers (`tl_symbols`, `tl_snippet`, `tl_run
 **Hooks** — automatically nudge agents toward token-efficient tool usage:
 
 ```bash
-tl hook install claude-code    # Hard PreToolUse nudges for Claude Code
-tl hook install codex          # Hard PreToolUse nudges for Codex CLI
+tl hook install claude-code    # Claude Code (auto-detects claude-rig session)
+tl hook install codex          # Codex (~/.codex/hooks.json)
+tl hook install opencode       # Open Code (~/.config/opencode/plugins/)
 tl hook status --all           # Check hook adapters
 tl hook run -j                 # Structured policy decision for adapters/MCP
 tl audit --all --savings       # Measure actual savings across sessions
 tl audit --all --plan          # Turn audit findings into prioritized fixes
 ```
 
-See [measuring token savings](docs/workflows.md#measuring-token-savings) for full audit and hook setup details.
+## MCP Server
+
+`tl-mcp` exposes tokenlean tools as structured MCP function calls — no CLI argument construction, instant tool discovery.
+
+### Quick start (stdio)
+
+No daemon needed. Each agent session spawns a fresh process:
+
+```json
+{
+  "mcpServers": {
+    "tokenlean": { "command": "tl-mcp" }
+  }
+}
+```
+
+### Persistent daemon (recommended)
+
+One shared HTTP server across all agent sessions — zero cold-start overhead per agent. Run it once, every session connects instantly.
+
+#### macOS (launchd — auto-starts at login, restarts on crash)
+
+```bash
+tl-mcp install-service | bash   # generate plist, load agent, done
+```
+
+Or manually:
+
+```bash
+mkdir -p ~/.tokenlean
+# 1. Write the plist (get exact content from: tl-mcp install-service)
+tl-mcp install-service > /tmp/tl-mcp-setup.sh && bash /tmp/tl-mcp-setup.sh
+# 2. Add to your agent (Claude Code):
+claude mcp add --transport http --scope user tokenlean http://127.0.0.1:3742/mcp
+```
+
+#### Linux (systemd user service — auto-starts at login)
+
+```bash
+tl-mcp install-service | bash   # generate unit file, enable, start
+# Then add to your agent:
+claude mcp add --transport http --scope user tokenlean http://127.0.0.1:3742/mcp
+```
+
+To see the exact commands before running them:
+
+```bash
+tl-mcp install-service          # print setup instructions for your platform
+```
+
+#### Manual (any platform — no service manager)
+
+```bash
+tl-mcp start                    # start background daemon on port 3742
+tl-mcp status                   # show status and URL
+tl-mcp stop                     # stop it
+```
+
+#### Agent config (after daemon is running)
+
+**Claude Code:**
+```bash
+claude mcp add --transport http --scope user tokenlean http://127.0.0.1:3742/mcp
+```
+
+**`.mcp.json` (any agent):**
+```json
+{
+  "mcpServers": {
+    "tokenlean": { "type": "http", "url": "http://127.0.0.1:3742/mcp" }
+  }
+}
+```
+
+**Codex (`~/.codex/config.toml`):**
+```toml
+[mcp_servers.tokenlean]
+command = "/opt/homebrew/bin/tl-mcp"   # macOS Homebrew
+# command = "/usr/local/bin/tl-mcp"   # Linux
+args = []
+```
+
+Codex uses stdio (spawns a process per session), but calling the installed binary directly avoids the `npx` registry-check overhead.
+
+### Available MCP tools
+
+| Tool | Description |
+|------|-------------|
+| `tl_symbols` | Extract function/class signatures without bodies |
+| `tl_snippet` | Extract a function/class by name |
+| `tl_run` | Token-efficient command output (tests, builds) |
+| `tl_impact` | What depends on a given file |
+| `tl_browse` | Fetch a URL as clean markdown |
+| `tl_tail` | Collapse repeated log patterns, surface errors |
+| `tl_guard` | Pre-commit check (secrets, TODOs, unused, circular) |
+| `tl_diff` | Token-efficient git diff summary |
+
+Selective registration: `tl-mcp --tools symbols,snippet,run`
 
 ## Agent Skills
 
