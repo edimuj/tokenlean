@@ -113,6 +113,17 @@ function launchctlPid() {
   }
 }
 
+function readLaunchdPort() {
+  if (!existsSync(LAUNCHD_PLIST)) return null;
+  try {
+    const plist = readFileSync(LAUNCHD_PLIST, 'utf8');
+    const m = plist.match(/<string>--port<\/string>\s*<string>(\d+)<\/string>/);
+    return m ? Number(m[1]) : DEFAULT_PORT;
+  } catch {
+    return DEFAULT_PORT;
+  }
+}
+
 // ─── serve (HTTP StreamableHTTP) ────────────────────────────────────────────
 
 async function runServe(p) {
@@ -167,6 +178,19 @@ async function cmdStart(p) {
 // ─── daemon: stop ───────────────────────────────────────────────────────────
 
 async function cmdStop() {
+  const pid = readPid();
+  if (pid && isRunning(pid)) {
+    process.kill(pid, 'SIGTERM');
+    try { unlinkSync(PID_FILE); } catch {}
+    console.log(`tl-mcp daemon stopped (pid ${pid})`);
+    return;
+  }
+  if (pid) {
+    console.log(`tl-mcp: stale pid ${pid}, cleaning up`);
+    try { unlinkSync(PID_FILE); } catch {}
+    return;
+  }
+
   // macOS: if launchd is managing it, unload the agent
   if (platform() === 'darwin' && existsSync(LAUNCHD_PLIST)) {
     const launchPid = launchctlPid();
@@ -177,53 +201,48 @@ async function cmdStop() {
         console.log(`  To re-enable at login: launchctl load ${LAUNCHD_PLIST}`);
         return;
       } catch {
-        // fall through to PID file
+        // fall through to port probe
       }
     }
   }
 
-  const pid = readPid();
-  if (!pid) {
-    if (await probePort(readSavedPort())) {
-      console.log('tl-mcp: running but not managed by this process (launchd/systemd?)');
-      console.log('  Use your service manager to stop it, or: tl-mcp install-service');
-    } else {
-      console.log('tl-mcp: not running');
-    }
-    return;
+  if (await probePort(readSavedPort())) {
+    console.log('tl-mcp: running but not managed by this process (launchd/systemd?)');
+    console.log('  Use your service manager to stop it, or: tl-mcp install-service');
+  } else {
+    console.log('tl-mcp: not running');
   }
-  if (!isRunning(pid)) {
-    console.log(`tl-mcp: stale pid ${pid}, cleaning up`);
-    try { unlinkSync(PID_FILE); } catch {}
-    return;
-  }
-  process.kill(pid, 'SIGTERM');
-  try { unlinkSync(PID_FILE); } catch {}
-  console.log(`tl-mcp daemon stopped (pid ${pid})`);
 }
 
 // ─── daemon: status ─────────────────────────────────────────────────────────
 
 async function cmdStatus() {
-  const p = readSavedPort();
-  const alive = await probePort(p);
-
-  if (!alive) {
-    console.log('tl-mcp: not running');
+  const filePid = readPid();
+  if (filePid && isRunning(filePid)) {
+    const p = readSavedPort();
+    console.log(`tl-mcp: running (pid ${filePid})`);
+    console.log(`  http://127.0.0.1:${p}/mcp`);
     return;
   }
 
-  // Try to surface the PID from wherever we can find it
-  let pid = null;
-  if (platform() === 'darwin') pid = launchctlPid();
-  if (!pid) {
-    const filePid = readPid();
-    if (filePid && isRunning(filePid)) pid = filePid;
+  if (platform() === 'darwin') {
+    const launchPid = launchctlPid();
+    const launchPort = readLaunchdPort();
+    if (launchPid && launchPort && await probePort(launchPort)) {
+      console.log(`tl-mcp: running (pid ${launchPid})`);
+      console.log(`  http://127.0.0.1:${launchPort}/mcp`);
+      return;
+    }
   }
 
-  const pidStr = pid ? ` (pid ${pid})` : '';
-  console.log(`tl-mcp: running${pidStr}`);
-  console.log(`  http://127.0.0.1:${p}/mcp`);
+  const p = readSavedPort();
+  if (await probePort(p)) {
+    console.log('tl-mcp: running');
+    console.log(`  http://127.0.0.1:${p}/mcp`);
+    return;
+  }
+
+  console.log('tl-mcp: not running');
 }
 
 // ─── install-service ────────────────────────────────────────────────────────
