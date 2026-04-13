@@ -206,46 +206,72 @@ No daemon needed. Each agent session spawns a fresh process:
 }
 ```
 
-### Persistent daemon (recommended)
+### Persistent daemon modes
 
-One shared HTTP server across all agent sessions — zero cold-start overhead per agent. Run it once, every session connects instantly.
+`tl-mcp` now supports three useful daemon styles:
 
-#### macOS (launchd — auto-starts at login, restarts on crash)
+1. **Always on** — start at login via launchd/systemd
+2. **Just for one agent session** — stdio starts a helper daemon only if needed, then stops it when the session exits
+3. **Start on demand, self-expire later** — keep the daemon warm, but auto-exit after inactivity
+
+#### 1) Always on at startup
+
+**macOS (launchd):**
 
 ```bash
-tl-mcp install-service | bash   # generate plist, load agent, done
+tl-mcp install-service
+# optional idle shutdown even under launchd docs:
+tl-mcp install-service --idle-timeout 120
 ```
 
-Or manually:
+**Linux (systemd user service):**
 
 ```bash
-mkdir -p ~/.tokenlean
-# 1. Write the plist (get exact content from: tl-mcp install-service)
-tl-mcp install-service > /tmp/tl-mcp-setup.sh && bash /tmp/tl-mcp-setup.sh
-# 2. Add to your agent (Claude Code):
-claude mcp add --transport http --scope user tokenlean http://127.0.0.1:3742/mcp
+tl-mcp install-service
+# or:
+tl-mcp install-service --idle-timeout 120
 ```
 
-#### Linux (systemd user service — auto-starts at login)
+To inspect the exact setup commands instead of piping them into bash:
 
 ```bash
-tl-mcp install-service | bash   # generate unit file, enable, start
-# Then add to your agent:
-claude mcp add --transport http --scope user tokenlean http://127.0.0.1:3742/mcp
+tl-mcp install-service
 ```
 
-To see the exact commands before running them:
+#### 2) One Codex/agent session only
 
-```bash
-tl-mcp install-service          # print setup instructions for your platform
+Use stdio as normal, but add `--session-daemon` if you want a temporary helper daemon only for that session:
+
+```json
+{
+  "mcpServers": {
+    "tokenlean": {
+      "command": "tl-mcp",
+      "args": ["--session-daemon"]
+    }
+  }
+}
 ```
 
-#### Manual (any platform — no service manager)
+Behavior:
+- if no daemon is running, `tl-mcp` starts one
+- when that stdio session exits, it stops the daemon it created
+- if a daemon was already running, it reuses it and leaves it alone
+
+#### 3) Start if needed, then self-terminate after idle time
 
 ```bash
-tl-mcp start                    # start background daemon on port 3742
-tl-mcp status                   # show status and URL
-tl-mcp stop                     # stop it
+tl-mcp start --idle-timeout 120
+tl-mcp status
+tl-mcp stop
+```
+
+This keeps the daemon available across multiple sessions, but it shuts itself down after 120 minutes without MCP requests.
+
+You can also make stdio auto-start a warm daemon with an idle timeout:
+
+```bash
+tl-mcp --idle-timeout 120
 ```
 
 #### Agent config (after daemon is running)
@@ -270,6 +296,20 @@ claude mcp add --transport http --scope user tokenlean http://127.0.0.1:3742/mcp
 command = "/opt/homebrew/bin/tl-mcp"   # macOS Homebrew
 # command = "/usr/local/bin/tl-mcp"   # Linux
 args = []
+```
+
+**Codex with a one-session helper daemon:**
+```toml
+[mcp_servers.tokenlean]
+command = "/opt/homebrew/bin/tl-mcp"
+args = ["--session-daemon"]
+```
+
+**Codex with warm-cache daemon that idles out after 120m:**
+```toml
+[mcp_servers.tokenlean]
+command = "/opt/homebrew/bin/tl-mcp"
+args = ["--idle-timeout", "120"]
 ```
 
 Codex uses stdio (spawns a process per session), but calling the installed binary directly avoids the `npx` registry-check overhead.
