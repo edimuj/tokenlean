@@ -106,6 +106,39 @@ function createClaudeSession(homeDir, projectDir, options = {}) {
         ],
       },
     },
+    {
+      type: 'assistant',
+      sessionId,
+      timestamp,
+      cwd: projectDir,
+      slug,
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'claude-mcp-tokenlean',
+            name: 'tl_symbols',
+            input: { files: 'src/' },
+          },
+        ],
+      },
+    },
+    {
+      type: 'assistant',
+      sessionId,
+      timestamp,
+      cwd: projectDir,
+      slug,
+      message: {
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'claude-mcp-tokenlean',
+            content: makeLargeOutput('claude mcp tokenlean output', 160),
+          },
+        ],
+      },
+    },
   ]);
 
   const mtime = new Date(mtimeMs);
@@ -188,6 +221,29 @@ function createCodexSession(homeDir, projectDir, options = {}) {
         ].join('\n'),
       },
     },
+    {
+      type: 'response_item',
+      payload: {
+        type: 'function_call',
+        name: 'tl_symbols',
+        call_id: 'codex-mcp-tokenlean',
+        arguments: JSON.stringify({ files: 'src/' }),
+      },
+    },
+    {
+      type: 'response_item',
+      payload: {
+        type: 'function_call_output',
+        call_id: 'codex-mcp-tokenlean',
+        output: [
+          'Chunk ID: test-tokenlean-mcp',
+          'Wall time: 0.01 seconds',
+          'Process exited with code 0',
+          'Output:',
+          makeLargeOutput('codex mcp tokenlean output', 160),
+        ].join('\n'),
+      },
+    },
   ]);
 
   const mtime = new Date(mtimeMs);
@@ -265,6 +321,25 @@ describe('tl-audit regressions', () => {
       assert.match(result.stdout, /^Session: codex-run \[Codex\]/m);
       assert.match(result.stdout, /Findings:/);
       assert.match(result.stdout, /Savings detail:/);
+    } finally {
+      rmSync(fixture.tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('TLA-002B: JSON savings include MCP-native tokenlean tool usage', () => {
+    const fixture = createAuditFixture();
+
+    try {
+      const result = runCli([auditBin, '--all', '--savings', '-j'], {
+        cwd: fixture.projectDir,
+        env: fixture.env,
+      });
+
+      assert.strictEqual(result.status, 0, result.stderr);
+      const data = JSON.parse(result.stdout);
+      assert.ok(data.savings.totalUses >= 4);
+      assert.ok(data.savings.byTool['tl-run']);
+      assert.ok(data.savings.byTool['tl-symbols']);
     } finally {
       rmSync(fixture.tempRoot, { recursive: true, force: true });
     }

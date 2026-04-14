@@ -149,6 +149,35 @@ function isBashLikeCall(call) {
   return call.name === 'Bash' || call.name === 'exec_command';
 }
 
+function normalizeTokenleanToolName(name) {
+  if (typeof name !== 'string' || name.length === 0) return null;
+
+  const direct = name.match(/^(tl[_-].+)$/);
+  if (direct) return direct[1].replace(/_/g, '-');
+
+  const namespaced = name.match(/(?:^|__)(tl_[A-Za-z0-9_]+)$/);
+  if (namespaced) return namespaced[1].replace(/_/g, '-');
+
+  return null;
+}
+
+function summarizeCallForSavings(call, tool) {
+  if (isBashLikeCall(call)) {
+    const command = getShellCommand(call);
+    if (command) return command.split('\n')[0].slice(0, 120);
+  }
+
+  const input = call?.input && typeof call.input === 'object'
+    ? Object.entries(call.input)
+      .filter(([, value]) => value !== undefined && value !== null && value !== '')
+      .slice(0, 3)
+      .map(([key, value]) => `${key}=${JSON.stringify(value).slice(0, 40)}`)
+      .join(' ')
+    : '';
+
+  return input ? `${tool} ${input}` : tool;
+}
+
 function getFileExtension(pathValue) {
   const parts = String(pathValue || '').split('.');
   return parts.length > 1 ? parts.pop().toLowerCase() : '';
@@ -167,13 +196,15 @@ import { basename } from 'node:path';
 
 function analyzeSavings(call, tokens, savings) {
   if (!Array.isArray(savings)) return;
-  const command = getShellCommand(call);
-  if (!command) return;
 
-  const match = command.match(/\b(tl-\w+)\b/);
-  if (!match) return;
+  let tool = normalizeTokenleanToolName(call?.name);
+  if (!tool) {
+    const command = getShellCommand(call);
+    const match = command.match(/\b(tl-\w+)\b/);
+    tool = match?.[1] || null;
+  }
+  if (!tool) return;
 
-  const tool = match[1];
   const ratio = SAVINGS_RATIOS[tool];
   if (!ratio) return;
 
@@ -181,7 +212,7 @@ function analyzeSavings(call, tokens, savings) {
   const saved = rawTokens - tokens;
   savings.push({
     tool,
-    command: command.split('\n')[0].slice(0, 120),
+    command: summarizeCallForSavings(call, tool),
     actualTokens: tokens,
     rawEstimate: rawTokens,
     savedTokens: saved,
