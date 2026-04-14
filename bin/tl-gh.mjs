@@ -315,7 +315,7 @@ async function issueCreateBatch(args) {
 
       if (project) {
         try {
-          withRetry(() => addToProject(project.owner, project.number, url));
+          withRetry(() => addToProject(project.owner, project.number, url), { retries: 3, backoff: 2000 });
           results[results.length - 1].project = true;
         } catch (e) {
           results[results.length - 1].project = `failed: ${e.message}`;
@@ -454,7 +454,7 @@ async function issueCreateTree(args) {
 
     if (project) {
       try {
-        withRetry(() => addToProject(project.owner, project.number, parentUrl));
+        withRetry(() => addToProject(project.owner, project.number, parentUrl), { retries: 3, backoff: 2000 });
         treeResult.project = true;
       } catch (e) {
         treeResult.project = `failed: ${e.message}`;
@@ -495,7 +495,7 @@ async function issueCreateTree(args) {
           // Add child to project too
           if (project) {
             try {
-              withRetry(() => addToProject(project.owner, project.number, childUrl));
+              withRetry(() => addToProject(project.owner, project.number, childUrl), { retries: 3, backoff: 2000 });
             } catch { /* parent success is enough */ }
           }
 
@@ -1178,7 +1178,7 @@ async function projectAddBatch(args) {
   for (const num of issueNums) {
     try {
       const url = `https://github.com/${repo}/issues/${num}`;
-      withRetry(() => addToProject(project.owner, project.number, url));
+      withRetry(() => addToProject(project.owner, project.number, url), { retries: 3, backoff: 2000 });
       results.push({ number: num, status: 'added' });
       out.add(`  #${num} → project ${project.owner}/${project.number}`);
     } catch (e) {
