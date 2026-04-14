@@ -41,11 +41,29 @@ function ghGraphQL(query, variables = {}) {
     const flag = typeof v === 'number' || typeof v === 'boolean' ? '-F' : '-f';
     args.push(flag, `${k}=${v}`);
   }
-  return JSON.parse(execFileSync('gh', args, {
+  const result = JSON.parse(execFileSync('gh', args, {
     encoding: 'utf-8',
     timeout: 30_000,
     stdio: ['pipe', 'pipe', 'pipe'],
   }));
+  if (result.errors?.length) {
+    const msg = result.errors.map(e => e.message).join('; ');
+    const err = new Error(`GraphQL error: ${msg}`);
+    err.graphqlErrors = result.errors;
+    throw err;
+  }
+  return result;
+}
+
+function withRetry(fn, { retries = 2, backoff = 1000 } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return fn();
+    } catch (e) {
+      if (attempt >= retries) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, backoff * (attempt + 1));
+    }
+  }
 }
 
 function getIssueNodeId(repo, number) {
@@ -297,7 +315,7 @@ async function issueCreateBatch(args) {
 
       if (project) {
         try {
-          addToProject(project.owner, project.number, url);
+          withRetry(() => addToProject(project.owner, project.number, url));
           results[results.length - 1].project = true;
         } catch (e) {
           results[results.length - 1].project = `failed: ${e.message}`;
@@ -374,11 +392,11 @@ async function issueAddSub(args) {
   for (const childNum of childNums) {
     try {
       const childId = getIssueNodeId(repo, childNum);
-      ghGraphQL(`mutation($parentId: ID!, $childId: ID!) {
+      withRetry(() => ghGraphQL(`mutation($parentId: ID!, $childId: ID!) {
         addSubIssue(input: {issueId: $parentId, subIssueId: $childId}) {
           issue { id }
         }
-      }`, { parentId, childId });
+      }`, { parentId, childId }));
       results.push({ number: childNum, status: 'linked' });
       out.add(`  #${childNum} → sub of #${parentNum}`);
     } catch (e) {
@@ -436,7 +454,7 @@ async function issueCreateTree(args) {
 
     if (project) {
       try {
-        addToProject(project.owner, project.number, parentUrl);
+        withRetry(() => addToProject(project.owner, project.number, parentUrl));
         treeResult.project = true;
       } catch (e) {
         treeResult.project = `failed: ${e.message}`;
@@ -463,27 +481,21 @@ async function issueCreateTree(args) {
           const childUrl = gh(childArgs);
           const childNum = childUrl.match(/\/(\d+)$/)?.[1];
 
-          // Link as sub-issue (retry — GitHub may not have indexed the new issue yet)
-          let childId;
-          for (let attempt = 0; attempt < 3; attempt++) {
-            try {
-              childId = getIssueNodeId(repo, parseInt(childNum));
-              break;
-            } catch {
-              if (attempt === 2) throw new Error(`Cannot resolve #${childNum} after 3 attempts`);
-              await new Promise(r => setTimeout(r, 2000));
-            }
-          }
-          ghGraphQL(`mutation($parentId: ID!, $childId: ID!) {
+          // Resolve child node ID (retry — GitHub may not have indexed the new issue yet)
+          const childId = withRetry(
+            () => getIssueNodeId(repo, parseInt(childNum)),
+            { retries: 2, backoff: 2000 }
+          );
+          withRetry(() => ghGraphQL(`mutation($parentId: ID!, $childId: ID!) {
             addSubIssue(input: {issueId: $parentId, subIssueId: $childId}) {
               issue { id }
             }
-          }`, { parentId, childId });
+          }`, { parentId, childId }));
 
           // Add child to project too
           if (project) {
             try {
-              addToProject(project.owner, project.number, childUrl);
+              withRetry(() => addToProject(project.owner, project.number, childUrl));
             } catch { /* parent success is enough */ }
           }
 
@@ -1166,7 +1178,7 @@ async function projectAddBatch(args) {
   for (const num of issueNums) {
     try {
       const url = `https://github.com/${repo}/issues/${num}`;
-      addToProject(project.owner, project.number, url);
+      withRetry(() => addToProject(project.owner, project.number, url));
       results.push({ number: num, status: 'added' });
       out.add(`  #${num} → project ${project.owner}/${project.number}`);
     } catch (e) {
