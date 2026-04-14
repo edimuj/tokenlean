@@ -449,8 +449,9 @@ function summarizeGeneric(stdout, stderr, exitCode) {
 
   if (combined.length <= GENERIC_FAST_PATH_CHAR_LIMIT) {
     const lines = combined.split('\n');
-    // Non-zero exits get a higher "show everything" threshold — diagnostics matter
-    const showAllLimit = exitCode !== 0 ? 80 : 50;
+    // Generic output is often custom tooling where content is intentional.
+    // Use generous thresholds — specialized summarizers handle noisy output.
+    const showAllLimit = exitCode !== 0 ? 250 : 150;
     if (lines.length <= showAllLimit) {
       result.lines = lines;
       result.summary = exitCode === 0 ? '' : `exited with code ${exitCode}`;
@@ -458,9 +459,9 @@ function summarizeGeneric(stdout, stderr, exitCode) {
     }
 
     // Non-zero exits: more head/tail lines, broader pattern, higher cap
-    const headCount = exitCode !== 0 ? 20 : 10;
-    const tailCount = exitCode !== 0 ? 20 : 10;
-    const diagCap = exitCode !== 0 ? 20 : 10;
+    const headCount = exitCode !== 0 ? 40 : 25;
+    const tailCount = exitCode !== 0 ? 40 : 25;
+    const diagCap = exitCode !== 0 ? 25 : 15;
     const diagPattern = exitCode !== 0
       ? /\b(error|Error|ERROR|fatal|FATAL|panic|PANIC|exception|Exception|warn|Warn|WARN|warning|Warning|WARNING|fail|Fail|FAIL|invalid|Invalid|INVALID)\b/
       : /\b(error|Error|ERROR|fatal|FATAL|panic|PANIC|exception|Exception)\b/;
@@ -495,9 +496,9 @@ function summarizeGeneric(stdout, stderr, exitCode) {
 
   // Large-output fast path: avoid splitting the entire output into an array.
   const totalLines = countLines(combined);
-  const headCount = exitCode !== 0 ? 20 : 10;
-  const tailCount = exitCode !== 0 ? 20 : 10;
-  const diagCap = exitCode !== 0 ? 20 : 10;
+  const headCount = exitCode !== 0 ? 40 : 25;
+  const tailCount = exitCode !== 0 ? 40 : 25;
+  const diagCap = exitCode !== 0 ? 25 : 15;
   const diagPattern = exitCode !== 0
     ? /\b(error|Error|ERROR|fatal|FATAL|panic|PANIC|exception|Exception|warn|Warn|WARN|warning|Warning|WARNING|fail|Fail|FAIL|invalid|Invalid|INVALID)\b/
     : /\b(error|Error|ERROR|fatal|FATAL|panic|PANIC|exception|Exception)\b/;
@@ -533,6 +534,128 @@ function summarizeGeneric(stdout, stderr, exitCode) {
   result.summary = `${totalLines} total lines`;
 
   return result;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Smart Budget Truncation (generic output + explicit -l/-t)
+// ─────────────────────────────────────────────────────────────
+
+function scoreLine(line) {
+  const t = line.trim();
+  if (!t) return -1;
+
+  let s = 0;
+
+  // Hard error keywords (+3)
+  if (/\b(error|Error|ERROR|fatal|FATAL|panic|PANIC|exception|Exception|fail|Fail|FAIL|invalid|Invalid|INVALID)\b/.test(t)) s += 3;
+
+  // Warning keywords (+2)
+  if (/\b(warn|Warn|WARN|warning|Warning|WARNING)\b/.test(t)) s += 2;
+
+  // Soft problems — existence and access (+2)
+  if (/\b(not found|does not exist|doesn't exist|no such|missing|unavailable)\b/i.test(t)) s += 2;
+  if (/\b(denied|refused|rejected|unauthorized|forbidden|inaccessible)\b/i.test(t)) s += 2;
+
+  // Soft problems — state and quality (+2)
+  if (/\b(deprecated|obsolete|outdated|stale|insecure|vulnerab\w+)\b/i.test(t)) s += 2;
+  if (/\b(cannot|can't|unable|unsupported|unrecognized|unexpected|unhandled|unknown)\b/i.test(t)) s += 2;
+  if (/\b(timed? ?out|broken|corrupt(?:ed)?|crash(?:ed)?|abort(?:ed)?|unreachable)\b/i.test(t)) s += 2;
+
+  // Soft problems — lower confidence (+1)
+  if (/\b(mismatch|incompatible|conflict|exceeded|exhausted|truncated)\b/i.test(t)) s += 1;
+  if (/\b(overflow|leak(?:ed)?|skipped|retrying|degraded|duplicate)\b/i.test(t)) s += 1;
+
+  // Result indicators — unicode + text (+2)
+  if (/[✓✗✘✔✕⚠●]/.test(t)) s += 2;
+  if (/\b(PASS|VALID|INVALID|SUCCESS|PASSED|FAILED|OK|TIMEOUT|DONE|COMPLETE)\b/.test(t)) s += 2;
+
+  // Section headers and structural markers
+  if (/^[━═─┌┐└┘├┤┬┴┼│╔╗╚╝╠╣╦╩╬║]{3,}/.test(t)) s += 1;
+  if (/^#{1,4}\s/.test(t)) s += 2;
+  if (/^[A-Z][A-Za-z ]+:\s*$/.test(t)) s += 1;
+  if (/^──\s/.test(t)) s += 2;
+
+  // Statistics and summaries (+1)
+  if (/\b\d+(\.\d+)?%/.test(t)) s += 1;
+  if (/\b(Total|Count|Sum|Average|Median|Summary|Result|Statistics)[\s:]/i.test(t)) s += 1;
+
+  // Source references with error context (+2)
+  if (/[^\s]+:\d+/.test(t) && /\b(error|warn|fail)/i.test(t)) s += 2;
+
+  // Low-value lines (-1)
+  if (/^\[DEBUG/.test(t)) s -= 1;
+  if (/^\s*(at |    at )/.test(line)) s -= 1;
+
+  return s;
+}
+
+function smartBudgetGeneric(stdout, stderr, exitCode, budget) {
+  const combined = (stdout + (stderr ? '\n' + stderr : '')).trim();
+  const result = { summary: '', lines: [] };
+
+  if (!combined) {
+    result.summary = exitCode === 0 ? '' : `exited with code ${exitCode}`;
+    return result;
+  }
+
+  const lines = combined.split('\n');
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+
+  if (lines.length <= budget) {
+    result.lines = lines;
+    result.summary = exitCode === 0 ? '' : `exited with code ${exitCode}`;
+    return result;
+  }
+
+  // Distribute budget: 30% head, 30% tail, rest for scored middle
+  const headCount = Math.max(5, Math.ceil(budget * 0.3));
+  const tailCount = Math.max(5, Math.ceil(budget * 0.3));
+  const markerLines = 3; // blank + omission line + blank
+  const middleBudget = Math.max(0, budget - headCount - tailCount - markerLines);
+
+  const head = lines.slice(0, headCount);
+  const tail = lines.slice(-tailCount);
+  const middle = lines.slice(headCount, lines.length - tailCount);
+
+  // Score and select best middle lines, preserving original order
+  let selectedMiddle = [];
+  if (middleBudget > 0 && middle.length > 0) {
+    const scored = middle.map((line, idx) => ({ line, idx, score: scoreLine(line) }));
+    scored.sort((a, b) => b.score - a.score || a.idx - b.idx);
+    const top = scored.slice(0, middleBudget);
+    top.sort((a, b) => a.idx - b.idx); // restore original order
+    selectedMiddle = top.map(s => s.line);
+  }
+
+  const omitted = middle.length - selectedMiddle.length;
+
+  result.lines = [...head, ''];
+  if (omitted > 0) {
+    result.lines.push(
+      `... ${omitted} lines omitted` +
+      (selectedMiddle.length > 0 ? ` (${selectedMiddle.length} high-value lines kept)` : '')
+    );
+  }
+  if (selectedMiddle.length > 0) {
+    result.lines.push('', ...selectedMiddle);
+  }
+  result.lines.push('', ...tail);
+
+  result.summary = `${lines.length} total lines → ${budget} budget`;
+
+  return result;
+}
+
+function computeLineBudget(opts) {
+  let budget = Infinity;
+  if (opts.maxLines < Infinity) {
+    budget = Math.min(budget, opts.maxLines - 5); // reserve for headers
+  }
+  if (opts.maxTokens < Infinity) {
+    // ~4 chars/token, ~60 chars/line average
+    budget = Math.min(budget, Math.floor((opts.maxTokens * 4) / 60) - 5);
+  }
+  return budget < Infinity ? Math.max(15, budget) : Infinity;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -748,9 +871,15 @@ function main() {
     case 'lint':
       summary = summarizeLint(summaryStdout, summaryStderr, result.exitCode);
       break;
-    default:
-      summary = summarizeGeneric(result.stdout, result.stderr, result.exitCode);
+    default: {
+      const lineBudget = computeLineBudget(opts);
+      if (lineBudget < Infinity) {
+        summary = smartBudgetGeneric(result.stdout, result.stderr, result.exitCode, lineBudget);
+      } else {
+        summary = summarizeGeneric(result.stdout, result.stderr, result.exitCode);
+      }
       break;
+    }
   }
 
   // Format output
