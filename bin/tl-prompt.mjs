@@ -26,17 +26,19 @@ if (process.argv.includes('--prompt')) {
 
 // The tools agents actually reach for (from real agent feedback)
 const CORE_TOOLS = [
-  { name: 'tl-symbols',  usage: 'tl-symbols <file>',               desc: 'Function/class signatures without bodies' },
-  { name: 'tl-snippet',  usage: 'tl-snippet <name> <file>',        desc: 'Extract one function/class by name' },
-  { name: 'tl-impact',   usage: 'tl-impact <file>',                desc: 'What depends on this file (run before modifying)' },
-  { name: 'tl-run',      usage: 'tl-run "<cmd>"',                  desc: 'Token-efficient command output (tests, builds, linters)' },
-  { name: 'tl-guard',    usage: 'tl-guard',                        desc: 'Pre-commit check (secrets, TODOs, unused exports, circular deps)' },
-  { name: 'tl-structure', usage: 'tl-structure',                   desc: 'Project overview with token estimates' },
-  { name: 'tl-browse',   usage: 'tl-browse <url>',                 desc: 'Fetch any URL as clean markdown' },
-  { name: 'tl-context7', usage: 'tl-context7 <lib> [query] -t N', desc: 'Latest library/framework docs' },
-  { name: 'tl-component', usage: 'tl-component <file>',            desc: 'React component profile (props, hooks, state)' },
-  { name: 'tl-analyze',  usage: 'tl-analyze <file>',               desc: 'Composite file profile (symbols + deps + impact + complexity)' },
+  { name: 'tl-symbols',  usage: 'tl symbols <file>',               desc: 'Function/class signatures without bodies' },
+  { name: 'tl-snippet',  usage: 'tl snippet <name> <file>',        desc: 'Extract one function/class by name' },
+  { name: 'tl-impact',   usage: 'tl impact <file>',                desc: 'What depends on this file (run before modifying)' },
+  { name: 'tl-run',      usage: 'tl run "<cmd>"',                  desc: 'Token-efficient command output (tests, builds, linters)' },
+  { name: 'tl-guard',    usage: 'tl guard',                        desc: 'Pre-commit check (secrets, TODOs, unused exports, circular deps)' },
+  { name: 'tl-structure', usage: 'tl structure',                   desc: 'Project overview with token estimates' },
+  { name: 'tl-browse',   usage: 'tl browse <url>',                 desc: 'Fetch any URL as clean markdown' },
+  { name: 'tl-context7', usage: 'tl context7 <lib> [query] -t N', desc: 'Latest library/framework docs' },
+  { name: 'tl-component', usage: 'tl component <file>',            desc: 'React component profile (props, hooks, state)' },
+  { name: 'tl-analyze',  usage: 'tl analyze <file>',               desc: 'Composite file profile (symbols + deps + impact + complexity)' },
 ];
+
+function subName(name) { return name.replace(/^tl-/, ''); }
 
 const CORE_NAMES = new Set(CORE_TOOLS.map(t => t.name));
 
@@ -72,14 +74,16 @@ function generateFull(tools) {
 
   let output = `## tokenlean — CLI tools for AI agents
 
-### When to use tl-* vs. just reading the file
+Use \`tl <command>\` for all operations. One tool, many subcommands.
 
-- **<150 lines**: Just read it — tl-* overhead costs more than the file itself
-- **150-400 lines**: \`tl-symbols\` first, then \`tl-snippet <name>\` for specific functions
-- **400+ lines**: Always \`tl-symbols\` first — never read the whole file unless you truly need it all
-- **Tests/builds/linters**: Always wrap with \`tl-run\` — filters noise, saves hundreds of tokens
+### When to use tl vs. just reading the file
 
-### Core tools
+- **<150 lines**: Just read it — tl overhead costs more than the file itself
+- **150-400 lines**: \`tl symbols\` first, then \`tl snippet <name>\` for specific functions
+- **400+ lines**: Always \`tl symbols\` first — never read the whole file unless you truly need it all
+- **Tests/builds/linters**: Always wrap with \`tl run\` — filters noise, saves hundreds of tokens
+
+### Core commands
 
 | Command | Purpose |
 |---------|---------|
@@ -92,18 +96,19 @@ function generateFull(tools) {
   output += `
 ### Rules
 
-- **Before reading a source file**, run \`tl-symbols <file>\` first. Only read the full file if you need implementation details.
-- **Before modifying a file**, run \`tl-impact <file>\` to understand what depends on it and what might break.
-- **Before committing**, run \`tl-guard\` to catch secrets, new TODOs, unused exports, and circular deps.
-- **When running commands**, wrap with \`tl-run "<cmd>"\` — it extracts only errors and key output.
-- **When exploring an unfamiliar codebase**, start with \`tl-structure\` before diving into files.
-- **When you need library docs**, use \`tl-context7 <lib> [query] -t N\` — your training data is stale.
-- All tools support \`-j\` (JSON), \`-q\` (quiet), \`-l N\` (limit lines), \`-t N\` (limit tokens), and \`--help\`.
+- **Before reading a source file**, run \`tl symbols <file>\` first. Only read the full file if you need implementation details.
+- **Before modifying a file**, run \`tl impact <file>\` to understand what depends on it and what might break.
+- **Before committing**, run \`tl guard\` to catch secrets, new TODOs, unused exports, and circular deps.
+- **When running commands**, wrap with \`tl run "<cmd>"\` — it extracts only errors and key output.
+- **When exploring an unfamiliar codebase**, start with \`tl structure\` before diving into files.
+- **When you need library docs**, use \`tl context7 <lib> [query] -t N\` — your training data is stale.
+- All commands support \`-j\` (JSON), \`-q\` (quiet), \`-l N\` (limit lines), \`-t N\` (limit tokens), and \`--help\`.
+- Run \`tl --help\` for the full command list.
 `;
 
   if (rest.length > 0) {
     output += `
-### Full catalog
+### More commands
 
 `;
 
@@ -120,7 +125,7 @@ function generateFull(tools) {
 
     for (const [, group] of Object.entries(groups)) {
       if (group.tools.length === 0) continue;
-      const names = group.tools.map(t => `\`${t.name}\` ${t.desc}`).join(' | ');
+      const names = group.tools.map(t => `\`tl ${subName(t.name)}\` ${t.desc}`).join(' | ');
       output += `**${group.title}:** ${names}\n\n`;
     }
   }
@@ -133,15 +138,17 @@ function generateFullCodex(tools) {
 
   let output = `## tokenlean - Codex agent profile
 
+Use \`tl <command>\` for all operations. One tool, many subcommands.
+
 ### Codex workflow for token-efficient execution
 
-- **Unknown repository**: Start with \`tl-structure\` to map the project before opening files
-- **Before reading implementation**: Run \`tl-symbols <file>\` first; then use \`tl-snippet <name> <file>\` for focused code
-- **Before editing**: Run \`tl-impact <file>\` and \`tl-related <file>\` to avoid regressions
-- **Tests/build/lint**: Wrap commands with \`tl-run "<cmd>"\` to keep only actionable output
+- **Unknown repository**: Start with \`tl structure\` to map the project before opening files
+- **Before reading implementation**: Run \`tl symbols <file>\` first; then use \`tl snippet <name> <file>\` for focused code
+- **Before editing**: Run \`tl impact <file>\` and \`tl related <file>\` to avoid regressions
+- **Tests/build/lint**: Wrap commands with \`tl run "<cmd>"\` to keep only actionable output
 - **Large outputs**: Prefer \`-t N\` and \`-l N\` to cap context usage
 
-### Core tools
+### Core commands
 
 | Command | Purpose |
 |---------|---------|
@@ -154,18 +161,19 @@ function generateFullCodex(tools) {
   output += `
 ### Codex rules
 
-- Use \`tl-structure\` first when project layout is unclear.
-- Use \`tl-symbols\` before reading source files; pull full files only when signatures are insufficient.
-- Use \`tl-impact\` before edits and \`tl-guard\` before commit.
-- Use \`tl-run\` for noisy commands; use \`--raw\` only when summaries hide needed detail.
+- Use \`tl structure\` first when project layout is unclear.
+- Use \`tl symbols\` before reading source files; pull full files only when signatures are insufficient.
+- Use \`tl impact\` before edits and \`tl guard\` before commit.
+- Use \`tl run\` for noisy commands; use \`--raw\` only when summaries hide needed detail.
 - Use \`-j\` when machine-readable output helps chaining.
-- Use \`tl-context7 <lib> [query] -t N\` for current docs.
-- All tools support \`-j\`, \`-q\`, \`-l N\`, \`-t N\`, and \`--help\`.
+- Use \`tl context7 <lib> [query] -t N\` for current docs.
+- All commands support \`-j\`, \`-q\`, \`-l N\`, \`-t N\`, and \`--help\`.
+- Run \`tl --help\` for the full command list.
 `;
 
   if (rest.length > 0) {
     output += `
-### Full catalog
+### More commands
 
 `;
 
@@ -182,7 +190,7 @@ function generateFullCodex(tools) {
 
     for (const [, group] of Object.entries(groups)) {
       if (group.tools.length === 0) continue;
-      const names = group.tools.map(t => `\`${t.name}\` ${t.desc}`).join(' | ');
+      const names = group.tools.map(t => `\`tl ${subName(t.name)}\` ${t.desc}`).join(' | ');
       output += `**${group.title}:** ${names}\n\n`;
     }
   }
@@ -194,9 +202,11 @@ function generateMinimal(tools) {
   let lines = [
     '## tokenlean',
     '',
-    'When to use: <150 lines just read it. 150-400: `tl-symbols` first, `tl-snippet` for specifics. 400+: always `tl-symbols` first. Tests/builds: always `tl-run`.',
+    'Use `tl <command>` for all operations. One tool, many subcommands.',
     '',
-    'Core tools:',
+    'When to use: <150 lines just read it. 150-400: `tl symbols` first, `tl snippet` for specifics. 400+: always `tl symbols` first. Tests/builds: always `tl run`.',
+    '',
+    'Core commands:',
   ];
 
   for (const tool of CORE_TOOLS) {
@@ -205,17 +215,18 @@ function generateMinimal(tools) {
 
   lines.push('');
   lines.push('Rules:');
-  lines.push('- Before reading a source file, run `tl-symbols <file>` first.');
-  lines.push('- Before modifying a file, run `tl-impact <file>` to check dependents.');
-  lines.push('- Before committing, run `tl-guard`.');
-  lines.push('- Wrap test/build/lint commands with `tl-run "<cmd>"`.');
-  lines.push('- For library docs, use `tl-context7 <lib> [query] -t N`.');
-  lines.push('- All tools: `-j` (JSON), `-q` (quiet), `-l N` (limit), `-t N` (tokens), `--help`.');
+  lines.push('- Before reading a source file, run `tl symbols <file>` first.');
+  lines.push('- Before modifying a file, run `tl impact <file>` to check dependents.');
+  lines.push('- Before committing, run `tl guard`.');
+  lines.push('- Wrap test/build/lint commands with `tl run "<cmd>"`.');
+  lines.push('- For library docs, use `tl context7 <lib> [query] -t N`.');
+  lines.push('- All commands: `-j` (JSON), `-q` (quiet), `-l N` (limit), `-t N` (tokens), `--help`.');
+  lines.push('- Run `tl --help` for full command list.');
 
   const rest = tools.filter(t => !CORE_NAMES.has(t.name));
   if (rest.length > 0) {
     lines.push('');
-    lines.push(`Also available (${rest.length} more): ${rest.map(t => `\`${t.name}\``).join(', ')}`);
+    lines.push(`More commands (${rest.length}): ${rest.map(t => `\`tl ${subName(t.name)}\``).join(', ')}`);
   }
 
   return lines.join('\n');
@@ -225,9 +236,11 @@ function generateMinimalCodex(tools) {
   let lines = [
     '## tokenlean (Codex profile)',
     '',
-    'Workflow: unknown repo -> `tl-structure`; before read -> `tl-symbols`; focused read -> `tl-snippet`; before edit -> `tl-impact` + `tl-related`; tests/build/lint -> `tl-run`.',
+    'Use `tl <command>` for all operations. One tool, many subcommands.',
     '',
-    'Core tools:',
+    'Workflow: unknown repo -> `tl structure`; before read -> `tl symbols`; focused read -> `tl snippet`; before edit -> `tl impact` + `tl related`; tests/build/lint -> `tl run`.',
+    '',
+    'Core commands:',
   ];
 
   for (const tool of CORE_TOOLS) {
@@ -236,17 +249,18 @@ function generateMinimalCodex(tools) {
 
   lines.push('');
   lines.push('Rules:');
-  lines.push('- Prefer signatures first (`tl-symbols`) before full file reads.');
-  lines.push('- Run `tl-impact <file>` before edits and `tl-guard` before commit.');
-  lines.push('- Wrap noisy commands with `tl-run "<cmd>"`; use `--raw` only if needed.');
+  lines.push('- Prefer signatures first (`tl symbols`) before full file reads.');
+  lines.push('- Run `tl impact <file>` before edits and `tl guard` before commit.');
+  lines.push('- Wrap noisy commands with `tl run "<cmd>"`; use `--raw` only if needed.');
   lines.push('- Use `-t N` and `-l N` aggressively to cap context.');
   lines.push('- Use `-j` when output should be parsed or chained.');
-  lines.push('- For docs, use `tl-context7 <lib> [query] -t N`.');
+  lines.push('- For docs, use `tl context7 <lib> [query] -t N`.');
+  lines.push('- Run `tl --help` for full command list.');
 
   const rest = tools.filter(t => !CORE_NAMES.has(t.name));
   if (rest.length > 0) {
     lines.push('');
-    lines.push(`Also available (${rest.length} more): ${rest.map(t => `\`${t.name}\``).join(', ')}`);
+    lines.push(`More commands (${rest.length}): ${rest.map(t => `\`tl ${subName(t.name)}\``).join(', ')}`);
   }
 
   return lines.join('\n');
