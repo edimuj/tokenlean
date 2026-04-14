@@ -206,6 +206,19 @@ No daemon needed. Each agent session spawns a fresh process:
 }
 ```
 
+Only register specific MCP tools when you want a smaller surface area:
+
+```json
+{
+  "mcpServers": {
+    "tokenlean": {
+      "command": "tl-mcp",
+      "args": ["--tools", "symbols,snippet,run"]
+    }
+  }
+}
+```
+
 ### Persistent daemon modes
 
 `tl-mcp` now supports three useful daemon styles:
