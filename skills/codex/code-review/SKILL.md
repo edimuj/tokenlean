@@ -1,7 +1,7 @@
 ---
 name: code-review
 description: Review changes in Codex with a risk-first workflow: establish scope, inspect high-impact files first, identify regressions/security issues, and report findings by severity.
-compatibility: Codex CLI with terminal access, git (tokenlean CLI optional)
+compatibility: Codex CLI with terminal access, git, tokenlean CLI (npm i -g tokenlean)
 ---
 
 # Code Review (Codex)
@@ -17,49 +17,43 @@ Scope -> Risk map -> Deep review -> Verify assumptions -> Output
 ### 1. Scope
 
 ```bash
-git status --short
-git diff --stat
-git diff
-```
-
-For branch/PR-style review:
-
-```bash
-git log --oneline --decorate -n 20
-git diff <base>...HEAD --stat
-git diff <base>...HEAD
+tl diff                   # Staged/unstaged changes, token-efficient
+tl diff <ref>             # Specific commit range
+tl pr                     # For branch/PR review
 ```
 
 ### 2. Risk map
 
-Prioritize files that are:
-- Public interfaces (`bin/`, exported modules, shared utilities)
-- Security-sensitive (shell/command execution, path handling)
-- High fan-out (widely imported modules)
-
-Useful probes:
+For each changed file, run in parallel:
 
 ```bash
-rg -n "export |spawn|exec|rm -rf|chmod|process\.env|token|secret" src bin
-rg -n "<changed symbol>" src test
+tl impact <file>          # What depends on this file — will anything break?
+tl symbols <file>         # Signatures overview — understand without reading
+tl complexity <file>      # Complexity — flag functions getting too complex
+```
+
+For files with high impact (many dependents):
+
+```bash
+tl exports <file>         # Was the public API changed?
 ```
 
 ### 3. Deep review
 
-For each high-risk file, check:
-- Correctness and edge cases
-- Backward compatibility
-- Error handling and exit codes
-- Injection/path traversal risks for shell and file operations
+Read the actual diff. You already know:
+- **What changed** (from step 1)
+- **What depends on it** (from tl impact)
+- **The shape of the code** (from tl symbols)
+- **Complexity hotspots** (from tl complexity)
+
+Use `tl snippet <function> <file>` to read specific changed functions rather than full files.
 
 ### 4. Verify assumptions
 
 ```bash
-npm test
-node bin/<changed-tool>.mjs --help
+tl guard                  # Secrets, stale TODOs, unused exports, circular deps
+tl run "npm test"         # Token-efficient test output
 ```
-
-Run targeted commands that exercise changed behavior.
 
 ### 5. Output format
 
@@ -81,3 +75,5 @@ Severity: `critical`, `warning`, `nit`.
 - Findings first, summary second.
 - Avoid style-only feedback unless it affects maintainability or bugs.
 - If no findings, explicitly state that and mention residual risk.
+- For test files, skip tl impact (nothing depends on tests).
+- If a file is under 150 lines, just read it directly.

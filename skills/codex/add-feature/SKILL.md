@@ -1,7 +1,7 @@
 ---
 name: add-feature
 description: Add new functionality in Codex by mapping existing architecture first, then implementing the smallest compatible change and verifying behavior with focused checks.
-compatibility: Codex CLI with terminal access, Node.js >=18, git (tokenlean CLI optional)
+compatibility: Codex CLI with terminal access, Node.js >=18, git, tokenlean CLI (npm i -g tokenlean)
 ---
 
 # Add Feature (Codex)
@@ -17,29 +17,19 @@ Locate -> Understand -> Implement -> Integrate -> Verify
 ### 1. Locate
 
 ```bash
-rg --files
-rg -n "<feature keyword>" src bin test
+tl structure              # Project layout and file counts
+tl entry                  # Entry points (bin/, routing, handlers)
 ```
 
-Find:
-- Where similar behavior already exists
-- Entry points (`bin/`, routing, handlers)
-- Files most likely to own the feature
+Find where similar behavior already exists and which files most likely own the feature.
 
 ### 2. Understand
 
 ```bash
-sed -n '1,220p' <target-file>
-rg -n "export |function |class " <target-file>
-rg -n "<target symbol>" src test
-```
-
-If available, tokenlean shortcuts:
-
-```bash
-tl-symbols <target-file>
-tl-deps <target-file>
-tl-exports <target-file>
+tl symbols <target-file>  # Signatures — what's already there
+tl deps <target-file>     # What does it depend on?
+tl exports <target-file>  # Public API surface
+tl snippet <function> <file>  # Read specific functions, not whole files
 ```
 
 ### 3. Implement
@@ -51,7 +41,8 @@ tl-exports <target-file>
 ### 4. Integrate
 
 ```bash
-rg -n "<new symbol|flag|option>" src bin test
+tl impact <changed-file>  # Will the change affect dependents?
+tl guard                  # Circular deps, unused exports, secrets
 ```
 
 Check:
@@ -62,8 +53,8 @@ Check:
 ### 5. Verify
 
 ```bash
-npm test
-node bin/<changed-tool>.mjs --help
+tl run "npm test"         # Token-efficient test output
+tl run "node bin/<changed-tool>.mjs --help"  # Verify help works
 ```
 
 Use narrower checks first when possible (single test file or targeted command), then broader checks.

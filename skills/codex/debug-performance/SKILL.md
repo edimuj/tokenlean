@@ -1,7 +1,7 @@
 ---
 name: debug-performance
 description: Improve performance in Codex by measuring baseline behavior, isolating hot paths, implementing focused optimizations, and confirming wins with before/after numbers.
-compatibility: Codex CLI with terminal access, git (tokenlean CLI optional)
+compatibility: Codex CLI with terminal access, git, tokenlean CLI (npm i -g tokenlean)
 ---
 
 # Debug Performance (Codex)
@@ -17,7 +17,7 @@ Measure -> Isolate -> Analyze -> Optimize -> Confirm
 ### 1. Measure
 
 ```bash
-time <command>
+tl run "time <command>"   # Capture baseline with token-efficient output
 ```
 
 Capture baseline metrics (latency, throughput, memory) before edits.
@@ -25,18 +25,19 @@ Capture baseline metrics (latency, throughput, memory) before edits.
 ### 2. Isolate
 
 ```bash
-rg -n "<slow operation symbol>" src
-rg -n "for |while |map\(|filter\(|reduce\(" <suspect-file>
+tl symbols <suspect-file>     # Identify functions to investigate
+tl complexity <suspect-file>  # Find high-complexity hotspots
+tl hotspots                   # Which files change most (often correlates with perf issues)
 ```
 
 Prioritize hot paths and repeated work.
 
 ### 3. Analyze
 
-Inspect only relevant functions/loops/I/O:
-
 ```bash
-sed -n '1,260p' <suspect-file>
+tl snippet <function> <file>  # Read only the suspect function
+tl flow <function> <file>     # Call graph — what calls what
+tl deps <file>                # What does it pull in?
 ```
 
 Check for:
@@ -54,8 +55,8 @@ Check for:
 ### 5. Confirm
 
 ```bash
-time <same command>
-npm test
+tl run "time <same command>"  # After — compare with baseline
+tl run "npm test"             # Ensure no regressions
 ```
 
 Report before/after numbers. No numbers means no verified gain.

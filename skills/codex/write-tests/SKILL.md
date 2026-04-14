@@ -1,7 +1,7 @@
 ---
 name: write-tests
 description: Write high-value tests in Codex by matching repository test conventions, prioritizing public behavior, and validating coverage gains without overfitting implementation details.
-compatibility: Codex CLI with terminal access, Node.js test tooling, git (tokenlean CLI optional)
+compatibility: Codex CLI with terminal access, Node.js test tooling, git, tokenlean CLI (npm i -g tokenlean)
 ---
 
 # Write Tests (Codex)
@@ -17,8 +17,9 @@ Discover patterns -> Understand unit -> Design cases -> Implement tests -> Valid
 ### 1. Discover test patterns
 
 ```bash
-rg --files test src | rg "test|spec"
-rg -n "describe\(|it\(|test\(" test src
+tl structure              # Find test directories and file layout
+tl symbols test/          # See existing test structure and naming
+tl related <source-file>  # Find existing tests for the file
 ```
 
 Match existing test style, helpers, and naming.
@@ -26,8 +27,9 @@ Match existing test style, helpers, and naming.
 ### 2. Understand code under test
 
 ```bash
-sed -n '1,260p' <source-file>
-rg -n "export |function |class " <source-file>
+tl symbols <source-file>      # What functions/classes exist?
+tl exports <source-file>      # What's the public API to test?
+tl snippet <function> <file>  # Read specific function implementations
 ```
 
 Prioritize exported/public behavior.
@@ -48,7 +50,7 @@ Cover:
 ### 5. Validate
 
 ```bash
-npm test
+tl run "npm test"         # Token-efficient output — shows only failures
 ```
 
 If available, run targeted test files first, then full suite.
@@ -58,3 +60,4 @@ If available, run targeted test files first, then full suite.
 - One clear behavior per test.
 - Avoid brittle assertions tied to implementation details.
 - Add regression tests for every bug fix when feasible.
+- `tl test-map <source-file>` shows which test files cover a given source file.

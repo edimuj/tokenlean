@@ -1,7 +1,7 @@
 ---
 name: upgrade-deps
 description: Upgrade dependencies in Codex with version-jump-aware rigor: audit usage, read changelogs, apply minimal bumps, and verify behavior through targeted and full tests.
-compatibility: Codex CLI with terminal access, npm, git (tokenlean CLI optional)
+compatibility: Codex CLI with terminal access, npm, git, tokenlean CLI (npm i -g tokenlean)
 ---
 
 # Upgrade Deps (Codex)
@@ -18,7 +18,8 @@ Audit -> Research -> Upgrade -> Verify -> Clean up
 
 ```bash
 npm ls <package>
-rg -n "<package>|<imported symbol>" src test bin
+tl impact <file>          # What depends on files that use this package?
+tl deps <file>            # Trace imports from the package
 ```
 
 ### 2. Research change surface
@@ -27,6 +28,8 @@ Review release notes/changelog for:
 - Removed/renamed APIs
 - Changed defaults
 - New peer dependencies
+
+Use `tl browse <changelog-url>` to fetch changelogs as clean markdown.
 
 ### 3. Upgrade
 
@@ -39,8 +42,8 @@ Keep upgrades scoped when possible (one major dependency at a time).
 ### 4. Verify
 
 ```bash
-npm test
-node bin/<affected-tool>.mjs --help
+tl run "npm test"         # Token-efficient test output
+tl guard                  # Check for broken imports, circular deps
 ```
 
 Run targeted usage checks for files that import the upgraded package.
@@ -48,10 +51,10 @@ Run targeted usage checks for files that import the upgraded package.
 ### 5. Clean up
 
 ```bash
-rg -n "<legacy workaround|old API usage>" src test bin
+tl unused                 # Find dead compatibility code
 ```
 
-Remove obsolete compatibility code when safe.
+Remove obsolete workarounds when safe.
 
 ## Decision guide
 
@@ -63,3 +66,4 @@ Remove obsolete compatibility code when safe.
 
 - Avoid combining unrelated upgrades in one patch.
 - If a major upgrade is risky, stage changes in batches.
+- Use `tl symbols <file>` to check if API surface changed after upgrade.

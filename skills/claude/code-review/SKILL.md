@@ -18,13 +18,13 @@ Changes → Scope check → Context gathering → Deep review → Output
 
 ```bash
 # For a PR or branch
-tl-pr
+tl pr
 
 # For uncommitted work
-tl-diff
+tl diff
 
 # For a specific commit range
-tl-diff <ref>
+tl diff <ref>
 ```
 
 If the diff is large (>20 files), focus on the highest-impact files first.
@@ -34,31 +34,31 @@ If the diff is large (>20 files), focus on the highest-impact files first.
 For each changed file, run these in parallel:
 
 ```bash
-tl-impact <file>      # What depends on this file — will anything break?
-tl-symbols <file>     # Signatures overview — understand the file without reading it
-tl-complexity <file>  # Cyclomatic complexity — flag functions that are getting too complex
+tl impact <file>      # What depends on this file — will anything break?
+tl symbols <file>     # Signatures overview — understand the file without reading it
+tl complexity <file>  # Cyclomatic complexity — flag functions that are getting too complex
 ```
 
 For files with high impact (many dependents), also run:
 
 ```bash
-tl-exports <file>     # Was the public API changed? Are exports still compatible?
+tl exports <file>     # Was the public API changed? Are exports still compatible?
 ```
 
 ### 3. Review the code
 
 Now read the actual diff. You already know:
 - **What changed** (from step 1)
-- **What depends on it** (from tl-impact)
-- **The shape of the code** (from tl-symbols)
-- **Complexity hotspots** (from tl-complexity)
+- **What depends on it** (from `tl impact`)
+- **The shape of the code** (from `tl symbols`)
+- **Complexity hotspots** (from `tl complexity`)
 
-Use `tl-snippet <function> <file>` to read specific changed functions rather than full files.
+Use `tl snippet <function> <file>` to read specific changed functions rather than full files.
 
 ### 4. Check for common issues
 
 ```bash
-tl-guard              # Secrets, stale TODOs, unused exports, circular deps
+tl guard              # Secrets, stale TODOs, unused exports, circular deps
 ```
 
 ### 5. Output format
@@ -84,7 +84,7 @@ Severity levels: **critical** (bugs, security), **warning** (potential problems)
 ## Decision tree: how deep to go
 
 ```
-File changed → How many dependents? (tl-impact)
+File changed → How many dependents? (tl impact)
   ├─ 0 dependents → Light review (just read the diff)
   ├─ 1-5 dependents → Standard review (symbols + diff)
   └─ 6+ dependents → Deep review (symbols + exports + snippet each changed function)
@@ -93,6 +93,6 @@ File changed → How many dependents? (tl-impact)
 ## Tips
 
 - Run context-gathering commands in parallel — they're independent
-- For test files, skip tl-impact (nothing depends on tests)
-- `tl-symbols -j` gives JSON output if you need structured data
-- If a file is under 150 lines, just read it directly — tl-* overhead isn't worth it
+- For test files, skip `tl impact` (nothing depends on tests)
+- `tl symbols -j` gives JSON output if you need structured data
+- If a file is under 150 lines, just read it directly — tokenlean overhead isn't worth it

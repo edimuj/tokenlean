@@ -1,7 +1,7 @@
 ---
 name: explore-codebase
 description: Explore unfamiliar repositories in Codex by building a quick structural map, identifying execution entry points, and drilling into only the highest-value files.
-compatibility: Codex CLI with terminal access, git (tokenlean CLI optional)
+compatibility: Codex CLI with terminal access, git, tokenlean CLI (npm i -g tokenlean)
 ---
 
 # Explore Codebase (Codex)
@@ -17,34 +17,41 @@ Map -> Entry points -> Key modules -> Dependencies -> Summary
 ### 1. Map repository
 
 ```bash
-rg --files
-find . -maxdepth 3 -type d | sort
+tl structure
 ```
 
-Identify core directories and likely runtime paths (`bin/`, `src/`, `test/`, config files).
+Identify core directories, file counts, and token estimates. Note likely runtime paths (`bin/`, `src/`, `test/`, config files).
 
 ### 2. Find entry points
 
 ```bash
-ls -la bin
-cat package.json
-rg -n "bin|scripts|main|exports" package.json
+tl entry                  # Main entry points, route handlers, CLI commands
+tl hotspots               # Most frequently changed files (where the action is)
 ```
 
 ### 3. Inspect key modules
 
-```bash
-rg -n "export |function |class " src
-sed -n '1,220p' <key-file>
+For each important file:
+
+```
+File size → Decision
+  ├─ <150 lines → Just read it
+  ├─ 150-400 lines → tl symbols first, tl snippet for specifics
+  └─ 400+ lines → tl symbols only, then tl snippet as needed
 ```
 
-Read smaller files fully; skim larger files by symbol and targeted snippets.
+```bash
+tl symbols <file>         # Signatures — what does this file expose?
+tl symbols src/           # All files in a directory (compact one-liner per file)
+tl exports <file>         # What's the public API?
+```
 
 ### 4. Trace dependencies
 
 ```bash
-rg -n "from '<module>'|require\('<module>'\)" src
-rg -n "<core symbol>" src test bin
+tl deps <file>            # What does it import?
+tl impact <file>          # Who depends on this?
+tl flow <function> <file> # Call graph for a key function
 ```
 
 ### 5. Summarize
@@ -57,6 +64,6 @@ Produce:
 
 ## Tips
 
-- Start broad, then narrow.
-- Avoid opening many large files before you know they matter.
+- Run tl entry and tl hotspots in parallel — they're independent.
+- `tl context <dir>` shows token cost of a directory — skip reading dirs over 50k tokens directly.
 - Use commit history (`git log -- <file>`) to identify active areas.

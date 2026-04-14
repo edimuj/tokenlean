@@ -1,7 +1,7 @@
 ---
 name: debug-bug
 description: Fix bugs in Codex by enforcing reproduction first, tracing the failing path with minimal reads, applying the smallest safe fix, and re-running the repro and relevant tests.
-compatibility: Codex CLI with terminal access, git (tokenlean CLI optional)
+compatibility: Codex CLI with terminal access, git, tokenlean CLI (npm i -g tokenlean)
 ---
 
 # Debug Bug (Codex)
@@ -17,55 +17,48 @@ Reproduce -> Localize -> Trace -> Fix -> Verify
 ### 1. Reproduce
 
 ```bash
-<repro command>
+tl run "<repro command>"  # Capture the actual error output
 ```
 
-Capture exact:
-- Command
-- Error output
-- Exit code
+Capture exact command, error output, and exit code. If no repro command is given, ask for one.
 
 ### 2. Localize
 
 ```bash
-rg -n "<error text|code|symbol>" src test bin
-git log --oneline -- <suspect-file>
-git blame -L <start>,<end> <suspect-file>
+tl errors                 # Scan for error patterns in the codebase
+tl blame <file>           # Recent changes to the suspect file
+tl history <file>         # If this is a regression — what changed recently?
 ```
 
-If stack trace exists, start at top project frame.
+If the error includes a stack trace, start at the top project frame.
 
 ### 3. Trace
 
 ```bash
-rg -n "<function name>" src test
-sed -n '1,260p' <suspect-file>
-```
-
-If available, tokenlean shortcuts:
-
-```bash
-tl-flow <function> <file>
-tl-snippet <function> <file>
+tl flow <function> <file>     # Call graph around the failing function
+tl deps <file>                # What the buggy file depends on
+tl snippet <function> <file>  # Read only the relevant function
 ```
 
 ### 4. Fix
 
-- Apply the minimal change that resolves the root cause.
-- Keep behavior unchanged outside the failing path.
-- Add/update tests when practical.
+Apply the minimal change that resolves the root cause. Then check for side effects:
+
+```bash
+tl guard                  # Circular deps, unused exports, secrets
+tl impact <file>          # Will the fix affect dependents?
+```
 
 ### 5. Verify
 
 ```bash
-<repro command>
-npm test
+tl run "<repro command>"  # Confirm the bug is fixed
+tl run "npm test"         # Ensure no regressions
 ```
-
-Re-run the original repro first, then regression checks.
 
 ## Tips
 
 - Distinguish symptom fixes from root-cause fixes.
 - Prefer deterministic repros over intermittent observations.
-- Record assumptions when full verification is not possible.
+- Run tl blame and tl history in parallel — they're independent.
+- Check `tl diff` for recent regressions — the bug may be in the last few commits.

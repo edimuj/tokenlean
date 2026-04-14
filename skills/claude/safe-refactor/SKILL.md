@@ -17,9 +17,9 @@ Analyze → Plan → Change → Verify
 ### 1. Analyze what you're changing
 
 ```bash
-tl-impact <file>      # Who depends on this file?
-tl-exports <file>     # What's the public API surface?
-tl-symbols <file>     # Full signature map
+tl impact <file>      # Who depends on this file?
+tl exports <file>     # What's the public API surface?
+tl symbols <file>     # Full signature map
 ```
 
 These three commands tell you:
@@ -27,14 +27,14 @@ These three commands tell you:
 - **Contract** — which exports are consumed externally
 - **Shape** — what you're working with
 
-If tl-impact shows 10+ dependents, consider whether this refactor is worth the risk. Discuss with the user.
+If tl impact shows 10+ dependents, consider whether this refactor is worth the risk. Discuss with the user.
 
 ### 2. Understand consumers
 
 For each file that imports from the target:
 
 ```bash
-tl-snippet <imported-symbol> <consumer-file>
+tl snippet <imported-symbol> <consumer-file>
 ```
 
 This shows how the symbol is actually used without reading the entire consumer file.
@@ -44,48 +44,48 @@ This shows how the symbol is actually used without reading the entire consumer f
 Apply the refactor. Then immediately check:
 
 ```bash
-tl-guard              # Circular deps, unused exports, other issues
+tl guard              # Circular deps, unused exports, other issues
 ```
 
 ### 4. Verify
 
 ```bash
-tl-run "<test-command>"   # Run tests — tl-run filters to just errors
-tl-impact <file>          # Re-check: are all dependents still importing correctly?
+tl run "<test-command>"   # Run tests — tl run filters to just errors
+tl impact <file>          # Re-check: are all dependents still importing correctly?
 ```
 
-If tests fail, `tl-run` output shows only the failures. Fix and re-run.
+If tests fail, `tl run` output shows only the failures. Fix and re-run.
 
 ## Decision tree: refactor type
 
 ```
 What are you changing?
   ├─ Renaming a symbol
-  │   → tl-impact to find all importers
+  │   → tl impact to find all importers
   │   → Update all import sites
-  │   → tl-guard to verify no broken imports
+  │   → tl guard to verify no broken imports
   │
   ├─ Moving a file
-  │   → tl-impact for full dependent list
+  │   → tl impact for full dependent list
   │   → Move file, update all import paths
-  │   → tl-guard for circular deps
+  │   → tl guard for circular deps
   │
   ├─ Extracting a function/module
-  │   → tl-symbols + tl-deps on source file
+  │   → tl symbols + tl deps on source file
   │   → Extract, add exports
-  │   → tl-impact on original to update importers
-  │   → tl-guard + tl-run tests
+  │   → tl impact on original to update importers
+  │   → tl guard + tl run tests
   │
   └─ Changing a function signature
-      → tl-impact + tl-flow to find all callers
-      → tl-snippet on each caller to see usage
+      → tl impact + tl flow to find all callers
+      → tl snippet on each caller to see usage
       → Update signature + all call sites
-      → tl-run tests
+      → tl run tests
 ```
 
 ## Tips
 
-- Always check tl-impact BEFORE starting — discovering 50 dependents mid-refactor is painful
-- Run tl-exports before and after: the diff shows if you accidentally changed the public API
+- Always check tl impact BEFORE starting — discovering 50 dependents mid-refactor is painful
+- Run tl exports before and after: the diff shows if you accidentally changed the public API
 - For large refactors (10+ files), make incremental commits so you can bisect failures
-- `tl-unused` after refactoring catches exports you forgot to clean up
+- `tl unused` after refactoring catches exports you forgot to clean up
