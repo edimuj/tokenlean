@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Review changes in Codex with a risk-first workflow: establish scope, inspect high-impact files first, identify regressions/security issues, and report findings by severity.
+description: "Review changes in Codex with a risk-first workflow: establish scope, inspect high-impact files first, identify regressions/security issues, and report findings by severity."
 compatibility: Codex CLI with terminal access, git, tokenlean CLI (npm i -g tokenlean)
 ---
 

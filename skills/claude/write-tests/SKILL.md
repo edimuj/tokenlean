@@ -1,6 +1,6 @@
 ---
 name: write-tests
-description: Write effective tests by studying existing test patterns and understanding the code under test before writing assertions. Discovers test conventions, prioritizes public API coverage, and validates results. Use when asked to write tests, add test coverage, or create test files.
+description: "Write effective tests by studying existing test patterns and understanding the code under test before writing assertions. Discovers test conventions, prioritizes public API coverage, and validates results. Use when asked to write tests, add test coverage, or create test files."
 compatibility: Requires tokenlean CLI tools (npm i -g tokenlean) and git
 ---
 

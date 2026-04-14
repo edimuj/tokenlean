@@ -1,6 +1,6 @@
 ---
 name: debug-bug
-description: Fix bugs in Codex by enforcing reproduction first, tracing the failing path with minimal reads, applying the smallest safe fix, and re-running the repro and relevant tests.
+description: "Fix bugs in Codex by enforcing reproduction first, tracing the failing path with minimal reads, applying the smallest safe fix, and re-running the repro and relevant tests."
 compatibility: Codex CLI with terminal access, git, tokenlean CLI (npm i -g tokenlean)
 ---
 

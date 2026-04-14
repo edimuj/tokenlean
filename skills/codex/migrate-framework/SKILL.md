@@ -1,6 +1,6 @@
 ---
 name: migrate-framework
-description: Execute framework or API migrations in Codex through dependency-ordered batches, validating each batch before moving on to keep the codebase continuously working.
+description: "Execute framework or API migrations in Codex through dependency-ordered batches, validating each batch before moving on to keep the codebase continuously working."
 compatibility: Codex CLI with terminal access, git, tokenlean CLI (npm i -g tokenlean)
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: add-feature
-description: Add new functionality in Codex by mapping existing architecture first, then implementing the smallest compatible change and verifying behavior with focused checks.
+description: "Add new functionality in Codex by mapping existing architecture first, then implementing the smallest compatible change and verifying behavior with focused checks."
 compatibility: Codex CLI with terminal access, Node.js >=18, git, tokenlean CLI (npm i -g tokenlean)
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: upgrade-deps
-description: Upgrade dependencies in Codex with version-jump-aware rigor: audit usage, read changelogs, apply minimal bumps, and verify behavior through targeted and full tests.
+description: "Upgrade dependencies in Codex with version-jump-aware rigor: audit usage, read changelogs, apply minimal bumps, and verify behavior through targeted and full tests."
 compatibility: Codex CLI with terminal access, npm, git, tokenlean CLI (npm i -g tokenlean)
 ---
 

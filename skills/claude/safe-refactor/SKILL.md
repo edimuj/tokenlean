@@ -1,6 +1,6 @@
 ---
 name: safe-refactor
-description: Refactor code safely by analyzing blast radius and dependencies before making changes. Covers renaming, moving, extracting, and restructuring code with verification at each step. Use when refactoring, renaming symbols, extracting functions, moving files, or restructuring code.
+description: "Refactor code safely by analyzing blast radius and dependencies before making changes. Covers renaming, moving, extracting, and restructuring code with verification at each step. Use when refactoring, renaming symbols, extracting functions, moving files, or restructuring code."
 compatibility: Requires tokenlean CLI tools (npm i -g tokenlean) and git
 ---
 

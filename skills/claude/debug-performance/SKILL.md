@@ -1,6 +1,6 @@
 ---
 name: debug-performance
-description: Diagnose and fix performance issues by measuring before optimizing. Establishes baselines, identifies bottlenecks through call graphs and complexity analysis, then confirms improvements with numbers. Use when asked to optimize, speed up, reduce memory usage, or fix slowness.
+description: "Diagnose and fix performance issues by measuring before optimizing. Establishes baselines, identifies bottlenecks through call graphs and complexity analysis, then confirms improvements with numbers. Use when asked to optimize, speed up, reduce memory usage, or fix slowness."
 compatibility: Requires tokenlean CLI tools (npm i -g tokenlean) and git
 ---
 

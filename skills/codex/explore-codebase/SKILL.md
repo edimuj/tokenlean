@@ -1,6 +1,6 @@
 ---
 name: explore-codebase
-description: Explore unfamiliar repositories in Codex by building a quick structural map, identifying execution entry points, and drilling into only the highest-value files.
+description: "Explore unfamiliar repositories in Codex by building a quick structural map, identifying execution entry points, and drilling into only the highest-value files."
 compatibility: Codex CLI with terminal access, git, tokenlean CLI (npm i -g tokenlean)
 ---
 

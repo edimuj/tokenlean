@@ -1,6 +1,6 @@
 ---
 name: debug-performance
-description: Improve performance in Codex by measuring baseline behavior, isolating hot paths, implementing focused optimizations, and confirming wins with before/after numbers.
+description: "Improve performance in Codex by measuring baseline behavior, isolating hot paths, implementing focused optimizations, and confirming wins with before/after numbers."
 compatibility: Codex CLI with terminal access, git, tokenlean CLI (npm i -g tokenlean)
 ---
 

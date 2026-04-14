@@ -1,6 +1,6 @@
 ---
 name: upgrade-deps
-description: Upgrade dependencies safely by auditing usage, researching breaking changes, and verifying after upgrade. Scales effort to version jump size — light check for patches, full audit for majors. Use when asked to upgrade, bump, or update a dependency or package.
+description: "Upgrade dependencies safely by auditing usage, researching breaking changes, and verifying after upgrade. Scales effort to version jump size — light check for patches, full audit for majors. Use when asked to upgrade, bump, or update a dependency or package."
 compatibility: Requires tokenlean CLI tools (npm i -g tokenlean) and git
 ---
 

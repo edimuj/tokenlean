@@ -1,6 +1,6 @@
 ---
 name: write-tests
-description: Write high-value tests in Codex by matching repository test conventions, prioritizing public behavior, and validating coverage gains without overfitting implementation details.
+description: "Write high-value tests in Codex by matching repository test conventions, prioritizing public behavior, and validating coverage gains without overfitting implementation details."
 compatibility: Codex CLI with terminal access, Node.js test tooling, git, tokenlean CLI (npm i -g tokenlean)
 ---
 

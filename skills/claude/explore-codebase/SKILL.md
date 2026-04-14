@@ -1,6 +1,6 @@
 ---
 name: explore-codebase
-description: Efficiently explore and understand an unfamiliar codebase using token-lean context gathering. Maps project structure, identifies key files, and builds understanding progressively without reading everything. Use when onboarding to a new project, asked to understand a codebase, or starting work in unfamiliar code.
+description: "Efficiently explore and understand an unfamiliar codebase using token-lean context gathering. Maps project structure, identifies key files, and builds understanding progressively without reading everything. Use when onboarding to a new project, asked to understand a codebase, or starting work in unfamiliar code."
 compatibility: Requires tokenlean CLI tools (npm i -g tokenlean) and git
 ---
 

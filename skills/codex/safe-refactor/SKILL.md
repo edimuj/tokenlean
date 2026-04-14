@@ -1,6 +1,6 @@
 ---
 name: safe-refactor
-description: Refactor safely in Codex by mapping dependents before edits, making structural changes in small increments, and validating imports, exports, and tests after each change.
+description: "Refactor safely in Codex by mapping dependents before edits, making structural changes in small increments, and validating imports, exports, and tests after each change."
 compatibility: Codex CLI with terminal access, git, tokenlean CLI (npm i -g tokenlean)
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: migrate-framework
-description: Migrate frameworks, APIs, or language versions incrementally with verification at each step. Surveys the migration surface, batches work by dependency order, and commits after each verified batch. Use when asked to migrate between frameworks, upgrade major versions, or adapt to new API versions.
+description: "Migrate frameworks, APIs, or language versions incrementally with verification at each step. Surveys the migration surface, batches work by dependency order, and commits after each verified batch. Use when asked to migrate between frameworks, upgrade major versions, or adapt to new API versions."
 compatibility: Requires tokenlean CLI tools (npm i -g tokenlean) and git
 ---
 

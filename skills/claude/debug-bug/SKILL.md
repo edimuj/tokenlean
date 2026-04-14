@@ -1,6 +1,6 @@
 ---
 name: debug-bug
-description: Systematically investigate and fix bugs using token-efficient context gathering. Reproduces the issue first, localizes with blame and history, traces the call path, then verifies the fix. Use when asked to fix a bug, investigate an error, or debug unexpected behavior.
+description: "Systematically investigate and fix bugs using token-efficient context gathering. Reproduces the issue first, localizes with blame and history, traces the call path, then verifies the fix. Use when asked to fix a bug, investigate an error, or debug unexpected behavior."
 compatibility: Requires tokenlean CLI tools (npm i -g tokenlean) and git
 ---
 

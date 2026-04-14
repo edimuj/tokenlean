@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Thorough code review using token-efficient context gathering. Analyzes PRs, diffs, or staged changes by checking blast radius, complexity, and dependencies before reviewing the actual code. Use when asked to review a PR, review changes, or do a code review.
+description: "Thorough code review using token-efficient context gathering. Analyzes PRs, diffs, or staged changes by checking blast radius, complexity, and dependencies before reviewing the actual code. Use when asked to review a PR, review changes, or do a code review."
 compatibility: Requires tokenlean CLI tools (npm i -g tokenlean) and git
 ---
 

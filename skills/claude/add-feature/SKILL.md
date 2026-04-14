@@ -1,6 +1,6 @@
 ---
 name: add-feature
-description: Add new functionality by understanding existing patterns and dependencies before writing code. Locates where the feature belongs, studies conventions, implements following precedent, then verifies integration. Use when asked to add a feature, flag, endpoint, component, or module.
+description: "Add new functionality by understanding existing patterns and dependencies before writing code. Locates where the feature belongs, studies conventions, implements following precedent, then verifies integration. Use when asked to add a feature, flag, endpoint, component, or module."
 compatibility: Requires tokenlean CLI tools (npm i -g tokenlean) and git
 ---
 
