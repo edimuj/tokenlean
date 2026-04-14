@@ -25,8 +25,7 @@ Identify core directories, file counts, and token estimates. Note likely runtime
 ### 2. Find entry points
 
 ```bash
-tl entry                  # Main entry points, route handlers, CLI commands
-tl hotspots               # Most frequently changed files (where the action is)
+tl parallel "tl entry" "tl hotspots"
 ```
 
 ### 3. Inspect key modules
@@ -41,17 +40,20 @@ File size → Decision
 ```
 
 ```bash
-tl symbols <file>         # Signatures — what does this file expose?
+# Per file, gather context in one call:
+tl parallel "symbols=tl symbols <file>" "exports=tl exports <file>"
+
+# Or for entire directories:
 tl symbols src/           # All files in a directory (compact one-liner per file)
-tl exports <file>         # What's the public API?
 ```
 
 ### 4. Trace dependencies
 
 ```bash
-tl deps <file>            # What does it import?
-tl impact <file>          # Who depends on this?
-tl flow <function> <file> # Call graph for a key function
+tl parallel \
+  "deps=tl deps <file>" \
+  "impact=tl impact <file>" \
+  "flow=tl flow <function> <file>"
 ```
 
 ### 5. Summarize
@@ -64,6 +66,6 @@ Produce:
 
 ## Tips
 
-- Run tl entry and tl hotspots in parallel — they're independent.
+- Use `tl parallel` to gather context on multiple files simultaneously.
 - `tl context <dir>` shows token cost of a directory — skip reading dirs over 50k tokens directly.
 - Use commit history (`git log -- <file>`) to identify active areas.

@@ -19,9 +19,10 @@ Audit → Research → Upgrade → Verify → Clean up
 Understand current usage before changing anything:
 
 ```bash
-tl npm <package>           # Current vs latest version, changelog link, health
-tl search "<package-name>" # Every file that imports or uses the dependency
-tl deps <file>             # Context around each file that imports it
+tl parallel \
+  "npm=tl npm <package>" \
+  "search=tl search '<package-name>'" \
+  "deps=tl deps <file>"
 ```
 
 ### 2. Research
@@ -29,8 +30,7 @@ tl deps <file>             # Context around each file that imports it
 Check what changed between versions:
 
 ```bash
-tl browse <changelog-url>  # Read the changelog as markdown
-tl context7 <package> "migration guide"  # Framework docs if available
+tl parallel "browse=tl browse <changelog-url>" "docs=tl context7 <package> 'migration guide'"
 ```
 
 Look for: removed APIs, renamed functions, changed defaults, new peer deps.
@@ -48,9 +48,10 @@ tl snippet <symbol> <file> # Check each usage site against new API
 ### 4. Verify
 
 ```bash
-tl run "<test command>"    # Full test suite
-tl test-map <file>         # Find specific tests for targeted runs
-tl guard                   # Check for new issues
+tl parallel \
+  "test=tl run '<test command>'" \
+  "testmap=tl test-map <file>" \
+  "guard=tl guard"
 ```
 
 ### 5. Clean up
@@ -58,8 +59,7 @@ tl guard                   # Check for new issues
 Remove old compatibility code:
 
 ```bash
-tl unused                  # Exports that only existed for the old version
-tl search "<old-version>"  # Version-gated code or workarounds
+tl parallel "unused=tl unused" "search=tl search '<old-version>'"
 ```
 
 ## Decision tree

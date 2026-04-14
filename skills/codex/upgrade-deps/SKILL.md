@@ -17,9 +17,10 @@ Audit -> Research -> Upgrade -> Verify -> Clean up
 ### 1. Audit usage
 
 ```bash
-npm ls <package>
-tl impact <file>          # What depends on files that use this package?
-tl deps <file>            # Trace imports from the package
+tl parallel \
+  "ls=npm ls <package>" \
+  "impact=tl impact <file>" \
+  "deps=tl deps <file>"
 ```
 
 ### 2. Research change surface
@@ -42,8 +43,7 @@ Keep upgrades scoped when possible (one major dependency at a time).
 ### 4. Verify
 
 ```bash
-tl run "npm test"         # Token-efficient test output
-tl guard                  # Check for broken imports, circular deps
+tl parallel "test=tl run 'npm test'" "guard=tl guard"
 ```
 
 Run targeted usage checks for files that import the upgraded package.

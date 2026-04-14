@@ -17,9 +17,10 @@ Analyze impact -> Plan -> Refactor -> Verify
 ### 1. Analyze impact
 
 ```bash
-tl impact <file>          # Who depends on this file?
-tl exports <file>         # What's the public API surface?
-tl symbols <file>         # Full signature map
+tl parallel \
+  "impact=tl impact <file>" \
+  "exports=tl exports <file>" \
+  "symbols=tl symbols <file>"
 ```
 
 These three commands tell you:
@@ -54,9 +55,10 @@ tl guard                  # Circular deps, unused exports, other issues
 ### 4. Verify
 
 ```bash
-tl run "npm test"         # Token-efficient test output — shows only failures
-tl impact <file>          # Re-check: are all dependents still importing correctly?
-tl diff                   # Review what actually changed
+tl parallel \
+  "test=tl run 'npm test'" \
+  "impact=tl impact <file>" \
+  "diff=tl diff"
 ```
 
 ## Decision guide

@@ -19,10 +19,11 @@ Discover → Understand → Design → Write → Validate
 Find the testing landscape:
 
 ```bash
-tl test-map <file>         # Do tests already exist for this file?
-tl coverage <file>         # Which functions/branches are uncovered?
-tl example "*.test.*"      # Existing test files — learn the project's patterns
-tl style                   # Test naming conventions, assertion library, setup/teardown
+tl parallel \
+  "testmap=tl test-map <file>" \
+  "coverage=tl coverage <file>" \
+  "example=tl example '*.test.*'" \
+  "style=tl style"
 ```
 
 ### 2. Understand
@@ -30,9 +31,10 @@ tl style                   # Test naming conventions, assertion library, setup/t
 Know the code before testing it:
 
 ```bash
-tl symbols <file>          # Every function that needs testing
-tl exports <file>          # Public API — test these first
-tl deps <file>             # What needs mocking or stubbing
+tl parallel \
+  "symbols=tl symbols <file>" \
+  "exports=tl exports <file>" \
+  "deps=tl deps <file>"
 tl snippet <function> <file>   # Read each function to understand branches and edge cases
 ```
 
@@ -44,8 +46,7 @@ For each exported function, identify:
 - Edge cases (empty input, boundary values, null/undefined)
 
 ```bash
-tl flow <function> <file>  # For complex functions — what gets called internally?
-tl types <file>            # Input/output types and constraints
+tl parallel "flow=tl flow <function> <file>" "types=tl types <file>"
 ```
 
 ### 4. Write
@@ -58,9 +59,10 @@ tl types <file>            # Input/output types and constraints
 ### 5. Validate
 
 ```bash
-tl run "<test command> <new-test-file>"   # Run just the new tests
-tl coverage <file>         # Confirm coverage improved
-tl run "<full test suite>" # Ensure no interference with existing tests
+tl parallel \
+  "new=tl run '<test command> <new-test-file>'" \
+  "coverage=tl coverage <file>" \
+  "full=tl run '<full test suite>'"
 ```
 
 ## Decision tree

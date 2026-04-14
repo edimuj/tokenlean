@@ -24,12 +24,13 @@ tl pr                     # For branch/PR review
 
 ### 2. Risk map
 
-For each changed file, run in parallel:
+For each changed file:
 
 ```bash
-tl impact <file>          # What depends on this file — will anything break?
-tl symbols <file>         # Signatures overview — understand without reading
-tl complexity <file>      # Complexity — flag functions getting too complex
+tl parallel \
+  "impact=tl impact <file>" \
+  "symbols=tl symbols <file>" \
+  "complexity=tl complexity <file>"
 ```
 
 For files with high impact (many dependents):
@@ -51,8 +52,7 @@ Use `tl snippet <function> <file>` to read specific changed functions rather tha
 ### 4. Verify assumptions
 
 ```bash
-tl guard                  # Secrets, stale TODOs, unused exports, circular deps
-tl run "npm test"         # Token-efficient test output
+tl parallel "guard=tl guard" "test=tl run 'npm test'"
 ```
 
 ### 5. Output format

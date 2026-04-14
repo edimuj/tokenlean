@@ -20,6 +20,7 @@ The tools agents use 90% of the time.
 | `tl browse`    | Fetch any URL as clean markdown                | `tl browse https://docs.example.com` |
 | `tl context7`  | Look up library docs via Context7 API          | `tl context7 react "hooks"`      |
 | `tl component` | React component analyzer (props, hooks, state) | `tl component Button.tsx`        |
+| `tl parallel`  | Run commands in parallel, structured results   | `tl parallel "tl symbols f" "tl deps f"` |
 | `tl analyze`   | Composite file profile (5 tools in 1)          | `tl analyze src/auth.ts`         |
 
 ## Understanding Code

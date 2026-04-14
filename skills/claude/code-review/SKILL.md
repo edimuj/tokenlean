@@ -31,12 +31,13 @@ If the diff is large (>20 files), focus on the highest-impact files first.
 
 ### 2. Gather context on changed files
 
-For each changed file, run these in parallel:
+For each changed file:
 
 ```bash
-tl impact <file>      # What depends on this file — will anything break?
-tl symbols <file>     # Signatures overview — understand the file without reading it
-tl complexity <file>  # Cyclomatic complexity — flag functions that are getting too complex
+tl parallel \
+  "impact=tl impact <file>" \
+  "symbols=tl symbols <file>" \
+  "complexity=tl complexity <file>"
 ```
 
 For files with high impact (many dependents), also run:
@@ -92,7 +93,7 @@ File changed → How many dependents? (tl impact)
 
 ## Tips
 
-- Run context-gathering commands in parallel — they're independent
+- Use `tl parallel` to gather context on multiple changed files simultaneously
 - For test files, skip `tl impact` (nothing depends on tests)
 - `tl symbols -j` gives JSON output if you need structured data
 - If a file is under 150 lines, just read it directly — tokenlean overhead isn't worth it

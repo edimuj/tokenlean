@@ -17,9 +17,10 @@ Analyze → Plan → Change → Verify
 ### 1. Analyze what you're changing
 
 ```bash
-tl impact <file>      # Who depends on this file?
-tl exports <file>     # What's the public API surface?
-tl symbols <file>     # Full signature map
+tl parallel \
+  "impact=tl impact <file>" \
+  "exports=tl exports <file>" \
+  "symbols=tl symbols <file>"
 ```
 
 These three commands tell you:
@@ -50,8 +51,7 @@ tl guard              # Circular deps, unused exports, other issues
 ### 4. Verify
 
 ```bash
-tl run "<test-command>"   # Run tests — tl run filters to just errors
-tl impact <file>          # Re-check: are all dependents still importing correctly?
+tl parallel "test=tl run '<test-command>'" "impact=tl impact <file>"
 ```
 
 If tests fail, `tl run` output shows only the failures. Fix and re-run.

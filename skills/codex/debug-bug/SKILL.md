@@ -25,9 +25,10 @@ Capture exact command, error output, and exit code. If no repro command is given
 ### 2. Localize
 
 ```bash
-tl errors                 # Scan for error patterns in the codebase
-tl blame <file>           # Recent changes to the suspect file
-tl history <file>         # If this is a regression — what changed recently?
+tl parallel \
+  "errors=tl errors" \
+  "blame=tl blame <file>" \
+  "history=tl history <file>"
 ```
 
 If the error includes a stack trace, start at the top project frame.
@@ -35,9 +36,10 @@ If the error includes a stack trace, start at the top project frame.
 ### 3. Trace
 
 ```bash
-tl flow <function> <file>     # Call graph around the failing function
-tl deps <file>                # What the buggy file depends on
-tl snippet <function> <file>  # Read only the relevant function
+tl parallel \
+  "flow=tl flow <function> <file>" \
+  "deps=tl deps <file>" \
+  "snippet=tl snippet <function> <file>"
 ```
 
 ### 4. Fix
@@ -45,20 +47,18 @@ tl snippet <function> <file>  # Read only the relevant function
 Apply the minimal change that resolves the root cause. Then check for side effects:
 
 ```bash
-tl guard                  # Circular deps, unused exports, secrets
-tl impact <file>          # Will the fix affect dependents?
+tl parallel "guard=tl guard" "impact=tl impact <file>"
 ```
 
 ### 5. Verify
 
 ```bash
-tl run "<repro command>"  # Confirm the bug is fixed
-tl run "npm test"         # Ensure no regressions
+tl parallel "repro=tl run '<repro command>'" "tests=tl run 'npm test'"
 ```
 
 ## Tips
 
 - Distinguish symptom fixes from root-cause fixes.
 - Prefer deterministic repros over intermittent observations.
-- Run tl blame and tl history in parallel — they're independent.
+- Use `tl parallel` to run all context-gathering commands simultaneously.
 - Check `tl diff` for recent regressions — the bug may be in the last few commits.

@@ -17,8 +17,7 @@ Locate -> Understand -> Implement -> Integrate -> Verify
 ### 1. Locate
 
 ```bash
-tl structure              # Project layout and file counts
-tl entry                  # Entry points (bin/, routing, handlers)
+tl parallel "tl structure" "tl entry"
 ```
 
 Find where similar behavior already exists and which files most likely own the feature.
@@ -26,9 +25,10 @@ Find where similar behavior already exists and which files most likely own the f
 ### 2. Understand
 
 ```bash
-tl symbols <target-file>  # Signatures — what's already there
-tl deps <target-file>     # What does it depend on?
-tl exports <target-file>  # Public API surface
+tl parallel \
+  "symbols=tl symbols <target-file>" \
+  "deps=tl deps <target-file>" \
+  "exports=tl exports <target-file>"
 tl snippet <function> <file>  # Read specific functions, not whole files
 ```
 
@@ -41,8 +41,7 @@ tl snippet <function> <file>  # Read specific functions, not whole files
 ### 4. Integrate
 
 ```bash
-tl impact <changed-file>  # Will the change affect dependents?
-tl guard                  # Circular deps, unused exports, secrets
+tl parallel "impact=tl impact <changed-file>" "guard=tl guard"
 ```
 
 Check:
@@ -53,8 +52,7 @@ Check:
 ### 5. Verify
 
 ```bash
-tl run "npm test"         # Token-efficient test output
-tl run "node bin/<changed-tool>.mjs --help"  # Verify help works
+tl parallel "test=tl run 'npm test'" "help=tl run 'node bin/<changed-tool>.mjs --help'"
 ```
 
 Use narrower checks first when possible (single test file or targeted command), then broader checks.

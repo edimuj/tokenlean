@@ -19,9 +19,7 @@ Locate → Understand → Implement → Integrate → Verify
 Find where the feature belongs:
 
 ```bash
-tl structure               # Project layout — where does this kind of code live?
-tl entry                   # Entry points and module boundaries
-tl example <pattern>       # Find similar existing features to follow as precedent
+tl parallel "tl structure" "tl entry" "tl example <pattern>"
 ```
 
 ### 2. Understand
@@ -29,10 +27,11 @@ tl example <pattern>       # Find similar existing features to follow as precede
 Before writing a single line:
 
 ```bash
-tl symbols <file>          # Signatures in the file you'll modify
-tl style                   # Project conventions — naming, formatting, patterns
-tl deps <file>             # What the target file already imports
-tl exports <file>          # Current public API surface
+tl parallel \
+  "symbols=tl symbols <file>" \
+  "style=tl style" \
+  "deps=tl deps <file>" \
+  "exports=tl exports <file>"
 ```
 
 ### 3. Implement
@@ -53,16 +52,16 @@ tl npm <package>           # Check size, health, and download stats first
 Wire it into the existing system:
 
 ```bash
-tl impact <modified-file>  # Verify you haven't broken dependents
-tl guard                   # Circular deps, unused exports, secrets
-tl diff --breaking         # If you changed any public API signatures
+tl parallel \
+  "impact=tl impact <modified-file>" \
+  "guard=tl guard" \
+  "diff=tl diff --breaking"
 ```
 
 ### 5. Verify
 
 ```bash
-tl run "<test command>"    # Run tests
-tl test-map <file>         # Find which test files cover the modified code
+tl parallel "test=tl run '<test command>'" "testmap=tl test-map <file>"
 ```
 
 ## Decision tree

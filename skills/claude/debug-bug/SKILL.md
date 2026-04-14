@@ -27,9 +27,10 @@ No fix without reproduction. If no repro command is given, ask for one. If the b
 Narrow down where the bug lives:
 
 ```bash
-tl errors                  # Scan for error patterns in the codebase
-tl blame <file>            # Recent changes to the file mentioned in the error
-tl history <file>          # If this is a regression — what changed recently?
+tl parallel \
+  "errors=tl errors" \
+  "blame=tl blame <file>" \
+  "history=tl history <file>"
 ```
 
 If the error includes a stack trace, start with the top frame. If it's vague, use `tl search "<error message>"` to find where the error originates.
@@ -39,9 +40,10 @@ If the error includes a stack trace, start with the top frame. If it's vague, us
 Understand the code path without reading entire files:
 
 ```bash
-tl flow <function> <file>  # Call graph around the failing function
-tl deps <file>             # What the buggy file depends on
-tl snippet <function> <file>  # Read only the relevant function
+tl parallel \
+  "flow=tl flow <function> <file>" \
+  "deps=tl deps <file>" \
+  "snippet=tl snippet <function> <file>"
 ```
 
 ### 4. Fix
@@ -49,15 +51,13 @@ tl snippet <function> <file>  # Read only the relevant function
 Apply the minimal fix. Then check for side effects:
 
 ```bash
-tl guard                   # Circular deps, unused exports, secrets
-tl impact <file>           # Will the fix affect dependents?
+tl parallel "guard=tl guard" "impact=tl impact <file>"
 ```
 
 ### 5. Verify
 
 ```bash
-tl run "<repro command>"   # Confirm the bug is fixed
-tl run "<test command>"    # Ensure no regressions
+tl parallel "repro=tl run '<repro command>'" "tests=tl run '<test command>'"
 ```
 
 ## Decision tree
@@ -74,7 +74,7 @@ Bug report → Can you reproduce it?
 
 ## Tips
 
-- Run `tl blame` and `tl history` in parallel — they're independent
+- Use `tl parallel` to run context-gathering commands simultaneously
 - Use `tl search "<error message>"` to find where errors are thrown
 - Check `tl diff` for recent regressions — the bug may be in the last few commits
 - If a file is under 150 lines, just read it directly — tokenlean overhead isn't worth it

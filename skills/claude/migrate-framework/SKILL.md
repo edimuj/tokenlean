@@ -19,9 +19,10 @@ Survey → Plan → Migrate → Verify → Clean up
 Map the migration surface:
 
 ```bash
-tl structure               # Project size and shape
-tl search "<old-api-pattern>"  # Every usage of the thing being migrated away from
-tl stack                   # Current framework/language versions
+tl parallel \
+  "structure=tl structure" \
+  "search=tl search '<old-api-pattern>'" \
+  "stack=tl stack"
 tl context7 <framework> "migration guide" -t 5000  # Official migration path
 # Or: tl browse <migration-guide-url>
 ```
@@ -31,8 +32,7 @@ tl context7 <framework> "migration guide" -t 5000  # Official migration path
 Group the work into safe increments:
 
 ```bash
-tl impact <file>           # Files with most dependents — do these last
-tl related <file>          # Files likely needing the same change — batch them
+tl parallel "impact=tl impact <file>" "related=tl related <file>"
 ```
 
 Order: leaf files (0 dependents) first, shared utilities last. Each increment must leave the codebase in a working state.
@@ -53,9 +53,10 @@ tl diff --breaking         # Catch accidental API changes after each batch
 After every batch, not at the end:
 
 ```bash
-tl run "<test command>"    # Tests must pass
-tl guard                   # Circular deps, broken imports
-tl exports <file>          # Public API still intact?
+tl parallel \
+  "test=tl run '<test command>'" \
+  "guard=tl guard" \
+  "exports=tl exports <file>"
 # Commit after each passing batch
 ```
 
@@ -64,9 +65,10 @@ tl exports <file>          # Public API still intact?
 Remove old-world artifacts:
 
 ```bash
-tl search "<old-api-pattern>"  # Should return zero results
-tl unused                  # Dead compatibility shims, polyfills, adapters
-tl deps <file>             # Confirm no lingering old imports
+tl parallel \
+  "search=tl search '<old-api-pattern>'" \
+  "unused=tl unused" \
+  "deps=tl deps <file>"
 ```
 
 ## Decision tree

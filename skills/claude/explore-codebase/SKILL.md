@@ -28,8 +28,7 @@ This shows directories, file counts, and token estimates. Identify:
 ### 2. Find entry points and hot files
 
 ```bash
-tl entry              # Main entry points, route handlers, CLI commands
-tl hotspots           # Most frequently changed files (where the action is)
+tl parallel "tl entry" "tl hotspots"
 ```
 
 Entry points tell you where execution starts. Hotspots tell you where development is active.
@@ -46,11 +45,12 @@ File size → Decision
 ```
 
 ```bash
-tl symbols <file>     # Signatures — what does this file expose?
-tl symbols src/       # All files in a directory (compact one-liner per file)
-tl symbols a.ts b.ts  # Multiple specific files (compact)
-tl deps <file>        # What does it import?
-tl exports <file>     # What's the public API?
+# Per file, gather context in one call:
+tl parallel "symbols=tl symbols <file>" "deps=tl deps <file>" "exports=tl exports <file>"
+
+# Or for entire directories:
+tl symbols src/           # All files in a directory (compact one-liner per file)
+tl symbols a.ts b.ts      # Multiple specific files (compact)
 ```
 
 ### 4. Trace the dependency graph
@@ -58,8 +58,7 @@ tl exports <file>     # What's the public API?
 Pick the most central file (usually has the most importers):
 
 ```bash
-tl impact <file>      # Who depends on this?
-tl flow <function> <file>  # Call graph for a key function
+tl parallel "impact=tl impact <file>" "flow=tl flow <function> <file>"
 ```
 
 This reveals the architecture: which modules are core infrastructure vs. leaf nodes.
@@ -95,7 +94,7 @@ Where execution starts, how to run/test.
 
 ## Tips
 
-- Run tl entry and tl hotspots in parallel — they're independent
+- Use `tl parallel` to gather context on multiple files simultaneously
 - `tl context <dir>` shows token cost of a directory — skip reading dirs over 50k tokens directly
 - For React/frontend projects, also run `tl component` on main UI files
 - For API projects, `tl api` and `tl routes` reveal endpoint structure

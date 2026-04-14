@@ -19,9 +19,10 @@ Measure → Identify → Analyze → Optimize → Confirm
 Establish a baseline before touching anything:
 
 ```bash
-tl run "<benchmark or timed command>"   # Capture current performance numbers
-tl complexity <file>                     # High complexity correlates with slow paths
-tl hotspots                              # Frequently-changed files accumulate debt
+tl parallel \
+  "baseline=tl run '<benchmark or timed command>'" \
+  "complexity=tl complexity <file>" \
+  "hotspots=tl hotspots"
 ```
 
 ### 2. Identify
@@ -29,9 +30,10 @@ tl hotspots                              # Frequently-changed files accumulate d
 Find the actual bottleneck:
 
 ```bash
-tl flow <function> <file>    # Full call chain of the slow operation
-tl deps <file>               # Expensive imports or heavy initialization?
-tl symbols <file>            # Map structure without reading everything
+tl parallel \
+  "flow=tl flow <function> <file>" \
+  "deps=tl deps <file>" \
+  "symbols=tl symbols <file>"
 ```
 
 ### 3. Analyze
@@ -39,9 +41,10 @@ tl symbols <file>            # Map structure without reading everything
 Understand why it's slow:
 
 ```bash
-tl snippet <function> <file>  # Read only the functions on the hot path
-tl related <file>             # Files contributing to the same bottleneck
-tl scope <function> <file>    # Variable lifetimes and data flow
+tl parallel \
+  "snippet=tl snippet <function> <file>" \
+  "related=tl related <file>" \
+  "scope=tl scope <function> <file>"
 ```
 
 ### 4. Optimize
@@ -89,4 +92,4 @@ tl run "<same benchmark>"     # Measure improvement — no numbers, no claim
 - `tl complexity` > 10 on a function is a red flag for performance problems
 - Check `tl deps` for heavy imports that could be lazy-loaded
 - Don't optimize cold paths — use `tl flow` to confirm the function is on the hot path
-- Run context-gathering commands (`tl complexity`, `tl hotspots`) in parallel — they're independent
+- Use `tl parallel` for all context-gathering steps — they're independent

@@ -25,9 +25,10 @@ Capture baseline metrics (latency, throughput, memory) before edits.
 ### 2. Isolate
 
 ```bash
-tl symbols <suspect-file>     # Identify functions to investigate
-tl complexity <suspect-file>  # Find high-complexity hotspots
-tl hotspots                   # Which files change most (often correlates with perf issues)
+tl parallel \
+  "symbols=tl symbols <suspect-file>" \
+  "complexity=tl complexity <suspect-file>" \
+  "hotspots=tl hotspots"
 ```
 
 Prioritize hot paths and repeated work.
@@ -35,9 +36,10 @@ Prioritize hot paths and repeated work.
 ### 3. Analyze
 
 ```bash
-tl snippet <function> <file>  # Read only the suspect function
-tl flow <function> <file>     # Call graph — what calls what
-tl deps <file>                # What does it pull in?
+tl parallel \
+  "snippet=tl snippet <function> <file>" \
+  "flow=tl flow <function> <file>" \
+  "deps=tl deps <file>"
 ```
 
 Check for:
@@ -55,8 +57,7 @@ Check for:
 ### 5. Confirm
 
 ```bash
-tl run "time <same command>"  # After — compare with baseline
-tl run "npm test"             # Ensure no regressions
+tl parallel "after=tl run 'time <same command>'" "tests=tl run 'npm test'"
 ```
 
 Report before/after numbers. No numbers means no verified gain.

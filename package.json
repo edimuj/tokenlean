@@ -55,6 +55,7 @@
     "tl-name": "bin/tl-name.mjs",
     "tl-npm": "bin/tl-npm.mjs",
     "tl-playwright": "bin/tl-playwright.mjs",
+    "tl-parallel": "bin/tl-parallel.mjs",
     "tl-pr": "bin/tl-pr.mjs",
     "tl-reddit": "bin/tl-reddit.mjs",
     "tl-prompt": "bin/tl-prompt.mjs",

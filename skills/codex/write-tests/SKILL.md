@@ -17,9 +17,10 @@ Discover patterns -> Understand unit -> Design cases -> Implement tests -> Valid
 ### 1. Discover test patterns
 
 ```bash
-tl structure              # Find test directories and file layout
-tl symbols test/          # See existing test structure and naming
-tl related <source-file>  # Find existing tests for the file
+tl parallel \
+  "structure=tl structure" \
+  "symbols=tl symbols test/" \
+  "related=tl related <source-file>"
 ```
 
 Match existing test style, helpers, and naming.
@@ -27,8 +28,7 @@ Match existing test style, helpers, and naming.
 ### 2. Understand code under test
 
 ```bash
-tl symbols <source-file>      # What functions/classes exist?
-tl exports <source-file>      # What's the public API to test?
+tl parallel "symbols=tl symbols <source-file>" "exports=tl exports <source-file>"
 tl snippet <function> <file>  # Read specific function implementations
 ```
 

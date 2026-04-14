@@ -17,8 +17,7 @@ Survey -> Plan batches -> Migrate batch -> Verify batch -> Clean up
 ### 1. Survey
 
 ```bash
-tl structure              # Understand project layout
-tl deps <file>            # Trace dependency chains for migration ordering
+tl parallel "structure=tl structure" "deps=tl deps <file>"
 ```
 
 Collect official migration steps and breaking changes before editing.
@@ -37,15 +36,13 @@ Batch by risk:
 ### 3. Migrate one batch
 
 ```bash
-tl symbols <file>         # Understand what exists before editing
-tl snippet <function> <file>  # Read specific functions that use the old API
+tl parallel "symbols=tl symbols <file>" "snippet=tl snippet <function> <file>"
 ```
 
 ### 4. Verify each batch
 
 ```bash
-tl run "npm test"         # Token-efficient output — errors only
-tl guard                  # Circular deps, unused exports
+tl parallel "test=tl run 'npm test'" "guard=tl guard"
 ```
 
 Do not proceed if current batch fails.
