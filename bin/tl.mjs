@@ -169,6 +169,26 @@ function runUpdate() {
   child.on('exit', code => process.exit(code ?? 1));
 }
 
+function extractFlags(command) {
+  const toolFile = resolveToolFile(command);
+  if (!toolFile) return [];
+
+  const source = readFileSync(toolFile, 'utf8');
+  const flags = new Set();
+  const re = /['"](-{1,2}[a-zA-Z][\w-]*)['"]/g;
+  let m;
+  while ((m = re.exec(source)) !== null) flags.add(m[1]);
+
+  // Include common flags if tool uses parseCommonArgs
+  if (/parseCommonArgs|COMMON_OPTIONS_HELP/.test(source)) {
+    for (const f of ['-l', '--max-lines', '-t', '--max-tokens', '-j', '--json', '-q', '--quiet', '-h', '--help']) {
+      flags.add(f);
+    }
+  }
+
+  return [...flags].sort();
+}
+
 function main() {
   const [command, ...rest] = process.argv.slice(2);
   if (!command || command === '-h' || command === '--help') {
@@ -178,6 +198,30 @@ function main() {
 
   if (command === '-v' || command === '--version') {
     console.log(version);
+    return;
+  }
+
+  if (command === '--list-commands') {
+    const withDesc = rest.includes('--with-desc');
+    const builtins = [
+      { name: 'doctor', desc: 'Check environment health' },
+      { name: 'update', desc: 'Update tokenlean to latest version' }
+    ];
+    const tools = listTools().map(({ name, desc }) => ({
+      name: name.replace(/^tl-/, ''), desc
+    }));
+    const all = [...builtins, ...tools].sort((a, b) => a.name.localeCompare(b.name));
+    for (const { name, desc } of all) {
+      console.log(withDesc ? `${name}\t${desc}` : name);
+    }
+    return;
+  }
+
+  if (command === '--list-flags') {
+    const target = rest[0];
+    if (!target) { process.exit(1); }
+    const flags = extractFlags(target);
+    if (flags.length) console.log(flags.join('\n'));
     return;
   }
 

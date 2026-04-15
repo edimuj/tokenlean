@@ -114,3 +114,4 @@ All issue-creating commands support `--project owner/N` to auto-add to a GitHub 
 | `tl name`       | Check name availability (npm/GH/domains) | `tl name myproject -s`      |
 | `tl playwright` | Headless browser content extraction      | `tl playwright example.com` |
 | `tl prompt`     | Generate AI agent instructions           | `tl prompt --minimal`       |
+| `tl completions`| Shell tab completions (bash/zsh)         | `tl completions bash >> ~/.bashrc` |

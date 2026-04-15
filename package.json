@@ -1,6 +1,6 @@
 {
   "name": "tokenlean",
-  "version": "0.37.2",
+  "version": "0.38.0",
   "description": "Lean CLI tools for AI agents and developers - reduce context, save tokens",
   "type": "module",
   "engines": {
@@ -29,6 +29,7 @@
     "tl-blame": "bin/tl-blame.mjs",
     "tl-browse": "bin/tl-browse.mjs",
     "tl-cache": "bin/tl-cache.mjs",
+    "tl-completions": "bin/tl-completions.mjs",
     "tl-changelog": "bin/tl-changelog.mjs",
     "tl-config": "bin/tl-config.mjs",
     "tl-context": "bin/tl-context.mjs",

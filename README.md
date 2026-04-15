@@ -5,7 +5,7 @@
 <h1 align="center">tokenlean</h1>
 
 <p align="center">
-  <strong>57 CLI tools + MCP server that let AI agents understand codebases without burning tokens</strong>
+  <strong>58 CLI tools + MCP server that let AI agents understand codebases without burning tokens</strong>
 </p>
 
 <p align="center">
@@ -107,9 +107,10 @@ history tools.
 Use `tl` as the global entry point — one command, many subcommands:
 
 ```bash
-tl          # List all available commands
-tl doctor   # Verify Node.js, ripgrep, git, hooks, and config
-tl update   # Update the global tokenlean install
+tl                        # List all available commands
+tl doctor                 # Verify Node.js, ripgrep, git, hooks, and config
+tl update                 # Update the global tokenlean install
+tl completions bash|zsh   # Tab completions for subcommands and flags
 ```
 
 <details>
@@ -146,7 +147,7 @@ npm link
 
 Every tool supports `-l N` (limit lines), `-t N` (limit tokens), `-j` (JSON output), `-q` (quiet), and `-h` (help).
 
-See [all 57 tools](docs/tools.md) for the complete reference.
+See [all 58 tools](docs/tools.md) for the complete reference.
 
 ## AI Agent Integration
 
@@ -246,7 +247,7 @@ cp -r tokenlean/skills/codex/code-review ~/.codex/skills/
 
 ## More
 
-- [All 57 tools](docs/tools.md) — complete tool reference with examples
+- [All 58 tools](docs/tools.md) — complete tool reference with examples
 - [Workflows](docs/workflows.md) — task-oriented recipes (refactoring, PR review, releases, etc.)
 - [Language support](docs/language-support.md) — compatibility matrix across languages
 - [Configuration](docs/configuration.md) — `.tokenleanrc.json` schema and caching
