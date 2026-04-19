@@ -33,17 +33,19 @@ tl-push - Stage, commit, and push in one call
 
 Usage: tl-push "commit message" [files...] [options]
 
-If no files are specified, stages all modified/new files (git add -A).
+If no files are specified, stages tracked modified files only (git add -u).
 If files are specified, stages only those files.
 
 Options:
+  --all, -A             Include untracked files (git add -A instead of -u)
   --no-push             Commit only, don't push
   --amend               Amend the previous commit (message optional)
   --dry-run             Show what would happen without doing it
 ${COMMON_OPTIONS_HELP}
 
 Examples:
-  tl-push "feat: add caching"                    # Stage all, commit, push
+  tl-push "feat: add caching"                    # Stage modified, commit, push
+  tl-push "feat: new tool" -A                    # Include untracked files too
   tl-push "fix: typo" README.md                  # Stage README.md only
   tl-push "chore: cleanup" --no-push             # Commit without pushing
   tl-push --amend                                # Amend last commit, push
@@ -82,12 +84,14 @@ let message = null;
 let amend = false;
 let noPush = false;
 let dryRun = false;
+let includeUntracked = false;
 const files = [];
 
 for (const arg of options.remaining) {
   if (arg === '--no-push') noPush = true;
   else if (arg === '--amend') amend = true;
   else if (arg === '--dry-run') dryRun = true;
+  else if (arg === '--all' || arg === '-A') includeUntracked = true;
   else if (message === null && !arg.startsWith('-')) message = arg;
   else if (!arg.startsWith('-')) files.push(arg);
 }
@@ -134,7 +138,7 @@ if (dryRun) {
   if (filesToStage) {
     out.add(`  git add ${filesToStage.join(' ')}`);
   } else {
-    out.add('  git add -A');
+    out.add(`  git add ${includeUntracked ? '-A' : '-u'}`);
   }
   if (amend) {
     out.add(`  git commit --amend ${message ? `-m "${message}"` : '--no-edit'}`);
@@ -151,7 +155,7 @@ let stageResult;
 if (filesToStage) {
   stageResult = git(['add', ...filesToStage]);
 } else {
-  stageResult = git(['add', '-A']);
+  stageResult = git(['add', includeUntracked ? '-A' : '-u']);
 }
 
 if (!stageResult.ok) {
