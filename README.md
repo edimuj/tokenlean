@@ -5,7 +5,7 @@
 <h1 align="center">tokenlean</h1>
 
 <p align="center">
-  <strong>58 CLI tools + MCP server that let AI agents understand codebases without burning tokens</strong>
+  <strong>60 CLI tools + MCP server that let AI agents understand codebases without burning tokens</strong>
 </p>
 
 <p align="center">
@@ -147,7 +147,7 @@ npm link
 
 Every tool supports `-l N` (limit lines), `-t N` (limit tokens), `-j` (JSON output), `-q` (quiet), and `-h` (help).
 
-See [all 58 tools](docs/tools.md) for the complete reference.
+See [all 60 tools](docs/tools.md) for the complete reference.
 
 ## AI Agent Integration
 

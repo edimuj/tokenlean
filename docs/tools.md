@@ -16,6 +16,8 @@ The tools agents use 90% of the time.
 | `tl run`       | Token-efficient command output (tests, builds) | `tl run "npm test"`              |
 | `tl tail`      | Token-efficient log tailing and summarization  | `tl tail logs/app.log`           |
 | `tl guard`     | Pre-commit check (secrets, TODOs, unused, circular) | `tl guard`                  |
+| `tl commit-prep` | Pre-commit context: status + diff stat + log     | `tl commit-prep`            |
+| `tl push`      | Stage, commit, push in one call                    | `tl push "feat: caching"`  |
 | `tl structure` | Project overview with token estimates          | `tl structure src/`              |
 | `tl browse`    | Fetch any URL as clean markdown                | `tl browse https://docs.example.com` |
 | `tl context7`  | Look up library docs via Context7 API          | `tl context7 react "hooks"`      |
