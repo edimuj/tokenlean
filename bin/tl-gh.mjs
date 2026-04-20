@@ -400,16 +400,26 @@ async function issueAddSub(args) {
       results.push({ number: childNum, status: 'linked' });
       out.add(`  #${childNum} → sub of #${parentNum}`);
     } catch (e) {
-      results.push({ number: childNum, status: 'failed', error: e.message });
-      out.add(`  #${childNum} FAILED: ${e.message}`);
+      if (/duplicate sub-issues|may only have one parent/.test(e.message)) {
+        results.push({ number: childNum, status: 'already linked' });
+        out.add(`  #${childNum} → already sub of #${parentNum}`);
+      } else {
+        results.push({ number: childNum, status: 'failed', error: e.message });
+        out.add(`  #${childNum} FAILED: ${e.message}`);
+      }
     }
   }
 
   const linked = results.filter(r => r.status === 'linked').length;
+  const skipped = results.filter(r => r.status === 'already linked').length;
   const failed = results.filter(r => r.status === 'failed').length;
-  out.stats(`${linked} linked, ${failed} failed`);
+  const parts = [`${linked} linked`];
+  if (skipped) parts.push(`${skipped} already linked`);
+  if (failed) parts.push(`${failed} failed`);
+  out.stats(parts.join(', '));
   out.setData('results', results);
   out.print();
+  if (failed) process.exit(1);
 }
 
 async function issueCreateTree(args) {
