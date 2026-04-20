@@ -57,7 +57,10 @@ Examples:
 
 // --- Nudge dedup (once per type, re-nudge after TTL) ---
 
-const NUDGE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const TTL_HIGH   =  5 * 60 * 1000;  // 5 min  — high-impact (large reads, curl)
+const TTL_MEDIUM = 15 * 60 * 1000;  // 15 min — medium (grep, find, git, heredoc)
+const TTL_LOW    = 30 * 60 * 1000;  // 30 min — low (test builds, tail)
+const NUDGE_TTL_MS = TTL_LOW;       // kept for compatibility
 
 function getSeenPath() {
   const port = process.env.CLAUDE_CODE_SSE_PORT;
@@ -75,11 +78,11 @@ function statSyncSafe(path) {
   try { return statSync(path); } catch { return null; }
 }
 
-function nudgeOnce(key, message) {
+function nudgeOnce(key, message, ttl = NUDGE_TTL_MS) {
   const p = getSeenPath();
   if (p) {
     const seen = loadSeen(p);
-    if (seen[key] && (Date.now() - seen[key]) < NUDGE_TTL_MS) return;
+    if (seen[key] && (Date.now() - seen[key]) < ttl) return;
     seen[key] = Date.now();
     writeFileSync(p, JSON.stringify(seen), 'utf8');
   }
@@ -99,22 +102,19 @@ function readStdin() {
   });
 }
 
-function detectHookFormat() {
+function detectHookFormat(data) {
   const format = (process.env.TOKENLEAN_HOOK_FORMAT || '').toLowerCase();
   if (format === 'codex' || format === 'claude' || format === 'pi') return format;
   if (process.env.PI_CODING_AGENT) return 'pi';
   if (process.env.CLAUDE_CONFIG_DIR || process.env.CLAUDE_PROJECT_DIR) return 'claude';
   if (process.env.CODEX_THREAD_ID || process.env.CODEX_CI) return 'codex';
+  // Detect codex from payload transcript path when env vars aren't set
+  if (data?.transcript_path?.includes('/.codex/')) return 'codex';
   return 'claude';
 }
 
 function makeNudge(message) {
-  if (detectHookFormat() === 'codex') {
-    return JSON.stringify({
-      decision: 'allow',
-    });
-  }
-
+  // Both Claude Code and Codex use the same hookSpecificOutput format
   return JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
