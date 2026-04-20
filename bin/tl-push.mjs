@@ -133,8 +133,35 @@ if (filesToStage) {
   }
 }
 
+// Detect what will be staged
+let stagedFiles = [];
+if (filesToStage) {
+  stagedFiles = filesToStage;
+} else {
+  const tracked = gitCommand(['diff', '--name-only']);
+  const alreadyStaged = gitCommand(['diff', '--name-only', '--cached']);
+  const trackedList = tracked ? tracked.split('\n').filter(Boolean) : [];
+  const stagedList = alreadyStaged ? alreadyStaged.split('\n').filter(Boolean) : [];
+  stagedFiles = [...new Set([...trackedList, ...stagedList])];
+  if (includeUntracked) {
+    const untracked = gitCommand(['ls-files', '--others', '--exclude-standard']);
+    if (untracked) stagedFiles.push(...untracked.split('\n').filter(Boolean));
+  }
+}
+
+// Refuse to auto-stage when multiple files are modified — force explicit file list
+if (!filesToStage && stagedFiles.length > 1 && !amend) {
+  console.error(`Multiple modified files — specify which to include:`);
+  for (const f of stagedFiles) console.error(`  ${f}`);
+  console.error(`\nUsage: tl push "${message}" file1 file2 ...`);
+  process.exit(1);
+}
+
 if (dryRun) {
   out.header('Dry run — would execute:');
+  if (stagedFiles.length > 0) {
+    out.add(`Files (${stagedFiles.length}): ${stagedFiles.join(', ')}`);
+  }
   if (filesToStage) {
     out.add(`  git add ${filesToStage.join(' ')}`);
   } else {
@@ -227,6 +254,10 @@ if (summary) out.setData('summary', summary);
 const action = amend ? 'Amended' : 'Committed';
 const pushStr = pushed ? ', pushed' : '';
 out.add(`${action} ${shortHash} on ${branch}${pushStr}: ${message || '(no message change)'}`);
+if (stagedFiles.length > 0) {
+  out.setData('files', stagedFiles);
+  out.add(`Files (${stagedFiles.length}): ${stagedFiles.join(', ')}`);
+}
 if (summary) out.add(summary);
 
 out.print();
