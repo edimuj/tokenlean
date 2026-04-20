@@ -175,6 +175,9 @@ function installOwnedDaemonCleanup(pid) {
 async function runServe(p, minutes) {
   let lastActivityAt = Date.now();
 
+  // Build server once; reuse across all HTTP requests (transports are per-request)
+  const mcpServer = buildServer();
+
   const httpServer = createServer(async (req, res) => {
     if (req.url !== '/mcp') {
       res.writeHead(404).end('Not found');
@@ -183,8 +186,7 @@ async function runServe(p, minutes) {
 
     lastActivityAt = Date.now();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    const server = buildServer();
-    await server.connect(transport);
+    await mcpServer.connect(transport);
     await transport.handleRequest(req, res);
   });
 

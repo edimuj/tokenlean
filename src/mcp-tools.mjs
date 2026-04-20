@@ -11,10 +11,13 @@ import { promisify } from 'node:util';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { McpCache } from './mcp-cache.mjs';
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const binDir = join(__dirname, '..', 'bin');
+
+const cache = process.env.TL_MCP_CACHE !== '0' ? new McpCache() : null;
 
 // ─────────────────────────────────────────────────────────────
 // Subprocess dispatch
@@ -47,6 +50,19 @@ function textResult(text, isError = false) {
 }
 
 async function dispatchTool(tool, args, opts) {
+  if (cache) {
+    const k = cache.key(tool, args);
+    const hit = cache.get(k);
+    if (hit) return hit;
+    const result = await dispatchDirect(tool, args, opts);
+    // Only cache successful results
+    if (!result.isError) cache.set(k, result);
+    return result;
+  }
+  return dispatchDirect(tool, args, opts);
+}
+
+async function dispatchDirect(tool, args, opts) {
   const { stdout, stderr, ok } = await runCli(tool, args, opts);
   if (!ok && !stdout) return textResult(stderr || 'Tool failed with no output', true);
   // Return stdout; append stderr as note if present and tool succeeded
