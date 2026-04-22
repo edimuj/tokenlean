@@ -78,7 +78,13 @@ function statSyncSafe(path) {
   try { return statSync(path); } catch { return null; }
 }
 
-function nudgeOnce(key, message, ttl = NUDGE_TTL_MS) {
+function codexWarningsEnabled() {
+  const value = (process.env.TOKENLEAN_CODEX_WARNINGS || '').toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
+function nudgeOnce(key, message, ttl = NUDGE_TTL_MS, format = 'claude') {
+  if (format === 'codex' && !codexWarningsEnabled()) return;
   const p = getSeenPath();
   if (p) {
     const seen = loadSeen(p);
@@ -86,7 +92,7 @@ function nudgeOnce(key, message, ttl = NUDGE_TTL_MS) {
     seen[key] = Date.now();
     writeFileSync(p, JSON.stringify(seen), 'utf8');
   }
-  console.log(makeNudge(message));
+  console.log(makeNudge(message, format));
 }
 
 // --- Hook runner ---
@@ -108,13 +114,21 @@ function detectHookFormat(data) {
   if (process.env.PI_CODING_AGENT) return 'pi';
   if (process.env.CLAUDE_CONFIG_DIR || process.env.CLAUDE_PROJECT_DIR) return 'claude';
   if (process.env.CODEX_THREAD_ID || process.env.CODEX_CI) return 'codex';
+  if (data?.hook_event_name && data?.turn_id && data?.permission_mode && data?.session_id) {
+    return 'codex';
+  }
   // Detect codex from payload transcript path when env vars aren't set
   if (data?.transcript_path?.includes('/.codex/')) return 'codex';
   return 'claude';
 }
 
-function makeNudge(message) {
-  // Both Claude Code and Codex use the same hookSpecificOutput format
+function makeNudge(message, format = 'claude') {
+  if (format === 'codex') {
+    return JSON.stringify({
+      systemMessage: message,
+    });
+  }
+
   return JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
@@ -171,13 +185,14 @@ async function runHook({ json = false } = {}) {
   let data;
   try { data = JSON.parse(input); } catch { return; }
 
+  const format = detectHookFormat(data);
   const decision = evaluateToolCall(data);
   if (json) {
     console.log(JSON.stringify({ decision }, null, 2));
     return;
   }
 
-  if (decision) nudgeOnce(decision.id, decision.message);
+  if (decision) nudgeOnce(decision.id, decision.message, NUDGE_TTL_MS, format);
 }
 
 // --- Claude Code installer ---
