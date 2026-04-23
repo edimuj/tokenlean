@@ -45,15 +45,6 @@ const TAIL_PATTERNS = [
   /(?:^|(?:&&|;)\s*)tail\s+/,
 ];
 
-const GREP_PATTERNS = [
-  /(?:^|(?:&&|;)\s*)(grep|rg|ag)\s+/,
-];
-
-const FIND_PATTERNS = [
-  /(?:^|(?:&&|;)\s*)(find|fd)\s+/,
-  /(?:^|(?:&&|;)\s*)ls\s+(-[a-zA-Z]*R|-[a-zA-Z]*l)/,
-];
-
 const CURL_PATTERNS = [
   /(?:^|(?:&&|;)\s*)curl\s/,
 ];
@@ -74,8 +65,6 @@ export const RATIOS = {
   BASH_BUILD_TO_RUN: 0.35,
   BASH_CAT_TO_SYMBOLS: 0.20,
   BASH_TAIL_TO_TLTAIL: 0.30,
-  BASH_GREP_TO_GREP: 0.80,
-  BASH_FIND_TO_GLOB: 0.70,
   BASH_CURL_TO_BROWSE: 0.30,
   BASH_HEAD_TO_READ: 0.80,
   WEBFETCH_TO_BROWSE: 0.30,
@@ -276,36 +265,6 @@ function analyzeShell(call, resultText, tokens, findings) {
         detail: `cat/head on ${lines}-line output - use tl-symbols for structure`,
       });
     }
-    return;
-  }
-
-  if (GREP_PATTERNS.some(pattern => pattern.test(command))) {
-    const savedTokens = Math.round(tokens * (1 - RATIOS.BASH_GREP_TO_GREP));
-    findings.push({
-      category: 'grep-command',
-      tool: toolName,
-      suggestion: 'Grep tool',
-      command: command.slice(0, 120),
-      actualTokens: tokens,
-      estimatedTokens: tokens - savedTokens,
-      savedTokens,
-      detail: `grep/rg via shell (${tokens} tokens) - Grep tool has better integration`,
-    });
-    return;
-  }
-
-  if (FIND_PATTERNS.some(pattern => pattern.test(command))) {
-    const savedTokens = Math.round(tokens * (1 - RATIOS.BASH_FIND_TO_GLOB));
-    findings.push({
-      category: 'find-command',
-      tool: toolName,
-      suggestion: 'Glob tool',
-      command: command.slice(0, 120),
-      actualTokens: tokens,
-      estimatedTokens: tokens - savedTokens,
-      savedTokens,
-      detail: `find/ls via shell (${tokens} tokens) - Glob tool is more efficient`,
-    });
     return;
   }
 

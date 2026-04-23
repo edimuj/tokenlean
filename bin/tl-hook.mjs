@@ -173,12 +173,6 @@ async function runHook() {
       return;
     }
 
-    // grep/rg/ag — nudge to built-in Grep tool
-    if (/^\s*(grep|rg|ag)\s/.test(cmd)) {
-      nudgeOnce('bash-grep', `[tl] use Grep tool, not Bash`);
-      return;
-    }
-
     // cat — nudge to Read tool or tl-symbols
     if (/^\s*cat\s+[^|]/.test(cmd)) {
       nudgeOnce('bash-cat', `[tl] use Read tool, not cat`);
@@ -188,12 +182,6 @@ async function runHook() {
     // head — nudge to Read with limit
     if (/^\s*head\s/.test(cmd)) {
       nudgeOnce('bash-head', `[tl] use Read with offset/limit`);
-      return;
-    }
-
-    // find/fd — nudge to Glob tool
-    if (/^\s*(find|fd)\s/.test(cmd)) {
-      nudgeOnce('bash-find', `[tl] use Glob tool, not Bash`);
       return;
     }
 
@@ -363,9 +351,7 @@ async function installClaudeCode(configDir, label) {
   console.log('  - Reading large code files (>300 lines) — use tl-symbols/tl-snippet');
   console.log('  - Running build/test commands — use tl-run');
   console.log('  - Using tail — use tl-tail');
-  console.log('  - Using grep/rg via Bash — use Grep tool');
   console.log('  - Using cat/head via Bash — use Read tool');
-  console.log('  - Using find/fd via Bash — use Glob tool');
   console.log('  - Using curl on URLs — use tl-browse');
   console.log('  - Using WebFetch — use tl-browse');
 }

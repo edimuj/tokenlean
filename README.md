@@ -70,9 +70,7 @@ Summary (348 Claude Code sessions)
   ----------------------------------------------------------------------------
   read-large-file          75x    253.4k      202.7k   -> tl symbols + tl snippet
   build-test-output        34x     28.2k       18.3k   -> tl run
-  grep-command            115x     59.6k       11.9k   -> Grep tool
   tail-command              7x      4.8k        3.3k   -> tl tail
-  find-command             25x      8.6k        2.6k   -> Glob tool
   curl-command             13x      3.2k        2.3k   -> tl browse
   cat-large-file            1x      1.1k         902   -> tl symbols + tl snippet
   webfetch                  4x      1.2k         823   -> tl browse
