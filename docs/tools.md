@@ -24,6 +24,8 @@ The tools agents use 90% of the time.
 | `tl component` | React component analyzer (props, hooks, state) | `tl component Button.tsx`        |
 | `tl parallel`  | Run commands in parallel, structured results   | `tl parallel "tl symbols f" "tl deps f"` |
 | `tl analyze`   | Composite file profile (5 tools in 1)          | `tl analyze src/auth.ts`         |
+| `tl pack`      | Workflow context packs for common agent tasks  | `tl pack refactor src/auth.ts`   |
+| `tl advise`    | Recommend the next tokenlean commands for a task | `tl advise "debug npm test"`   |
 
 ## Understanding Code
 
@@ -107,7 +109,7 @@ All issue-creating commands support `--project owner/N` to auto-add to a GitHub 
 
 | Tool            | Description                              | Example                     |
 |-----------------|------------------------------------------|-----------------------------|
-| `tl audit`      | Analyze Claude/Codex sessions and estimate token savings | `tl audit --all --savings`  |
+| `tl audit`      | Analyze Claude/Codex sessions and plan token savings | `tl audit --all --plan`  |
 | `tl quota`      | Check AI subscription quota (Claude, Codex) | `tl quota`               |
 | `tl hook`       | Install token-saving agent hooks         | `tl hook install claude-code` |
 | `tl reddit`     | Read Reddit threads as clean text        | `tl reddit <url> -c 20`    |

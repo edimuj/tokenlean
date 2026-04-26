@@ -22,8 +22,11 @@ import {
   buildSummaryLabel,
   buildSummaryJson,
   buildSavingsJson,
+  buildPlan,
+  buildPlanJson,
   buildSessionJson,
   formatSessionHeader,
+  renderPlanBlock,
   renderSummaryBlock,
 } from '../src/audit-format.mjs';
 import { normalizeProvider, resolveSessionFiles } from '../src/audit-discover.mjs';
@@ -81,6 +84,7 @@ Options:
   --project <dir>       Override project path used for session discovery
   --verbose             Show per-session breakdown and detailed findings
   --savings             Also show tokens saved by existing tokenlean usage
+  --plan                Add prioritized recommendations to reduce future waste
   -j, --json            JSON output
   -h, --help            Show help`;
 
@@ -111,6 +115,7 @@ async function main() {
   let provider = 'auto';
   let verbose = false;
   let showSavings = false;
+  let showPlan = false;
   let projectOverride = null;
   let count = 1;
   const positional = [];
@@ -124,6 +129,9 @@ async function main() {
     } else if (arg === '--verbose') {
       verbose = true;
     } else if (arg === '--savings') {
+      showSavings = true;
+    } else if (arg === '--plan') {
+      showPlan = true;
       showSavings = true;
     } else if (arg === '-n') {
       count = parseInt(args[++i], 10) || 1;
@@ -202,6 +210,7 @@ async function main() {
   const aggregate = buildAggregateResults(allResults, showSavings);
   const providerBreakdowns = buildProviderBreakdowns(allResults, showSavings);
   const summaryLabel = buildSummaryLabel(allResults, aggregate.providerCounts);
+  const plan = showPlan ? buildPlan(aggregate.summary, aggregate.savingsSummary) : null;
 
   if (options.json) {
     const data = {
@@ -218,6 +227,7 @@ async function main() {
         },
       ])),
       ...(aggregate.savingsSummary ? { savings: buildSavingsJson(aggregate.summary, aggregate.savingsSummary) } : {}),
+      ...(plan ? { plan: buildPlanJson(plan) } : {}),
       ...(verbose ? { sessions: allResults.map(result => buildSessionJson(result, true)) } : {}),
     };
     console.log(JSON.stringify(data, null, 2));
@@ -229,6 +239,10 @@ async function main() {
     showDetailLists: false,
     providerBreakdowns,
   });
+
+  if (plan) {
+    renderPlanBlock(out, plan);
+  }
 
   if (verbose) {
     for (const result of allResults) {

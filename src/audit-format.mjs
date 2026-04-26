@@ -104,6 +104,120 @@ export function buildProviderBreakdowns(results, showSavings) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Plan building
+// ─────────────────────────────────────────────────────────────
+
+const CATEGORY_PLANS = {
+  'read-large-file': {
+    title: 'Stop full-file reads first',
+    command: 'tl advise "understand <file>" && tl symbols <file> && tl snippet <symbol> <file>',
+    why: 'Large code reads are usually better handled as signatures first, then one focused implementation.',
+  },
+  'cat-large-file': {
+    title: 'Replace large cat/head reads on code files',
+    command: 'tl symbols <file> && tl snippet <symbol> <file>',
+    why: 'Shell file dumps bypass agent-native limits and usually pull more code than needed.',
+  },
+  'build-test-output': {
+    title: 'Route build and test commands through tl-run',
+    command: 'tl run "<test-or-build-command>"',
+    why: 'Test/build logs are high-volume and tl-run keeps failures, summaries, and useful stderr.',
+  },
+  'tail-command': {
+    title: 'Use tl-tail for logs',
+    command: 'tl tail <log-file>',
+    why: 'tl-tail deduplicates repeated lines and surfaces error/warn clusters.',
+  },
+  'curl-command': {
+    title: 'Use tl-browse for read-only web fetches',
+    command: 'tl browse <url>',
+    why: 'tl-browse returns clean markdown and strips page boilerplate.',
+  },
+  webfetch: {
+    title: 'Prefer tl-browse for documentation pages',
+    command: 'tl browse <url>',
+    why: 'Clean markdown usually costs less context than raw fetched page content.',
+  },
+  'head-command': {
+    title: 'Prefer bounded reads over shell head',
+    command: 'Read with offset/limit, or tl context <path> before reading',
+    why: 'Agent-native bounded reads preserve file context better than shell snippets.',
+  },
+};
+
+export function buildPlan(summary, savingsSummary = null, options = {}) {
+  const maxItems = options.maxItems || 5;
+  const categories = Object.entries(summary.byCategory)
+    .sort((a, b) => b[1].savedTokens - a[1].savedTokens);
+
+  const items = [];
+  for (const [category, data] of categories) {
+    const template = CATEGORY_PLANS[category] || {
+      title: `Reduce ${category}`,
+      command: data.suggestion,
+      why: 'This category has measurable repeated saveable output.',
+    };
+
+    items.push({
+      category,
+      title: template.title,
+      command: template.command,
+      why: template.why,
+      count: data.count,
+      actualTokens: data.actualTokens,
+      saveableTokens: data.savedTokens,
+      savingsPercent: data.actualTokens > 0 ? Math.round((data.savedTokens / data.actualTokens) * 100) : 0,
+    });
+  }
+
+  const captureRate = savingsSummary ? getCaptureRate(summary, savingsSummary) : 0;
+  const totalPotential = summary.totalSaved + (savingsSummary?.totalSaved || 0);
+
+  if (summary.totalSaved > 0 && captureRate < 80) {
+    items.push({
+      category: 'agent-setup',
+      title: 'Install or tighten tokenlean agent nudges',
+      command: 'tl hook install claude-code && tl prompt --codex >> AGENTS.md',
+      why: 'The audit still sees avoidable raw tool usage; hooks and project instructions prevent repeated waste.',
+      count: 1,
+      actualTokens: totalPotential,
+      saveableTokens: summary.totalSaved,
+      savingsPercent: totalPotential > 0 ? Math.round((summary.totalSaved / totalPotential) * 100) : 0,
+    });
+  }
+
+  if (summary.totalSaved > 0) {
+    items.push({
+      category: 'workflow-routing',
+      title: 'Start common tasks with packs and advice',
+      command: 'tl advise "<task>" or tl pack <onboard|review|refactor|debug>',
+      why: 'Routing the first step avoids the expensive mistake of broad reads or raw command output.',
+      count: 1,
+      actualTokens: summary.totalActual,
+      saveableTokens: Math.round(summary.totalSaved * 0.25),
+      savingsPercent: 25,
+    });
+  }
+
+  const deduped = [];
+  const seen = new Set();
+  for (const item of items) {
+    const key = item.category;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(item);
+  }
+
+  deduped.sort((a, b) => b.saveableTokens - a.saveableTokens);
+
+  return {
+    totalSaveableTokens: summary.totalSaved,
+    captureRate,
+    items: deduped.slice(0, maxItems),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
 // Label / header helpers
 // ─────────────────────────────────────────────────────────────
 
@@ -245,6 +359,30 @@ export function renderSummaryBlock(out, label, summary, savingsSummary, options 
   }
 }
 
+export function renderPlanBlock(out, plan) {
+  out.add('Plan:');
+
+  if (!plan || plan.items.length === 0 || plan.totalSaveableTokens <= 0) {
+    out.add('  No high-impact actions found. Current sessions already look token-conscious.');
+    out.blank();
+    return;
+  }
+
+  out.add(`  Top actions to reduce future context waste (${formatTokens(plan.totalSaveableTokens)} still saveable):`);
+  if (plan.captureRate > 0) {
+    out.add(`  Current capture rate: ${plan.captureRate}%`);
+  }
+  out.blank();
+
+  plan.items.forEach((item, index) => {
+    out.add(`  ${index + 1}. ${item.title}`);
+    out.add(`     Impact: ${item.count}x, ${formatTokens(item.saveableTokens)} saveable (${item.savingsPercent}%)`);
+    out.add(`     Run: ${item.command}`);
+    out.add(`     Why: ${item.why}`);
+  });
+  out.blank();
+}
+
 // ─────────────────────────────────────────────────────────────
 // JSON output builders
 // ─────────────────────────────────────────────────────────────
@@ -267,6 +405,14 @@ export function buildSavingsJson(summary, savingsSummary) {
     totalSavedTokens: savingsSummary.totalSaved,
     captureRate: getCaptureRate(summary, savingsSummary),
     byTool: savingsSummary.byTool,
+  };
+}
+
+export function buildPlanJson(plan) {
+  return {
+    totalSaveableTokens: plan.totalSaveableTokens,
+    captureRate: plan.captureRate,
+    items: plan.items,
   };
 }
 

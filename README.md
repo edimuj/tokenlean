@@ -141,6 +141,8 @@ npm link
 # Find real usage examples       tl example useAuth
 # Summarize noisy logs            tl tail logs/app.log
 # What's the tech stack?         tl stack
+# Workflow-ready briefing        tl pack refactor src/auth.ts
+# What should I run next?       tl advise "debug npm test"
 ```
 
 Every tool supports `-l N` (limit lines), `-t N` (limit tokens), `-j` (JSON output), `-q` (quiet), and `-h` (help).
@@ -180,6 +182,7 @@ Add tokenlean instructions to your AI tool's config with a single command:
 ```bash
 tl hook install claude-code    # Gentle reminders when agents waste tokens
 tl audit --all --savings       # Measure actual savings across sessions
+tl audit --all --plan          # Turn audit findings into prioritized fixes
 ```
 
 See [measuring token savings](docs/workflows.md#measuring-token-savings) for full audit and hook setup details.

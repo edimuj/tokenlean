@@ -614,4 +614,64 @@ describe('CLI regressions', () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('TLT-020: tl-pack lists available workflow packs', () => {
+    const result = runCli(['bin/tl-pack.mjs', '--list', '-q']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    assert.match(result.stdout, /\bonboard\b/);
+    assert.match(result.stdout, /\brefactor\b/);
+    assert.match(result.stdout, /\bdebug\b/);
+  });
+
+  it('TLT-021: tl-pack exposes JSON output for pack discovery', () => {
+    const result = runCli(['bin/tl-pack.mjs', '--list', '-j']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.ok(parsed.packs.onboard);
+    assert.ok(parsed.packs.refactor);
+    assert.strictEqual(parsed.truncated, false);
+  });
+
+  it('TLT-022: tl-pack refactor fails fast for missing files', () => {
+    const result = runCli(['bin/tl-pack.mjs', 'refactor', 'missing-file.ts', '-q']);
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /Path not found: missing-file\.ts/);
+  });
+
+  it('TLT-023: tl umbrella command discovers tl-pack', () => {
+    const result = runCli(['bin/tl.mjs', '--list-commands', '--with-desc']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    assert.match(result.stdout, /^pack\tWorkflow context packs/m);
+  });
+
+  it('TLT-024: tl-advise routes PR review goals to tl-pack pr', () => {
+    const result = runCli(['bin/tl-advise.mjs', 'review PR 123', '-j']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.strictEqual(parsed.intent, 'pr-review');
+    assert.strictEqual(parsed.suggestions[0].command, 'tl pack pr 123');
+  });
+
+  it('TLT-025: tl-advise routes refactor goals with file paths', () => {
+    const result = runCli(['bin/tl-advise.mjs', 'refactor src/cache.mjs', '-q']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    assert.match(result.stdout, /^1\. tl pack refactor src\/cache\.mjs/m);
+    assert.doesNotMatch(result.stdout, /Start with file profile/);
+  });
+
+  it('TLT-026: tl umbrella command discovers tl-advise', () => {
+    const result = runCli(['bin/tl.mjs', '--list-commands', '--with-desc']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    assert.match(result.stdout, /^advise\tRecommend the next tokenlean commands/m);
+  });
+
+  it('TLT-027: tl-advise prefers test routing for add-test goals', () => {
+    const result = runCli(['bin/tl-advise.mjs', 'add tests for src/cache.mjs', '-j']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.strictEqual(parsed.intent, 'test');
+    assert.match(parsed.suggestions[0].command, /^tl related src\/cache\.mjs/);
+  });
 });

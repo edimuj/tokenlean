@@ -345,5 +345,48 @@ describe('tl-audit regressions', () => {
     assert.match(result.stdout, /Usage: tl-audit/);
     assert.match(result.stdout, /--provider <name>/);
     assert.match(result.stdout, /--codex/);
+    assert.match(result.stdout, /--plan/);
+  });
+
+  it('TLA-006: --plan adds prioritized recommendations to text output', () => {
+    const fixture = createAuditFixture();
+
+    try {
+      const result = runCli([auditBin, '--all', '--plan'], {
+        cwd: fixture.projectDir,
+        env: fixture.env,
+      });
+
+      assert.strictEqual(result.status, 0, result.stderr);
+      assert.match(result.stdout, /^Plan:/m);
+      assert.match(result.stdout, /Route build and test commands through tl-run/);
+      assert.match(result.stdout, /Run: tl run "<test-or-build-command>"/);
+      assert.match(result.stdout, /Already saved by tokenlean:/);
+    } finally {
+      rmSync(fixture.tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('TLA-007: --plan JSON includes machine-readable action items', () => {
+    const fixture = createAuditFixture();
+
+    try {
+      const result = runCli([auditBin, '--all', '--plan', '-j'], {
+        cwd: fixture.projectDir,
+        env: fixture.env,
+      });
+
+      assert.strictEqual(result.status, 0, result.stderr);
+      const parsed = JSON.parse(result.stdout);
+
+      assert.ok(parsed.plan);
+      assert.ok(parsed.plan.totalSaveableTokens > 0);
+      assert.ok(parsed.plan.items.length > 0);
+      assert.strictEqual(parsed.plan.items[0].category, 'build-test-output');
+      assert.match(parsed.plan.items[0].command, /^tl run/);
+      assert.ok(parsed.savings);
+    } finally {
+      rmSync(fixture.tempRoot, { recursive: true, force: true });
+    }
   });
 });

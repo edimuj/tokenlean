@@ -5,6 +5,8 @@ Common task-oriented recipes using tokenlean tools.
 ## Starting on an unfamiliar codebase
 
 ```bash
+tl advise "understand this repo" # Pick the cheapest first commands
+tl pack onboard                 # One compact onboarding briefing
 tl structure                    # Get the lay of the land
 tl entry                        # Find entry points
 tl exports src/lib/             # Understand the public API
@@ -16,6 +18,8 @@ tl schema                       # Understand the database
 ## Before refactoring a file
 
 ```bash
+tl advise "refactor src/core/auth.ts" # Pick a safe refactor path
+tl pack refactor src/core/auth.ts # One compact refactor briefing
 tl impact src/core/auth.ts      # What would break?
 tl deps src/core/auth.ts        # What does it depend on?
 tl related src/core/auth.ts     # Find the tests
@@ -53,6 +57,9 @@ tl secrets --min-severity high     # Only high severity issues
 ## Reviewing a PR
 
 ```bash
+tl advise "review PR 123"        # Pick review commands
+tl pack pr 123                   # One compact PR briefing
+tl pack review                   # Current branch/staged review context
 tl pr feature-branch               # Summary of branch changes
 tl pr 123                          # GitHub PR #123 (needs gh CLI)
 tl pr --full                       # Include files, stats, commits
@@ -81,6 +88,8 @@ tl npm express fastify koa         # Compare framework options
 ## Running commands efficiently
 
 ```bash
+tl advise "debug npm test"         # Pick debug commands
+tl pack debug "npm test"           # Test output plus follow-up checks
 tl run "npm test"                  # Summarize test results
 tl run "npm run build"             # Extract build errors only
 tl run "eslint src/"               # Summarize lint violations
@@ -149,6 +158,7 @@ npx tokenlean audit --all --savings                        # Package entrypoint 
 tl audit --provider claude --latest                       # Claude Code only
 tl audit --codex --latest                                 # Codex only
 tl audit --latest --savings                               # Auto-detect provider; combined summary
+tl audit --all --plan                                     # Prioritized recommendations
 
 # output detail levels
 tl audit --all --savings                                  # Summary only, across all matching sessions
@@ -159,6 +169,7 @@ tl audit session.jsonl                                    # Analyze a specific s
 `tl audit` analyzes both Codex and Claude Code sessions:
 - **Opportunities** — tokens wasted on large file reads, verbose build output, raw grep/cat/tail
 - **Savings** (with `--savings`) — tokens already saved by tokenlean usage, with capture rate
+- **Plan** (with `--plan`) — prioritized actions based on the highest saveable categories
 - Add `--verbose` for per-session breakdown
 
 ```
