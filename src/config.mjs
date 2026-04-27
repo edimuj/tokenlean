@@ -213,38 +213,6 @@ export function getConfig(section) {
 }
 
 /**
- * Get search patterns from config
- */
-export function getSearchPatterns() {
-  const { config } = loadConfig();
-  return config.searchPatterns || {};
-}
-
-/**
- * Get output defaults from config
- */
-export function getOutputDefaults() {
-  const { config } = loadConfig();
-  return config.output || {};
-}
-
-/**
- * Get ignore patterns from config
- */
-export function getIgnorePatterns() {
-  const { config } = loadConfig();
-  return config.ignore || [];
-}
-
-/**
- * Check if config file exists (either global or project)
- */
-export function hasConfig() {
-  if (existsSync(GLOBAL_CONFIG_PATH)) return true;
-  return findProjectConfig() !== null;
-}
-
-/**
  * Get paths to config files that would be loaded
  */
 export function getConfigPaths() {

@@ -217,7 +217,7 @@ function limitSessions(sessions, count) {
 // Public API
 // ─────────────────────────────────────────────────────────────
 
-export async function findProjectSessions(projectPath, provider, count) {
+async function findProjectSessions(projectPath, provider, count) {
   const files = [];
   if (provider === 'auto' || provider === 'claude') {
     files.push(...await findClaudeSessionsForProject(projectPath));

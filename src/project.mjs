@@ -10,7 +10,7 @@
  *   importantFiles: ["ARCHITECTURE.md"]
  */
 
-import { existsSync, readFileSync, readdirSync } from 'fs';
+import { existsSync, readdirSync } from 'fs';
 import { dirname, join, relative, extname } from 'path';
 import { getConfig } from './config.mjs';
 
@@ -79,8 +79,6 @@ export function getImportantDirs() { return getCombinedSets().importantDirs; }
 // Legacy exports for backwards compatibility (return combined sets)
 export const SKIP_DIRS = new Set(DEFAULT_SKIP_DIRS);
 export const SKIP_EXTENSIONS = new Set(DEFAULT_SKIP_EXTENSIONS);
-export const IMPORTANT_FILES = new Set(DEFAULT_IMPORTANT_FILES);
-export const IMPORTANT_DIRS = new Set(DEFAULT_IMPORTANT_DIRS);
 
 // Clear cache (useful when config changes)
 export function clearProjectCache() { _cachedSets = null; }
@@ -101,39 +99,6 @@ export function findProjectRoot(startDir = process.cwd()) {
     dir = dirname(dir);
   }
   return startDir;
-}
-
-/**
- * Get project info from package.json if available
- */
-export function getProjectInfo(projectRoot) {
-  const pkgPath = join(projectRoot, 'package.json');
-  if (existsSync(pkgPath)) {
-    try {
-      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-      return {
-        name: pkg.name,
-        version: pkg.version,
-        type: 'node',
-        hasTypeScript: existsSync(join(projectRoot, 'tsconfig.json'))
-      };
-    } catch {
-      // Invalid JSON
-    }
-  }
-
-  // Check for other project types
-  if (existsSync(join(projectRoot, 'Cargo.toml'))) {
-    return { type: 'rust' };
-  }
-  if (existsSync(join(projectRoot, 'go.mod'))) {
-    return { type: 'go' };
-  }
-  if (existsSync(join(projectRoot, 'pyproject.toml')) || existsSync(join(projectRoot, 'setup.py'))) {
-    return { type: 'python' };
-  }
-
-  return { type: 'unknown' };
 }
 
 // ─────────────────────────────────────────────────────────────

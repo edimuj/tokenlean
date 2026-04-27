@@ -183,7 +183,10 @@ function extractImports(content) {
 // ─────────────────────────────────────────────────────────────
 
 function analyzeUnusedExports(files, projectRoot, targetFiles = null) {
-  const checkFiles = targetFiles || files;
+  const externalContractFiles = new Set(['src/opencode-plugin.js']);
+  const checkFiles = (targetFiles || files).filter(file =>
+    !externalContractFiles.has(relative(projectRoot, file))
+  );
   const allImports = {
     named: new Set(),
     files: new Set()
