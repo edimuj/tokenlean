@@ -110,7 +110,94 @@ function countActiveClaudeHooks() {
   }
 }
 
-function runDoctor() {
+function fileContains(path, pattern) {
+  if (!existsSync(path)) return false;
+  try {
+    return pattern.test(readFileSync(path, 'utf8'));
+  } catch {
+    return false;
+  }
+}
+
+function countSkillDirs(path) {
+  if (!existsSync(path)) return null;
+  try {
+    return readdirSync(path, { withFileTypes: true }).filter(entry => entry.isDirectory()).length;
+  } catch {
+    return -1;
+  }
+}
+
+function addAgentChecks(results) {
+  const home = homedir();
+  const projectMcp = join(process.cwd(), '.mcp.json');
+  const codexConfig = join(home, '.codex', 'config.toml');
+  const claudeSettings = join(home, '.claude', 'settings.json');
+  const agentsPath = join(process.cwd(), 'AGENTS.md');
+  const claudePath = join(process.cwd(), 'CLAUDE.md');
+  const codexSkills = join(home, '.codex', 'skills');
+  const claudeSkills = join(home, '.claude', 'skills');
+
+  results.push({ kind: 'pass', text: `tokenlean CLI: ${version}` });
+
+  if (fileContains(projectMcp, /tokenlean|tl-mcp|tl\s+mcp/i)) {
+    results.push({ kind: 'pass', text: 'project MCP: tokenlean configured (.mcp.json)' });
+  } else {
+    results.push({ kind: 'warn', text: 'project MCP: tokenlean not found in .mcp.json' });
+  }
+
+  if (fileContains(codexConfig, /tokenlean|tl-mcp|tl\s+mcp/i)) {
+    results.push({ kind: 'pass', text: 'Codex MCP/config: tokenlean reference found' });
+  } else if (existsSync(codexConfig)) {
+    results.push({ kind: 'warn', text: 'Codex MCP/config: no tokenlean reference in ~/.codex/config.toml' });
+  } else {
+    results.push({ kind: 'skip', text: 'Codex MCP/config: ~/.codex/config.toml not found' });
+  }
+
+  if (fileContains(claudeSettings, /tl-hook|tokenlean|tl-mcp|tl\s+mcp/i)) {
+    results.push({ kind: 'pass', text: 'Claude settings: tokenlean reference found' });
+  } else if (existsSync(claudeSettings)) {
+    results.push({ kind: 'warn', text: 'Claude settings: no tokenlean reference in ~/.claude/settings.json' });
+  } else {
+    results.push({ kind: 'skip', text: 'Claude settings: ~/.claude/settings.json not found' });
+  }
+
+  if (fileContains(agentsPath, /tokenlean|tl\s|tl-/i)) {
+    results.push({ kind: 'pass', text: 'project AGENTS.md: tokenlean guidance found' });
+  } else if (existsSync(agentsPath)) {
+    results.push({ kind: 'warn', text: 'project AGENTS.md: no tokenlean guidance found' });
+  } else {
+    results.push({ kind: 'skip', text: 'project AGENTS.md: not found' });
+  }
+
+  if (fileContains(claudePath, /tokenlean|tl\s|tl-/i)) {
+    results.push({ kind: 'pass', text: 'project CLAUDE.md: tokenlean guidance found' });
+  } else if (existsSync(claudePath)) {
+    results.push({ kind: 'warn', text: 'project CLAUDE.md: no tokenlean guidance found' });
+  } else {
+    results.push({ kind: 'skip', text: 'project CLAUDE.md: not found' });
+  }
+
+  const codexSkillCount = countSkillDirs(codexSkills);
+  if (codexSkillCount > 0) {
+    results.push({ kind: 'pass', text: `Codex skills: ${codexSkillCount} installed` });
+  } else if (codexSkillCount === 0) {
+    results.push({ kind: 'warn', text: 'Codex skills: none installed in ~/.codex/skills' });
+  } else {
+    results.push({ kind: 'skip', text: 'Codex skills: ~/.codex/skills not found' });
+  }
+
+  const claudeSkillCount = countSkillDirs(claudeSkills);
+  if (claudeSkillCount > 0) {
+    results.push({ kind: 'pass', text: `Claude skills: ${claudeSkillCount} installed` });
+  } else if (claudeSkillCount === 0) {
+    results.push({ kind: 'warn', text: 'Claude skills: none installed in ~/.claude/skills' });
+  } else {
+    results.push({ kind: 'skip', text: 'Claude skills: ~/.claude/skills not found' });
+  }
+}
+
+function runDoctor({ agents = false } = {}) {
   const results = [];
   const nodeMajor = Number(process.versions.node.split('.')[0]);
   results.push(
@@ -149,9 +236,13 @@ function runDoctor() {
     }
   }
 
+  if (agents) {
+    addAgentChecks(results);
+  }
+
   const symbols = { pass: '✓', warn: '⚠', fail: '✗', skip: '-' };
   const counts = { pass: 0, warn: 0, fail: 0 };
-  console.log(`tokenlean v${version} doctor\n`);
+  console.log(`tokenlean v${version} doctor${agents ? ' --agents' : ''}\n`);
   for (const result of results) {
     if (result.kind in counts) counts[result.kind]++;
     console.log(`  ${symbols[result.kind]} ${result.text}`);
@@ -226,7 +317,7 @@ function main() {
   }
 
   if (command === 'doctor') {
-    runDoctor();
+    runDoctor({ agents: rest.includes('--agents') });
     return;
   }
 

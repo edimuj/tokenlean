@@ -346,6 +346,7 @@ describe('tl-audit regressions', () => {
     assert.match(result.stdout, /--provider <name>/);
     assert.match(result.stdout, /--codex/);
     assert.match(result.stdout, /--plan/);
+    assert.match(result.stdout, /--github-project <owner\/N>/);
   });
 
   it('TLA-006: --plan adds prioritized recommendations to text output', () => {
@@ -385,6 +386,22 @@ describe('tl-audit regressions', () => {
       assert.strictEqual(parsed.plan.items[0].category, 'build-test-output');
       assert.match(parsed.plan.items[0].command, /^tl run/);
       assert.ok(parsed.savings);
+    } finally {
+      rmSync(fixture.tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('TLA-008: --github requires a repository target', () => {
+    const fixture = createAuditFixture();
+
+    try {
+      const result = runCli([auditBin, '--all', '--plan', '--github'], {
+        cwd: fixture.projectDir,
+        env: fixture.env,
+      });
+
+      assert.strictEqual(result.status, 1);
+      assert.match(result.stderr, /--github requires -R\/--repo owner\/repo/);
     } finally {
       rmSync(fixture.tempRoot, { recursive: true, force: true });
     }

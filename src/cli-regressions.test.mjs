@@ -674,4 +674,37 @@ describe('CLI regressions', () => {
     assert.strictEqual(parsed.intent, 'test');
     assert.match(parsed.suggestions[0].command, /^tl related src\/cache\.mjs/);
   });
+
+  it('TLT-028: tl-pack small budgets omit lower-priority sections before output', () => {
+    const result = runCli(['bin/tl-pack.mjs', 'refactor', 'bin/tl-pack.mjs', '--budget', '900', '-j']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.strictEqual(parsed.budgetTier, 'small');
+    assert.strictEqual(parsed.sections.length, 2);
+    assert.ok(parsed.omittedSections.length >= 1);
+    assert.deepStrictEqual(
+      parsed.sections.map(section => section.title),
+      ['File profile', 'Blast radius']
+    );
+  });
+
+  it('TLT-029: tl doctor --agents includes agent integration checks', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-doctor-agents-'));
+    try {
+      const result = spawnSync(process.execPath, ['bin/tl.mjs', 'doctor', '--agents'], {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: tempDir, USERPROFILE: tempDir },
+        encoding: 'utf-8'
+      });
+
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      assert.match(result.stdout, /doctor --agents/);
+      assert.match(result.stdout, /tokenlean CLI:/);
+      assert.match(result.stdout, /project MCP:/);
+      assert.match(result.stdout, /Codex MCP\/config:/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });

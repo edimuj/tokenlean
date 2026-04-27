@@ -5,7 +5,7 @@
 <h1 align="center">tokenlean</h1>
 
 <p align="center">
-  <strong>60 CLI tools + MCP server that let AI agents understand codebases without burning tokens</strong>
+  <strong>60+ CLI tools + MCP server that let AI agents understand codebases without burning tokens</strong>
 </p>
 
 <p align="center">
@@ -107,6 +107,7 @@ Use `tl` as the global entry point — one command, many subcommands:
 ```bash
 tl                        # List all available commands
 tl doctor                 # Verify Node.js, ripgrep, git, hooks, and config
+tl doctor --agents        # Check MCP, hooks, skills, and project instructions
 tl update                 # Update the global tokenlean install
 tl completions bash|zsh   # Tab completions for subcommands and flags
 ```
@@ -147,7 +148,7 @@ npm link
 
 Every tool supports `-l N` (limit lines), `-t N` (limit tokens), `-j` (JSON output), `-q` (quiet), and `-h` (help).
 
-See [all 60 tools](docs/tools.md) for the complete reference.
+See [all tools](docs/tools.md) for the complete reference.
 
 ## AI Agent Integration
 
@@ -175,7 +176,7 @@ Add tokenlean instructions to your AI tool's config with a single command:
 { "command": "tl mcp", "args": ["--tools", "symbols,snippet,run"] }
 ```
 
-8 core tools available via MCP: `tl_symbols`, `tl_snippet`, `tl_run`, `tl_impact`, `tl_browse`, `tl_tail`, `tl_guard`, `tl_diff`. Structured JSON in/out — no bash command construction, no argument parsing, no stdout scraping.
+MCP tools include the core context reducers (`tl_symbols`, `tl_snippet`, `tl_run`, `tl_impact`, `tl_browse`, `tl_tail`, `tl_guard`, `tl_diff`) plus workflow routers (`tl_advise`, `tl_pack`) and briefing tools (`tl_analyze`, `tl_related`, `tl_context`, `tl_structure`, `tl_entry`). Structured JSON in/out — no bash command construction, no argument parsing, no stdout scraping.
 
 **Hooks** — automatically nudge agents toward token-efficient tool usage:
 

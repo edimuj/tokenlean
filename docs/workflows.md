@@ -20,6 +20,7 @@ tl schema                       # Understand the database
 ```bash
 tl advise "refactor src/core/auth.ts" # Pick a safe refactor path
 tl pack refactor src/core/auth.ts # One compact refactor briefing
+tl pack refactor src/core/auth.ts --budget 1200 # Smaller briefing; lower-priority sections omitted
 tl impact src/core/auth.ts      # What would break?
 tl deps src/core/auth.ts        # What does it depend on?
 tl related src/core/auth.ts     # Find the tests
@@ -159,6 +160,8 @@ tl audit --provider claude --latest                       # Claude Code only
 tl audit --codex --latest                                 # Codex only
 tl audit --latest --savings                               # Auto-detect provider; combined summary
 tl audit --all --plan                                     # Prioritized recommendations
+tl audit --all --plan --github -R owner/repo              # Create a GitHub issue from the plan
+tl audit --all --plan --github -R owner/repo --github-project owner/1 # Add issue to a project board
 
 # output detail levels
 tl audit --all --savings                                  # Summary only, across all matching sessions

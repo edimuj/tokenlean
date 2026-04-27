@@ -183,6 +183,113 @@ export const TOOLS = [
       return dispatchTool('diff', args);
     },
   },
+  {
+    name: 'tl_advise',
+    description: 'Recommend the next tokenlean commands for a coding task. Use this before choosing tools for review, debug, refactor, testing, docs, or commit work.',
+    schema: {
+      goal: z.string().describe('Natural-language task goal, e.g. "debug failing npm test" or "review PR 123"'),
+      all: z.boolean().optional().describe('Show secondary recommendations too'),
+    },
+    handler: async ({ goal, all }) => {
+      const args = [goal];
+      if (all) args.push('--all');
+      args.push('-j');
+      return dispatchTool('advise', args);
+    },
+  },
+  {
+    name: 'tl_pack',
+    description: 'Build a compact workflow context pack for onboard, review, pr, refactor, or debug tasks.',
+    schema: {
+      pack: z.enum(['onboard', 'review', 'pr', 'refactor', 'debug']).describe('Workflow pack to run'),
+      target: z.string().optional().describe('Optional path, PR/branch target, or command depending on pack'),
+      budget: z.number().optional().describe('Output budget in approximate tokens'),
+      full: z.boolean().optional().describe('Include fuller underlying tool output where useful'),
+    },
+    handler: async ({ pack, target, budget, full }) => {
+      const args = [pack];
+      if (target) args.push(target);
+      if (budget) args.push('--budget', String(budget));
+      if (full) args.push('--full');
+      args.push('-j');
+      return dispatchTool('pack', args, { timeout: pack === 'debug' ? 305000 : 120000 });
+    },
+  },
+  {
+    name: 'tl_analyze',
+    description: 'Composite file profile: symbols, dependencies, impact, complexity, and related files in one compact report.',
+    schema: {
+      file: z.string().describe('File to analyze'),
+      full: z.boolean().optional().describe('Show more detail per section'),
+    },
+    handler: async ({ file, full }) => {
+      const args = [file];
+      if (full) args.push('--full');
+      args.push('-j');
+      return dispatchTool('analyze', args);
+    },
+  },
+  {
+    name: 'tl_related',
+    description: 'Find tests, type files, importers, and siblings related to a target file.',
+    schema: {
+      file: z.string().describe('Target file'),
+    },
+    handler: async ({ file }) => {
+      return dispatchTool('related', [file, '-j']);
+    },
+  },
+  {
+    name: 'tl_context',
+    description: 'Estimate token usage for files or directories before reading them.',
+    schema: {
+      path: z.string().optional().describe('File or directory path (default: current directory)'),
+      top: z.number().optional().describe('Show top N largest files'),
+      all: z.boolean().optional().describe('Show all files'),
+    },
+    handler: async ({ path, top, all }) => {
+      const args = [];
+      if (path) args.push(path);
+      if (top) args.push('--top', String(top));
+      if (all) args.push('--all');
+      args.push('-j');
+      return dispatchTool('context', args);
+    },
+  },
+  {
+    name: 'tl_structure',
+    description: 'Smart project overview with token estimates and important files/directories.',
+    schema: {
+      path: z.string().optional().describe('Project path (default: current directory)'),
+      depth: z.number().optional().describe('Maximum depth to show'),
+      entryPoints: z.boolean().optional().describe('Highlight entry points'),
+      exports: z.boolean().optional().describe('Show top exports inline per file'),
+    },
+    handler: async ({ path, depth, entryPoints, exports }) => {
+      const args = [];
+      if (path) args.push(path);
+      if (depth) args.push('--depth', String(depth));
+      if (entryPoints) args.push('--entry-points');
+      if (exports) args.push('--exports');
+      args.push('-j');
+      return dispatchTool('structure', args);
+    },
+  },
+  {
+    name: 'tl_entry',
+    description: 'Find project entry points: main files, routes, handlers, exports, and CLI entry points.',
+    schema: {
+      path: z.string().optional().describe('Search path (default: current directory)'),
+      type: z.enum(['main', 'routes', 'handlers', 'exports', 'cli']).optional().describe('Entry point type filter'),
+    },
+    handler: async ({ path, type }) => {
+      const args = [];
+      if (path) args.push(path);
+      if (type) args.push('--type', type);
+      args.push('-j');
+      return dispatchTool('entry', args);
+    },
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────

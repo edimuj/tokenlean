@@ -45,7 +45,7 @@ Packs:
   debug [command]      Token-efficient command output plus likely follow-up checks
 
 Options:
-  --budget N           Alias for --max-tokens N
+  --budget N           Approximate output budget; smaller budgets collect fewer sections
   --list               List available packs
   --full               Pass fuller output to selected underlying tools where useful
 ${COMMON_OPTIONS_HELP}
@@ -93,8 +93,10 @@ function toolPath(name) {
 
 function parseArgs(rawArgs) {
   const normalized = [];
+  let budget = null;
   for (let i = 0; i < rawArgs.length; i++) {
     if (rawArgs[i] === '--budget') {
+      budget = parseInt(rawArgs[i + 1], 10) || null;
       normalized.push('--max-tokens');
       if (rawArgs[i + 1]) normalized.push(rawArgs[++i]);
     } else {
@@ -115,11 +117,42 @@ function parseArgs(rawArgs) {
 
   return {
     ...options,
+    budget,
     list,
     full,
     pack: positional[0] || null,
     target: positional.slice(1).join(' ') || null
   };
+}
+
+function budgetTier(options) {
+  if (options.full) return 'large';
+  const budget = options.budget || options.maxTokens;
+  if (!Number.isFinite(budget)) return 'medium';
+  if (budget < 1500) return 'small';
+  if (budget < 3500) return 'medium';
+  return 'large';
+}
+
+function applyBudget(sections, options) {
+  const tier = budgetTier(options);
+  const limits = { small: 2, medium: 3, large: Infinity };
+  const limit = limits[tier] ?? Infinity;
+  const included = [];
+  const omitted = [];
+
+  for (const item of sections) {
+    if (included.length < limit || item.required) {
+      included.push(item);
+    } else {
+      omitted.push({
+        title: item.title,
+        command: item.command,
+      });
+    }
+  }
+
+  return { tier, included, omitted };
 }
 
 function compactLines(text, maxLines) {
@@ -167,12 +200,28 @@ function runTool(name, args, opts = {}) {
 }
 
 function section(title, name, args, opts = {}) {
-  return runTool(name, args, { title, ...opts });
+  return {
+    title,
+    name,
+    args,
+    command: `tl ${name}${args.length ? ` ${args.join(' ')}` : ''}`,
+    optional: Boolean(opts.optional),
+    timeout: opts.timeout,
+  };
+}
+
+function executeSection(item) {
+  if (!item.name) return item;
+  return runTool(item.name, item.args, {
+    title: item.title,
+    optional: item.optional,
+    timeout: item.timeout,
+  });
 }
 
 function buildOnboard(target, options) {
   return [
-    section('Project structure', 'structure', [target, '--depth', options.full ? '3' : '2']),
+    section('Project structure', 'structure', [target, '--depth', budgetTier(options) === 'small' ? '1' : options.full ? '3' : '2']),
     section('Entry points', 'entry', [target]),
     section('Technology stack', 'stack', []),
     section('Context hotspots', 'context', [target, '--top', options.full ? '20' : '10'])
@@ -294,26 +343,31 @@ function printList(out) {
 
 function renderPack(pack, target, sections, options) {
   const out = createOutput(options);
-  const failures = sections.filter(s => s.exitCode !== 0 && !s.optional);
-  const optionalFailures = sections.filter(s => s.exitCode !== 0 && s.optional);
-  const compactSections = sections.map(item => ({
+  const budgeted = applyBudget(sections, options);
+  const includedSections = budgeted.included.map(executeSection);
+  const failures = includedSections.filter(s => s.exitCode !== 0 && !s.optional);
+  const optionalFailures = includedSections.filter(s => s.exitCode !== 0 && s.optional);
+  const compactSections = includedSections.map(item => ({
     title: item.title,
     command: item.command,
     exitCode: item.exitCode,
     optional: item.optional,
-    output: compactLines(item.output || '(no output)', options.full ? 60 : 24)
+    output: compactLines(item.output || '(no output)', budgeted.tier === 'small' ? 12 : options.full ? 60 : 24)
   }));
 
   out.setData('pack', pack);
   out.setData('target', target);
+  out.setData('budgetTier', budgeted.tier);
   out.setData('sections', compactSections);
+  out.setData('omittedSections', budgeted.omitted);
   out.setData('failed', failures.length > 0);
 
   out.header(`Context pack: ${pack}${target ? ` (${target})` : ''}`);
   out.header(PACKS[pack]?.summary || '');
+  out.header(`Budget tier: ${budgeted.tier}`);
   out.blank();
 
-  for (const item of sections) {
+  for (const item of includedSections) {
     const status = item.exitCode === 0 ? 'ok' : item.optional ? 'skip' : 'fail';
     out.add(`${item.title} [${status}]`);
     out.add(`$ ${item.command}`);
@@ -324,6 +378,13 @@ function renderPack(pack, target, sections, options) {
 
   if (optionalFailures.length > 0) {
     out.add(`Optional checks skipped or failed: ${optionalFailures.length}`);
+  }
+
+  if (budgeted.omitted.length > 0) {
+    out.add('Omitted by budget:');
+    for (const item of budgeted.omitted) {
+      out.add(`  ${item.title} ($ ${item.command})`);
+    }
   }
 
   out.print();

@@ -16,7 +16,11 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { createRequire } from 'node:module';
 import { TOOLS, registerTools } from '../src/mcp-tools.mjs';
+
+const require = createRequire(import.meta.url);
+const { version } = require('../package.json');
 
 // Parse --tools flag for selective registration
 const toolsIdx = process.argv.indexOf('--tools');
@@ -26,7 +30,7 @@ const selectedTools = toolsIdx !== -1 && process.argv[toolsIdx + 1]
 
 const server = new McpServer({
   name: 'tokenlean',
-  version: '0.33.0',
+  version,
 });
 
 if (selectedTools) {

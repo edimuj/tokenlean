@@ -109,7 +109,7 @@ All issue-creating commands support `--project owner/N` to auto-add to a GitHub 
 
 | Tool            | Description                              | Example                     |
 |-----------------|------------------------------------------|-----------------------------|
-| `tl audit`      | Analyze Claude/Codex sessions and plan token savings | `tl audit --all --plan`  |
+| `tl audit`      | Analyze Claude/Codex sessions and plan token savings | `tl audit --all --plan --github -R owner/repo` |
 | `tl quota`      | Check AI subscription quota (Claude, Codex) | `tl quota`               |
 | `tl hook`       | Install token-saving agent hooks         | `tl hook install claude-code` |
 | `tl reddit`     | Read Reddit threads as clean text        | `tl reddit <url> -c 20`    |
