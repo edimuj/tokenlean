@@ -189,54 +189,33 @@ See [measuring token savings](docs/workflows.md#measuring-token-savings) for ful
 
 ## Agent Skills
 
-Ready-made workflows following the [Agent Skills](https://agentskills.io) open format, organized for both Claude Code and Codex runtimes.
+Ready-made workflows following the [Agent Skills](https://agentskills.io) open format. Each workflow ships in Claude Code and Codex variants with runtime-specific wording, but the underlying method is the same: gather narrow context first, then act.
 
-### Claude Code skills
+| Workflow | Use it when... | Claude Code | Codex |
+|----------|----------------|-------------|-------|
+| Code review | Reviewing a PR or local diff with risk-first context gathering | [`code-review`](skills/claude/code-review/SKILL.md) | [`code-review`](skills/codex/code-review/SKILL.md) |
+| Explore codebase | Understanding an unfamiliar repo without reading everything | [`explore-codebase`](skills/claude/explore-codebase/SKILL.md) | [`explore-codebase`](skills/codex/explore-codebase/SKILL.md) |
+| Safe refactor | Renaming, moving, extracting, or reshaping shared code | [`safe-refactor`](skills/claude/safe-refactor/SKILL.md) | [`safe-refactor`](skills/codex/safe-refactor/SKILL.md) |
+| Add feature | Implementing behavior after locating existing patterns | [`add-feature`](skills/claude/add-feature/SKILL.md) | [`add-feature`](skills/codex/add-feature/SKILL.md) |
+| Debug bug | Reproducing, tracing, fixing, and verifying defects | [`debug-bug`](skills/claude/debug-bug/SKILL.md) | [`debug-bug`](skills/codex/debug-bug/SKILL.md) |
+| Debug performance | Measuring before optimizing, then confirming wins | [`debug-performance`](skills/claude/debug-performance/SKILL.md) | [`debug-performance`](skills/codex/debug-performance/SKILL.md) |
+| Write tests | Adding behavior-focused tests that match project conventions | [`write-tests`](skills/claude/write-tests/SKILL.md) | [`write-tests`](skills/codex/write-tests/SKILL.md) |
+| Upgrade deps | Auditing usage and changelogs before dependency bumps | [`upgrade-deps`](skills/claude/upgrade-deps/SKILL.md) | [`upgrade-deps`](skills/codex/upgrade-deps/SKILL.md) |
+| Migrate framework | Running incremental migrations in dependency-safe batches | [`migrate-framework`](skills/claude/migrate-framework/SKILL.md) | [`migrate-framework`](skills/codex/migrate-framework/SKILL.md) |
 
-| Skill | What it does |
-|-------|-------------|
-| [`code-review`](skills/claude/code-review/SKILL.md) | Review PRs efficiently — scope, blast radius, complexity, then targeted code reading |
-| [`explore-codebase`](skills/claude/explore-codebase/SKILL.md) | Understand an unfamiliar project in minutes without reading everything |
-| [`safe-refactor`](skills/claude/safe-refactor/SKILL.md) | Rename, move, or extract code with impact analysis and verification at each step |
-| [`add-feature`](skills/claude/add-feature/SKILL.md) | Add functionality by studying existing patterns first — locate, learn conventions, implement, verify |
-| [`debug-bug`](skills/claude/debug-bug/SKILL.md) | Systematic bug investigation — reproduce, localize with blame/history, trace call path, verify fix |
-| [`debug-performance`](skills/claude/debug-performance/SKILL.md) | Measure before optimizing — establish baselines, identify bottlenecks, confirm improvements with numbers |
-| [`write-tests`](skills/claude/write-tests/SKILL.md) | Write tests by studying existing patterns and code under test before writing assertions |
-| [`upgrade-deps`](skills/claude/upgrade-deps/SKILL.md) | Upgrade dependencies safely — audit usage, research breaking changes, scale effort to version jump |
-| [`migrate-framework`](skills/claude/migrate-framework/SKILL.md) | Incremental framework/API migration with verification at each step, batched by dependency order |
-
-### Codex skills
-
-| Skill | What it does |
-|-------|-------------|
-| [`code-review`](skills/codex/code-review/SKILL.md) | Risk-first code review workflow for Codex using git diff + targeted validation |
-| [`explore-codebase`](skills/codex/explore-codebase/SKILL.md) | Build a fast architecture map in Codex with targeted reads and dependency tracing |
-| [`safe-refactor`](skills/codex/safe-refactor/SKILL.md) | Refactor safely in Codex using blast-radius checks and incremental verification |
-| [`add-feature`](skills/codex/add-feature/SKILL.md) | Add features in Codex by mapping precedent first, then implementing minimal safe changes |
-| [`debug-bug`](skills/codex/debug-bug/SKILL.md) | Repro-first bug fixing workflow in Codex with root-cause tracing and regression checks |
-| [`debug-performance`](skills/codex/debug-performance/SKILL.md) | Performance debugging in Codex with baseline metrics and before/after proof |
-| [`write-tests`](skills/codex/write-tests/SKILL.md) | Write behavior-focused tests in Codex that match project conventions |
-| [`upgrade-deps`](skills/codex/upgrade-deps/SKILL.md) | Dependency upgrade workflow in Codex with changelog-driven risk control |
-| [`migrate-framework`](skills/codex/migrate-framework/SKILL.md) | Incremental framework/API migrations in Codex with batch-level verification |
+Install the variant for your agent:
 
 ```bash
-# Claude Code — copy a skill
-cp -r node_modules/tokenlean/skills/claude/code-review ~/.claude/skills/
-
-# Claude Code — copy all skills
+# Copy all workflows
 cp -r node_modules/tokenlean/skills/claude/* ~/.claude/skills/
-
-# Codex — copy a skill
-cp -r node_modules/tokenlean/skills/codex/code-review ~/.codex/skills/
-
-# Codex — copy all skills
 cp -r node_modules/tokenlean/skills/codex/* ~/.codex/skills/
 
-# Or clone and pick what you need
-git clone https://github.com/edimuj/tokenlean.git
-cp -r tokenlean/skills/claude/code-review ~/.claude/skills/
-cp -r tokenlean/skills/codex/code-review ~/.codex/skills/
+# Or copy one workflow
+cp -r node_modules/tokenlean/skills/claude/code-review ~/.claude/skills/
+cp -r node_modules/tokenlean/skills/codex/code-review ~/.codex/skills/
 ```
+
+When working from a clone, replace `node_modules/tokenlean` with the local repo path.
 
 ## Design Principles
 
@@ -248,7 +227,7 @@ cp -r tokenlean/skills/codex/code-review ~/.codex/skills/
 
 ## More
 
-- [All 58 tools](docs/tools.md) — complete tool reference with examples
+- [All tools](docs/tools.md) — complete tool reference with examples
 - [Workflows](docs/workflows.md) — task-oriented recipes (refactoring, PR review, releases, etc.)
 - [Language support](docs/language-support.md) — compatibility matrix across languages
 - [Configuration](docs/configuration.md) — `.tokenleanrc.json` schema and caching
