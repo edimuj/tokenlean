@@ -9,7 +9,7 @@
  *   tl-hook uninstall <tool> Remove hooks from a coding tool's config
  *   tl-hook status <tool>    Show current hook status
  *
- * Supported tools: claude-code
+ * Supported tools: claude-code, codex, opencode
  */
 
 import { readFile, writeFile, mkdir, unlink } from 'node:fs/promises';
@@ -17,6 +17,7 @@ import { readFileSync, writeFileSync, statSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir } from 'node:os';
+import { evaluateToolCall } from '../src/hook-policy.mjs';
 
 const HELP = `Usage: tl-hook <command> [options]
 
@@ -30,6 +31,7 @@ Commands:
 
 Supported tools:
   claude-code            Claude Code (~/.claude/settings.json)
+  codex                  Codex CLI (~/.codex/config.toml)
   opencode               Open Code (~/.config/opencode/plugins/)
 
 Options (claude-code only):
@@ -45,36 +47,10 @@ Examples:
   tl-hook install claude-code --global
   tl-hook install claude-code --rig cli-node
   tl-hook install claude-code --all-rigs
+  tl-hook install codex
+  tl-hook status --all
   tl-hook install opencode
   tl-hook status opencode`;
-
-// --- Patterns (shared with tl-audit) ---
-
-const BUILD_TEST_PATTERNS = [
-  /\b(npm|yarn|pnpm|bun)\s+(test|run\s+test|run\s+build|run\s+lint)/,
-  /\bnode\s+--test\b/,
-  /\b(cargo|go)\s+(test|build|check|clippy)\b/,
-  /\b(make|cmake)\b/,
-  /\b(pytest|python\s+-m\s+(pytest|unittest))\b/,
-  /\b(mvn|gradle)\s+(test|build|compile)\b/,
-  /\b(dotnet)\s+(test|build)\b/,
-  /\b(mix)\s+(test|compile)\b/,
-  /\b(bundle\s+exec\s+r(spec|ake))\b/,
-  /\btsc\b/,
-  /\beslint\b/,
-  /\bprettier\b/,
-];
-
-const TAIL_PATTERNS = [
-  /^\s*tail\s+/,
-];
-
-const NON_CODE_EXTS = new Set([
-  'md', 'txt', 'json', 'yaml', 'yml', 'toml', 'xml', 'csv',
-  'lock', 'svg', 'html', 'css', 'log', 'env',
-]);
-
-const LARGE_FILE_BYTES = 12000; // ~300 lines of code
 
 // --- Nudge dedup (once per type, re-nudge after TTL) ---
 
@@ -90,6 +66,10 @@ function loadSeen(p) {
   try {
     return JSON.parse(readFileSync(p, 'utf8'));
   } catch { return {}; }
+}
+
+function statSyncSafe(path) {
+  try { return statSync(path); } catch { return null; }
 }
 
 function nudgeOnce(key, message) {
@@ -126,80 +106,20 @@ function makeNudge(message) {
   });
 }
 
-async function runHook() {
+async function runHook({ json = false } = {}) {
   const input = await readStdin();
   if (!input.trim()) return;
 
   let data;
   try { data = JSON.parse(input); } catch { return; }
 
-  const toolName = data.tool_name;
-  const toolInput = data.tool_input || {};
-
-  // --- Read on large code files ---
-  if (toolName === 'Read') {
-    const filePath = toolInput.file_path;
-    if (!filePath) return;
-
-    const ext = filePath.split('.').pop().toLowerCase();
-    if (NON_CODE_EXTS.has(ext)) return;
-
-    // Check file size
-    let size;
-    try { size = statSync(filePath).size; } catch { return; }
-
-    if (size > LARGE_FILE_BYTES) {
-      nudgeOnce('read-large', `[tl] ${Math.round(size / 1024)}KB — use tl-symbols + tl-snippet`);
-    }
+  const decision = evaluateToolCall(data);
+  if (json) {
+    console.log(JSON.stringify({ decision }, null, 2));
     return;
   }
 
-  // --- Bash patterns ---
-  if (toolName === 'Bash') {
-    const cmd = toolInput.command || '';
-
-    // Skip if already using tokenlean
-    if (/\btl-/.test(cmd)) return;
-
-    // Build/test commands
-    if (BUILD_TEST_PATTERNS.some(p => p.test(cmd))) {
-      nudgeOnce('bash-test', `[tl] wrap with tl-run`);
-      return;
-    }
-
-    // Tail commands
-    if (TAIL_PATTERNS.some(p => p.test(cmd))) {
-      nudgeOnce('bash-tail', `[tl] use tl-tail instead`);
-      return;
-    }
-
-    // cat — nudge to Read tool or tl-symbols
-    if (/^\s*cat\s+[^|]/.test(cmd)) {
-      nudgeOnce('bash-cat', `[tl] use Read tool, not cat`);
-      return;
-    }
-
-    // head — nudge to Read with limit
-    if (/^\s*head\s/.test(cmd)) {
-      nudgeOnce('bash-head', `[tl] use Read with offset/limit`);
-      return;
-    }
-
-    // curl on URLs (skip API calls with -X, -d, --data, -H with auth)
-    if (/^\s*curl\s/.test(cmd) && !/(-X\s|--data|--header.*auth|-d\s)/i.test(cmd)) {
-      nudgeOnce('bash-curl', `[tl] use tl-browse instead`);
-      return;
-    }
-  }
-
-  // --- WebFetch — nudge to tl-browse ---
-  if (toolName === 'WebFetch') {
-    const url = toolInput.url || '';
-    if (url) {
-      nudgeOnce('webfetch', `[tl] use tl-browse instead`);
-    }
-    return;
-  }
+  if (decision) nudgeOnce(decision.id, decision.message);
 }
 
 // --- Claude Code installer ---
@@ -301,6 +221,60 @@ function buildHookConfig() {
       },
     ],
   };
+}
+
+function buildCodexManagedBlock({ includeFeatureFlag = true } = {}) {
+  const lines = [
+    '# tokenlean hooks: begin',
+  ];
+  if (includeFeatureFlag) {
+    lines.push('features.codex_hooks = true');
+    lines.push('');
+  }
+
+  for (const group of buildHookConfig().PreToolUse) {
+    lines.push('[[hooks.PreToolUse]]');
+    lines.push(`matcher = ${JSON.stringify(group.matcher)}`);
+    for (const hook of group.hooks) {
+      lines.push('');
+      lines.push('[[hooks.PreToolUse.hooks]]');
+      lines.push(`type = ${JSON.stringify(hook.type)}`);
+      lines.push(`command = ${JSON.stringify(hook.command)}`);
+      lines.push(`timeout = ${hook.timeout}`);
+    }
+    lines.push('');
+  }
+
+  lines.push('# tokenlean hooks: end');
+  return lines.join('\n');
+}
+
+function stripManagedCodexBlock(content) {
+  return content
+    .replace(/\n?# tokenlean hooks: begin\n[\s\S]*?# tokenlean hooks: end\n?/g, '\n')
+    .replace(/^\s*codex_hooks\s*=\s*true\s+# tokenlean-managed\n?/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\n+/, '')
+    .trimEnd();
+}
+
+function hasCodexHooksFeatureSetting(content) {
+  return /(^|\n)\s*(features\.)?codex_hooks\s*=/.test(content);
+}
+
+function hasFeaturesTable(content) {
+  return /(^|\n)\s*\[features\]\s*(?:#.*)?(\n|$)/.test(content);
+}
+
+function hasDisabledCodexHooksFeature(content) {
+  return /(^|\n)\s*(features\.)?codex_hooks\s*=\s*false\b/.test(content);
+}
+
+function addManagedFeatureTableSetting(content) {
+  return content.replace(
+    /(^|\n)(\s*\[features\]\s*(?:#.*)?\n)/,
+    `$1$2codex_hooks = true # tokenlean-managed\n`
+  );
 }
 
 async function loadSettings(path) {
@@ -414,6 +388,93 @@ async function statusClaudeCode(configDir, label) {
   }
 }
 
+// --- Codex installer ---
+
+function getCodexConfigPath() {
+  return join(homedir(), '.codex', 'config.toml');
+}
+
+async function installCodex() {
+  const configDir = join(homedir(), '.codex');
+  await mkdir(configDir, { recursive: true });
+
+  const configPath = getCodexConfigPath();
+  let content = '';
+  try { content = await readFile(configPath, 'utf8'); } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+
+  const cleaned = stripManagedCodexBlock(content);
+  const hasFeatureSetting = hasCodexHooksFeatureSetting(cleaned);
+  const addFeatureToExistingTable = !hasFeatureSetting && hasFeaturesTable(cleaned);
+  const includeFeatureFlag = !hasFeatureSetting && !addFeatureToExistingTable;
+  const preserved = addFeatureToExistingTable ? addManagedFeatureTableSetting(cleaned) : cleaned;
+  const next = [buildCodexManagedBlock({ includeFeatureFlag }), preserved].filter(Boolean).join('\n\n') + '\n';
+  await writeFile(configPath, next, 'utf8');
+
+  console.log('Installed tokenlean hooks into Codex.');
+  console.log(`  Config: ${configPath}`);
+  console.log('  Hooks: PreToolUse (Read, Bash, WebFetch)');
+  if (includeFeatureFlag) {
+    console.log('  Feature: features.codex_hooks = true');
+  } else if (addFeatureToExistingTable) {
+    console.log('  Feature: codex_hooks = true added to existing [features]');
+  } else if (hasDisabledCodexHooksFeature(cleaned)) {
+    console.log('  Warning: existing codex_hooks setting is false; enable it for hooks to run.');
+  } else {
+    console.log('  Feature: existing codex_hooks setting preserved');
+  }
+}
+
+async function uninstallCodex() {
+  const configPath = getCodexConfigPath();
+  let content = '';
+  try { content = await readFile(configPath, 'utf8'); } catch (err) {
+    if (err.code === 'ENOENT') {
+      console.log('No Codex config found.');
+      return;
+    }
+    throw err;
+  }
+
+  const next = stripManagedCodexBlock(content);
+  if (next === content.trimEnd()) {
+    console.log('No tokenlean hooks found in Codex.');
+    return;
+  }
+
+  await writeFile(configPath, next ? `${next}\n` : '', 'utf8');
+  console.log('Removed tokenlean hooks from Codex.');
+}
+
+async function statusCodex() {
+  const configPath = getCodexConfigPath();
+  console.log('Codex');
+  console.log(`  Config: ${configPath}`);
+
+  let content = '';
+  try { content = await readFile(configPath, 'utf8'); } catch (err) {
+    if (err.code === 'ENOENT') {
+      console.log('  Not installed.');
+      console.log('  Run: tl-hook install codex');
+      return;
+    }
+    throw err;
+  }
+
+  if (/# tokenlean hooks: begin/.test(content) && /tl-hook run/.test(content)) {
+    console.log('  [active] PreToolUse (Read, Bash, WebFetch)');
+    if (hasDisabledCodexHooksFeature(content)) {
+      console.log('  [warn] codex_hooks feature is disabled');
+    }
+  } else if (/tl-hook run/.test(content)) {
+    console.log('  [active] tokenlean hook reference found');
+  } else {
+    console.log('  Not installed.');
+    console.log('  Run: tl-hook install codex');
+  }
+}
+
 // --- Open Code installer ---
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -477,6 +538,7 @@ async function statusOpenCode() {
 
 const TOOL_HANDLERS = {
   'claude-code': { install: installClaudeCode, uninstall: uninstallClaudeCode, status: statusClaudeCode },
+  'codex': { install: installCodex, uninstall: uninstallCodex, status: statusCodex },
   'opencode': { install: installOpenCode, uninstall: uninstallOpenCode, status: statusOpenCode },
 };
 
@@ -492,7 +554,23 @@ async function main() {
   const tool = args[1];
 
   if (command === 'run') {
-    await runHook();
+    await runHook({ json: args.includes('-j') || args.includes('--json') });
+    return;
+  }
+
+  if (command === 'status' && tool === '--all') {
+    const claudeDir = join(homedir(), '.claude');
+    if (statSyncSafe(claudeDir)?.isDirectory()) {
+      await statusClaudeCode(claudeDir, 'global (~/.claude)');
+    } else {
+      console.log('Claude Code [global (~/.claude)]');
+      console.log('  Not installed.');
+      console.log('  Run: tl-hook install claude-code');
+    }
+    console.log('');
+    await statusCodex();
+    console.log('');
+    await statusOpenCode();
     return;
   }
 

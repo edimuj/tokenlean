@@ -119,6 +119,10 @@ function fileContains(path, pattern) {
   }
 }
 
+function hasTokenleanReference(path) {
+  return fileContains(path, /tokenlean|tl-mcp|tl\s+mcp|tl-hook|tl\s+hook/i);
+}
+
 function countSkillDirs(path) {
   if (!existsSync(path)) return null;
   try {
@@ -140,13 +144,25 @@ function addAgentChecks(results) {
 
   results.push({ kind: 'pass', text: `tokenlean CLI: ${version}` });
 
+  const codexHasTokenlean = hasTokenleanReference(codexConfig);
+  const claudeHasTokenlean = hasTokenleanReference(claudeSettings);
+  const hasUserLevelTokenlean = codexHasTokenlean || claudeHasTokenlean;
+
   if (fileContains(projectMcp, /tokenlean|tl-mcp|tl\s+mcp/i)) {
     results.push({ kind: 'pass', text: 'project MCP: tokenlean configured (.mcp.json)' });
+  } else if (hasUserLevelTokenlean) {
+    results.push({ kind: 'skip', text: 'project MCP: not configured (.mcp.json)' });
   } else {
     results.push({ kind: 'warn', text: 'project MCP: tokenlean not found in .mcp.json' });
   }
 
-  if (fileContains(codexConfig, /tokenlean|tl-mcp|tl\s+mcp/i)) {
+  if (hasUserLevelTokenlean) {
+    results.push({ kind: 'pass', text: 'user-level tokenlean MCP/config: reference found' });
+  } else {
+    results.push({ kind: 'skip', text: 'user-level tokenlean MCP/config: not found' });
+  }
+
+  if (codexHasTokenlean) {
     results.push({ kind: 'pass', text: 'Codex MCP/config: tokenlean reference found' });
   } else if (existsSync(codexConfig)) {
     results.push({ kind: 'warn', text: 'Codex MCP/config: no tokenlean reference in ~/.codex/config.toml' });
@@ -154,7 +170,7 @@ function addAgentChecks(results) {
     results.push({ kind: 'skip', text: 'Codex MCP/config: ~/.codex/config.toml not found' });
   }
 
-  if (fileContains(claudeSettings, /tl-hook|tokenlean|tl-mcp|tl\s+mcp/i)) {
+  if (claudeHasTokenlean) {
     results.push({ kind: 'pass', text: 'Claude settings: tokenlean reference found' });
   } else if (existsSync(claudeSettings)) {
     results.push({ kind: 'warn', text: 'Claude settings: no tokenlean reference in ~/.claude/settings.json' });
@@ -223,6 +239,21 @@ function runDoctor({ agents = false } = {}) {
     results.push({ kind: 'warn', text: 'tokenlean hooks: not installed (claude-code)' });
   } else {
     results.push({ kind: 'fail', text: 'tokenlean hooks: check failed' });
+  }
+
+  const codexHooks = captureCommand(process.execPath, [HOOK_SCRIPT, 'status', 'codex']);
+  const codexActiveHooks = (codexHooks.output.match(/^\s*\[active\]/gm) || []).length;
+  if (codexActiveHooks > 0 && !/\[warn\]/.test(codexHooks.output)) {
+    results.push({ kind: 'pass', text: `tokenlean hooks: ${codexActiveHooks} active (codex)` });
+  } else if (codexActiveHooks > 0) {
+    results.push({ kind: 'warn', text: 'tokenlean hooks: installed but codex_hooks disabled (codex)' });
+  } else if (
+    codexHooks.ok ||
+    /Not installed|Run: tl-hook install codex|No Codex config/i.test(codexHooks.output)
+  ) {
+    results.push({ kind: 'warn', text: 'tokenlean hooks: not installed (codex)' });
+  } else {
+    results.push({ kind: 'fail', text: 'tokenlean hooks: check failed (codex)' });
   }
 
   if (!existsSync(CONFIG_PATH)) {

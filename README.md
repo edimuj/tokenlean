@@ -181,7 +181,10 @@ MCP tools include the core context reducers (`tl_symbols`, `tl_snippet`, `tl_run
 **Hooks** — automatically nudge agents toward token-efficient tool usage:
 
 ```bash
-tl hook install claude-code    # Gentle reminders when agents waste tokens
+tl hook install claude-code    # Hard PreToolUse nudges for Claude Code
+tl hook install codex          # Hard PreToolUse nudges for Codex CLI
+tl hook status --all           # Check hook adapters
+tl hook run -j                 # Structured policy decision for adapters/MCP
 tl audit --all --savings       # Measure actual savings across sessions
 tl audit --all --plan          # Turn audit findings into prioritized fixes
 ```

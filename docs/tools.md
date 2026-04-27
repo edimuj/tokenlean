@@ -111,7 +111,7 @@ All issue-creating commands support `--project owner/N` to auto-add to a GitHub 
 |-----------------|------------------------------------------|-----------------------------|
 | `tl audit`      | Analyze Claude/Codex sessions and plan token savings | `tl audit --all --plan --github -R owner/repo` |
 | `tl quota`      | Check AI subscription quota (Claude, Codex) | `tl quota`               |
-| `tl hook`       | Install token-saving agent hooks         | `tl hook install claude-code` |
+| `tl hook`       | Install token-saving agent hooks         | `tl hook status --all` |
 | `tl reddit`     | Read Reddit threads as clean text        | `tl reddit <url> -c 20`    |
 | `tl cache`      | Manage tokenlean caches                  | `tl cache stats`            |
 | `tl config`     | Show/manage configuration                | `tl config --init`          |

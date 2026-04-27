@@ -195,6 +195,12 @@ tl hook install claude-code --rig dev  # Install to a specific rig
 tl hook status claude-code         # Check what's active
 tl hook uninstall claude-code      # Remove hooks
 
+# Codex CLI — PreToolUse hooks via ~/.codex/config.toml
+tl hook install codex              # Install managed Codex hook block
+tl hook status codex               # Check Codex hook status
+tl hook uninstall codex            # Remove managed Codex hook block
+tl hook status --all               # Check all hook adapters
+
 # Open Code — plugin (auto-wraps commands with tl run/tl browse)
 tl hook install opencode           # Install plugin to ~/.config/opencode/plugins/
 tl hook status opencode            # Check if installed

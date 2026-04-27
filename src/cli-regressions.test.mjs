@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -703,6 +703,110 @@ describe('CLI regressions', () => {
       assert.match(result.stdout, /tokenlean CLI:/);
       assert.match(result.stdout, /project MCP:/);
       assert.match(result.stdout, /Codex MCP\/config:/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-030: tl-hook run -j returns shared policy decisions', () => {
+    const result = spawnSync(process.execPath, ['bin/tl-hook.mjs', 'run', '-j'], {
+      cwd: repoRoot,
+      input: JSON.stringify({
+        tool_name: 'Bash',
+        tool_input: { command: 'npm test' }
+      }),
+      encoding: 'utf-8'
+    });
+
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.strictEqual(parsed.decision.id, 'bash-test');
+    assert.strictEqual(parsed.decision.alternative, 'tl run "npm test"');
+  });
+
+  it('TLT-031: tl-hook install codex writes a managed hook block', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-codex-hooks-'));
+    try {
+      const result = spawnSync(process.execPath, ['bin/tl-hook.mjs', 'install', 'codex'], {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: tempDir, USERPROFILE: tempDir },
+        encoding: 'utf-8'
+      });
+
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      assert.match(result.stdout, /Installed tokenlean hooks into Codex/);
+
+      const config = readFileSync(join(tempDir, '.codex', 'config.toml'), 'utf-8');
+      assert.match(config, /# tokenlean hooks: begin/);
+      assert.match(config, /features\.codex_hooks = true/);
+      assert.match(config, /\[\[hooks\.PreToolUse\]\]/);
+      assert.match(config, /command = "tl-hook run"/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-032: tl-hook install codex preserves existing features table', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-codex-features-'));
+    try {
+      mkdirSync(join(tempDir, '.codex'), { recursive: true });
+      writeFileSync(join(tempDir, '.codex', 'config.toml'), [
+        '[features]',
+        'fast_mode = true',
+        '',
+        '[mcp_servers.tokenlean]',
+        'command = "tl"',
+        ''
+      ].join('\n'), 'utf-8');
+
+      const install = spawnSync(process.execPath, ['bin/tl-hook.mjs', 'install', 'codex'], {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: tempDir, USERPROFILE: tempDir },
+        encoding: 'utf-8'
+      });
+      assert.strictEqual(install.status, 0, install.stdout || install.stderr);
+
+      const installedConfig = readFileSync(join(tempDir, '.codex', 'config.toml'), 'utf-8');
+      assert.match(installedConfig, /\[features\]\ncodex_hooks = true # tokenlean-managed\nfast_mode = true/);
+      assert.doesNotMatch(installedConfig, /features\.codex_hooks = true/);
+
+      const uninstall = spawnSync(process.execPath, ['bin/tl-hook.mjs', 'uninstall', 'codex'], {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: tempDir, USERPROFILE: tempDir },
+        encoding: 'utf-8'
+      });
+      assert.strictEqual(uninstall.status, 0, uninstall.stdout || uninstall.stderr);
+
+      const config = readFileSync(join(tempDir, '.codex', 'config.toml'), 'utf-8');
+      assert.doesNotMatch(config, /tokenlean hooks: begin/);
+      assert.doesNotMatch(config, /codex_hooks/);
+      assert.match(config, /fast_mode = true/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-033: tl doctor --agents does not warn for missing project MCP when user config exists', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-doctor-user-mcp-'));
+    try {
+      mkdirSync(join(tempDir, '.codex'), { recursive: true });
+      writeFileSync(join(tempDir, '.codex', 'config.toml'), [
+        '[mcp_servers.tokenlean]',
+        'command = "tl"',
+        'args = ["mcp"]',
+        ''
+      ].join('\n'), 'utf-8');
+
+      const result = spawnSync(process.execPath, ['bin/tl.mjs', 'doctor', '--agents'], {
+        cwd: repoRoot,
+        env: { ...process.env, HOME: tempDir, USERPROFILE: tempDir },
+        encoding: 'utf-8'
+      });
+
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      assert.match(result.stdout, /- project MCP: not configured \(\.mcp\.json\)/);
+      assert.match(result.stdout, /✓ user-level tokenlean MCP\/config: reference found/);
+      assert.doesNotMatch(result.stdout, /⚠ project MCP: tokenlean not found in \.mcp\.json/);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
