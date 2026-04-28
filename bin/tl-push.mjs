@@ -38,6 +38,7 @@ If files are specified, stages only those files.
 
 Options:
   --all, -A             Include untracked files (git add -A instead of -u)
+  --force, -f           Force-add files (git add -f), for gitignored files
   --no-push             Commit only, don't push
   --amend               Amend the previous commit (message optional)
   --dry-run             Show what would happen without doing it
@@ -85,6 +86,7 @@ let amend = false;
 let noPush = false;
 let dryRun = false;
 let includeUntracked = false;
+let forceAdd = false;
 const files = [];
 
 for (const arg of options.remaining) {
@@ -92,6 +94,7 @@ for (const arg of options.remaining) {
   else if (arg === '--amend') amend = true;
   else if (arg === '--dry-run') dryRun = true;
   else if (arg === '--all' || arg === '-A') includeUntracked = true;
+  else if (arg === '--force' || arg === '-f') forceAdd = true;
   else if (message === null && !arg.startsWith('-')) message = arg;
   else if (!arg.startsWith('-')) files.push(arg);
 }
@@ -123,6 +126,11 @@ if (!status && !amend) {
 }
 
 const filesToStage = files.length > 0 ? files : null;
+
+if (forceAdd && !filesToStage) {
+  console.error('Error: -f/--force requires explicit file list');
+  process.exit(1);
+}
 
 if (filesToStage) {
   const sensitive = filesToStage.filter(isSensitive);
@@ -163,7 +171,7 @@ if (dryRun) {
     out.add(`Files (${stagedFiles.length}): ${stagedFiles.join(', ')}`);
   }
   if (filesToStage) {
-    out.add(`  git add ${filesToStage.join(' ')}`);
+    out.add(`  git add ${forceAdd ? '-f ' : ''}${filesToStage.join(' ')}`);
   } else {
     out.add(`  git add ${includeUntracked ? '-A' : '-u'}`);
   }
@@ -180,7 +188,7 @@ if (dryRun) {
 // Stage
 let stageResult;
 if (filesToStage) {
-  stageResult = git(['add', ...filesToStage]);
+  stageResult = git(['add', ...(forceAdd ? ['-f'] : []), ...filesToStage]);
 } else {
   stageResult = git(['add', includeUntracked ? '-A' : '-u']);
 }
