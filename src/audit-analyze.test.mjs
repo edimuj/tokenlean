@@ -167,6 +167,36 @@ describe('parseSession — Claude', () => {
     assert.equal(savings[0].tool, 'tl-run');
     assert.ok(savings[0].savedTokens > 0);
   });
+  it('detects tokenlean MCP savings for Claude tool calls', () => {
+    const tlOutput = 'x'.repeat(2000);
+    const jsonl = makeClaudeJsonl([{
+      id: 'call-4m',
+      name: 'tl_run',
+      input: { command: 'npm test', timeout: 1000 },
+      result: tlOutput,
+    }]);
+    const { savings } = parseSession(jsonl, 'claude');
+    assert.ok(savings.length > 0, 'should detect savings');
+    assert.equal(savings[0].tool, 'tl-run');
+    assert.ok(savings[0].command.startsWith('tl-run'));
+    assert.ok(savings[0].savedTokens > 0);
+  });
+
+
+
+  it('detects namespaced tokenlean MCP savings for Claude tool calls', () => {
+    const tlOutput = 'x'.repeat(2000);
+    const jsonl = makeClaudeJsonl([{
+      id: 'call-4mn',
+      name: 'mcp__tokenlean__tl_run',
+      input: { command: 'npm test' },
+      result: tlOutput,
+    }]);
+    const { savings } = parseSession(jsonl, 'claude');
+    assert.ok(savings.length > 0, 'should detect savings');
+    assert.equal(savings[0].tool, 'tl-run');
+    assert.ok(savings[0].command.startsWith('tl-run'));
+  });
 
   it('keeps Claude detection with non-tool lines present', () => {
     const lines = [
@@ -260,6 +290,36 @@ describe('parseSession — Codex', () => {
     assert.equal(findings[0].category, 'build-test-output');
     assert.equal(meta.provider, 'codex');
     assert.equal(meta.sessionId, 'codex-1');
+  });
+
+  it('detects tokenlean MCP savings for Codex function calls', () => {
+    const bigOutput = '\nOutput:\n' + 'x'.repeat(2000);
+    const jsonl = makeCodexJsonl([{
+      callId: 'c1m',
+      name: 'tl_symbols',
+      args: { files: 'src/' },
+      output: bigOutput,
+    }]);
+    const { savings } = parseSession(jsonl, 'codex');
+    assert.ok(savings.length > 0, 'should detect savings');
+    assert.equal(savings[0].tool, 'tl-symbols');
+    assert.ok(savings[0].command.startsWith('tl-symbols'));
+    assert.ok(savings[0].savedTokens > 0);
+  });
+
+
+  it('detects namespaced tokenlean MCP savings for Codex function calls', () => {
+    const bigOutput = '\nOutput:\n' + 'x'.repeat(2000);
+    const jsonl = makeCodexJsonl([{
+      callId: 'c1mn',
+      name: 'mcp__tokenlean__tl_symbols',
+      args: { files: 'src/' },
+      output: bigOutput,
+    }]);
+    const { savings } = parseSession(jsonl, 'codex');
+    assert.ok(savings.length > 0, 'should detect savings');
+    assert.equal(savings[0].tool, 'tl-symbols');
+    assert.ok(savings[0].command.startsWith('tl-symbols'));
   });
 
   it('skips codex savings analysis when includeSavings is false', () => {

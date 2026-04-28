@@ -31,8 +31,9 @@ Commands:
 
 Supported tools:
   claude-code            Claude Code (~/.claude/settings.json)
-  codex                  Codex CLI (~/.codex/config.toml)
+  codex                  Codex (~/.codex/hooks.json or ~/.Codex/hooks.json)
   opencode               Open Code (~/.config/opencode/plugins/)
+  pi                     Pi (~/.pi/agent/extensions/tokenlean-hook.ts)
 
 Options (claude-code only):
   --global               Install to ~/.claude/ (global user config)
@@ -50,11 +51,16 @@ Examples:
   tl-hook install codex
   tl-hook status --all
   tl-hook install opencode
+  tl-hook install pi
+  tl-hook status pi
   tl-hook status opencode`;
 
 // --- Nudge dedup (once per type, re-nudge after TTL) ---
 
-const NUDGE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const TTL_HIGH   =  5 * 60 * 1000;  // 5 min  — high-impact (large reads, curl)
+const TTL_MEDIUM = 15 * 60 * 1000;  // 15 min — medium (grep, find, git, heredoc)
+const TTL_LOW    = 30 * 60 * 1000;  // 30 min — low (test builds, tail)
+const NUDGE_TTL_MS = TTL_LOW;       // kept for compatibility
 
 function getSeenPath() {
   const port = process.env.CLAUDE_CODE_SSE_PORT;
@@ -72,15 +78,21 @@ function statSyncSafe(path) {
   try { return statSync(path); } catch { return null; }
 }
 
-function nudgeOnce(key, message) {
+function codexWarningsEnabled() {
+  const value = (process.env.TOKENLEAN_CODEX_WARNINGS || '').toLowerCase();
+  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
+}
+
+function nudgeOnce(key, message, ttl = NUDGE_TTL_MS, format = 'claude') {
+  if (format === 'codex' && !codexWarningsEnabled()) return;
   const p = getSeenPath();
   if (p) {
     const seen = loadSeen(p);
-    if (seen[key] && (Date.now() - seen[key]) < NUDGE_TTL_MS) return;
+    if (seen[key] && (Date.now() - seen[key]) < ttl) return;
     seen[key] = Date.now();
     writeFileSync(p, JSON.stringify(seen), 'utf8');
   }
-  console.log(makeNudge(message));
+  console.log(makeNudge(message, format));
 }
 
 // --- Hook runner ---
@@ -96,7 +108,27 @@ function readStdin() {
   });
 }
 
-function makeNudge(message) {
+function detectHookFormat(data) {
+  const format = (process.env.TOKENLEAN_HOOK_FORMAT || '').toLowerCase();
+  if (format === 'codex' || format === 'claude' || format === 'pi') return format;
+  if (process.env.PI_CODING_AGENT) return 'pi';
+  if (process.env.CLAUDE_CONFIG_DIR || process.env.CLAUDE_PROJECT_DIR) return 'claude';
+  if (process.env.CODEX_THREAD_ID || process.env.CODEX_CI) return 'codex';
+  if (data?.hook_event_name && data?.turn_id && data?.permission_mode && data?.session_id) {
+    return 'codex';
+  }
+  // Detect codex from payload transcript path when env vars aren't set
+  if (data?.transcript_path?.includes('/.codex/')) return 'codex';
+  return 'claude';
+}
+
+function makeNudge(message, format = 'claude') {
+  if (format === 'codex') {
+    return JSON.stringify({
+      systemMessage: message,
+    });
+  }
+
   return JSON.stringify({
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
@@ -106,6 +138,46 @@ function makeNudge(message) {
   });
 }
 
+function resolveCodexConfigDir() {
+  const candidates = [
+    join(homedir(), '.Codex'),
+    join(homedir(), '.codex'),
+  ];
+
+  for (const dir of candidates) {
+    try {
+      if (statSync(dir).isDirectory()) return dir;
+    } catch {}
+  }
+
+  return candidates[0];
+}
+
+function getCodexHooksPath() {
+  return join(resolveCodexConfigDir(), 'hooks.json');
+}
+
+function buildCodexHookConfig() {
+  return {
+    hooks: {
+      PreToolUse: [
+        {
+          matcher: 'Read',
+          hooks: [{ type: 'command', command: 'tl-hook run', timeout: 3 }],
+        },
+        {
+          matcher: 'Bash',
+          hooks: [{ type: 'command', command: 'tl-hook run', timeout: 3 }],
+        },
+        {
+          matcher: 'WebFetch',
+          hooks: [{ type: 'command', command: 'tl-hook run', timeout: 3 }],
+        },
+      ],
+    },
+  };
+}
+
 async function runHook({ json = false } = {}) {
   const input = await readStdin();
   if (!input.trim()) return;
@@ -113,13 +185,14 @@ async function runHook({ json = false } = {}) {
   let data;
   try { data = JSON.parse(input); } catch { return; }
 
+  const format = detectHookFormat(data);
   const decision = evaluateToolCall(data);
   if (json) {
     console.log(JSON.stringify({ decision }, null, 2));
     return;
   }
 
-  if (decision) nudgeOnce(decision.id, decision.message);
+  if (decision) nudgeOnce(decision.id, decision.message, NUDGE_TTL_MS, format);
 }
 
 // --- Claude Code installer ---
@@ -390,89 +463,78 @@ async function statusClaudeCode(configDir, label) {
 
 // --- Codex installer ---
 
-function getCodexConfigPath() {
-  return join(homedir(), '.codex', 'config.toml');
-}
-
 async function installCodex() {
-  const configDir = join(homedir(), '.codex');
+  const configDir = resolveCodexConfigDir();
   await mkdir(configDir, { recursive: true });
 
-  const configPath = getCodexConfigPath();
-  let content = '';
-  try { content = await readFile(configPath, 'utf8'); } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
+  const hooksPath = getCodexHooksPath();
+  const settings = await loadSettings(hooksPath);
+  const hookConfig = buildCodexHookConfig();
+
+  if (!settings.hooks) settings.hooks = {};
+  if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
+
+  for (const newMatcher of hookConfig.hooks.PreToolUse) {
+    settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter(
+      existing => !(existing.matcher === newMatcher.matcher && isTokenleanHook(existing))
+    );
+    settings.hooks.PreToolUse.push(newMatcher);
   }
 
-  const cleaned = stripManagedCodexBlock(content);
-  const hasFeatureSetting = hasCodexHooksFeatureSetting(cleaned);
-  const addFeatureToExistingTable = !hasFeatureSetting && hasFeaturesTable(cleaned);
-  const includeFeatureFlag = !hasFeatureSetting && !addFeatureToExistingTable;
-  const preserved = addFeatureToExistingTable ? addManagedFeatureTableSetting(cleaned) : cleaned;
-  const next = [buildCodexManagedBlock({ includeFeatureFlag }), preserved].filter(Boolean).join('\n\n') + '\n';
-  await writeFile(configPath, next, 'utf8');
-
+  await saveSettings(hooksPath, settings);
   console.log('Installed tokenlean hooks into Codex.');
-  console.log(`  Config: ${configPath}`);
+  console.log(`  Config: ${hooksPath}`);
   console.log('  Hooks: PreToolUse (Read, Bash, WebFetch)');
-  if (includeFeatureFlag) {
-    console.log('  Feature: features.codex_hooks = true');
-  } else if (addFeatureToExistingTable) {
-    console.log('  Feature: codex_hooks = true added to existing [features]');
-  } else if (hasDisabledCodexHooksFeature(cleaned)) {
-    console.log('  Warning: existing codex_hooks setting is false; enable it for hooks to run.');
-  } else {
-    console.log('  Feature: existing codex_hooks setting preserved');
-  }
 }
 
 async function uninstallCodex() {
-  const configPath = getCodexConfigPath();
-  let content = '';
-  try { content = await readFile(configPath, 'utf8'); } catch (err) {
-    if (err.code === 'ENOENT') {
-      console.log('No Codex config found.');
-      return;
-    }
-    throw err;
-  }
+  const hooksPath = getCodexHooksPath();
+  const settings = await loadSettings(hooksPath);
 
-  const next = stripManagedCodexBlock(content);
-  if (next === content.trimEnd()) {
-    console.log('No tokenlean hooks found in Codex.');
+  if (!settings.hooks) {
+    console.log('No hooks configured in Codex.');
     return;
   }
 
-  await writeFile(configPath, next ? `${next}\n` : '', 'utf8');
-  console.log('Removed tokenlean hooks from Codex.');
+  let removed = 0;
+  for (const event of Object.keys(settings.hooks)) {
+    const entries = Array.isArray(settings.hooks[event]) ? settings.hooks[event] : [];
+    const filtered = entries.filter(entry => !isTokenleanHook(entry));
+    removed += entries.length - filtered.length;
+
+    if (filtered.length > 0) settings.hooks[event] = filtered;
+    else delete settings.hooks[event];
+  }
+
+  if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
+
+  await saveSettings(hooksPath, settings);
+
+  if (removed > 0) console.log(`Removed ${removed} tokenlean hook(s) from Codex.`);
+  else console.log('No tokenlean hooks found in Codex.');
 }
 
 async function statusCodex() {
-  const configPath = getCodexConfigPath();
+  const hooksPath = getCodexHooksPath();
+  const settings = await loadSettings(hooksPath);
+
   console.log('Codex');
-  console.log(`  Config: ${configPath}`);
+  console.log(`  Config: ${hooksPath}`);
 
-  let content = '';
-  try { content = await readFile(configPath, 'utf8'); } catch (err) {
-    if (err.code === 'ENOENT') {
-      console.log('  Not installed.');
-      console.log('  Run: tl-hook install codex');
-      return;
-    }
-    throw err;
-  }
+  const hooks = settings.hooks || {};
+  const matchers = Array.isArray(hooks.PreToolUse) ? hooks.PreToolUse : [];
+  const active = matchers.filter(isTokenleanHook);
 
-  if (/# tokenlean hooks: begin/.test(content) && /tl-hook run/.test(content)) {
-    console.log('  [active] PreToolUse (Read, Bash, WebFetch)');
-    if (hasDisabledCodexHooksFeature(content)) {
-      console.log('  [warn] codex_hooks feature is disabled');
-    }
-  } else if (/tl-hook run/.test(content)) {
-    console.log('  [active] tokenlean hook reference found');
-  } else {
-    console.log('  Not installed.');
+  if (active.length === 0) {
+    console.log('  No tokenlean hooks installed.');
     console.log('  Run: tl-hook install codex');
+    return;
   }
+
+  for (const matcher of active) {
+    console.log(`  [active] PreToolUse (${matcher.matcher || '*'})`);
+  }
+  console.log(`  ${active.length} hook(s) active.`);
 }
 
 // --- Open Code installer ---
@@ -534,12 +596,69 @@ async function statusOpenCode() {
   }
 }
 
+// --- Pi installer ---
+
+function getPiExtensionPath() {
+  return join(homedir(), '.pi', 'agent', 'extensions', 'tokenlean-hook.ts');
+}
+
+async function installPi() {
+  const piDir = join(homedir(), '.pi');
+  try { statSync(piDir); } catch {
+    console.error('Pi is not installed (~/.pi not found).');
+    console.error('Install it from: https://shittycodingagent.ai');
+    process.exit(1);
+  }
+
+  const extensionDir = join(piDir, 'agent', 'extensions');
+  await mkdir(extensionDir, { recursive: true });
+
+  const templatePath = join(__dirname, '..', 'src', 'pi-extension.ts');
+  const content = await readFile(templatePath, 'utf8');
+  const extensionPath = getPiExtensionPath();
+  await writeFile(extensionPath, content, 'utf8');
+
+  console.log('Installed tokenlean extension into Pi.');
+  console.log(`  Extension: ${extensionPath}`);
+  console.log('  Hooks: tool_call (bash, read, webfetch)');
+  console.log('');
+  console.log('Restart Pi to activate.');
+}
+
+async function uninstallPi() {
+  const extensionPath = getPiExtensionPath();
+  try {
+    await unlink(extensionPath);
+    console.log('Removed tokenlean extension from Pi.');
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      console.log('No tokenlean extension found in Pi.');
+    } else {
+      throw err;
+    }
+  }
+}
+
+async function statusPi() {
+  const extensionPath = getPiExtensionPath();
+  console.log('Pi');
+  console.log(`  Extension: ${extensionPath}`);
+  try {
+    statSync(extensionPath);
+    console.log('  [active] tokenlean extension installed');
+  } catch {
+    console.log('  Not installed.');
+    console.log('  Run: tl-hook install pi');
+  }
+}
+
 // --- Main ---
 
 const TOOL_HANDLERS = {
   'claude-code': { install: installClaudeCode, uninstall: uninstallClaudeCode, status: statusClaudeCode },
   'codex': { install: installCodex, uninstall: uninstallCodex, status: statusCodex },
   'opencode': { install: installOpenCode, uninstall: uninstallOpenCode, status: statusOpenCode },
+  'pi': { install: installPi, uninstall: uninstallPi, status: statusPi },
 };
 
 async function main() {

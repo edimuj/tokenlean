@@ -5,7 +5,7 @@
  * by project path, session directory, or direct file path.
  */
 
-import { createReadStream } from 'node:fs';
+import { createReadStream, realpathSync } from 'node:fs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, resolve, relative, sep } from 'node:path';
 import { homedir } from 'node:os';
@@ -29,12 +29,20 @@ export function normalizeProvider(provider) {
 // Path helpers
 // ─────────────────────────────────────────────────────────────
 
+function canonicalPath(pathValue) {
+  try {
+    return realpathSync(pathValue);
+  } catch {
+    return resolve(pathValue);
+  }
+}
+
 function normalizeClaudeProjectPath(projectPath) {
-  return resolve(projectPath).replace(/[\\/]/g, '-');
+  return canonicalPath(projectPath).replace(/[\/]/g, '-');
 }
 
 function isSameOrWithinPath(childPath, parentPath) {
-  const rel = relative(resolve(parentPath), resolve(childPath));
+  const rel = relative(canonicalPath(parentPath), canonicalPath(childPath));
   return rel === '' || (!rel.startsWith('..') && !rel.startsWith(sep));
 }
 
@@ -105,14 +113,25 @@ async function findClaudeSessionsForProject(projectPath) {
     return [];
   }
 
-  const normalized = normalizeClaudeProjectPath(projectPath);
-  const matches = entries
-    .filter(entry => entry.isDirectory())
-    .map(entry => entry.name)
-    .filter(name => name === normalized || name.startsWith(`${normalized}-`));
+  const directories = entries.filter(entry => entry.isDirectory()).map(entry => entry.name);
+  const normalizedCandidates = new Set([
+    normalizeClaudeProjectPath(projectPath),
+    resolve(projectPath).replace(/[\/]/g, '-'),
+  ]);
 
-  const files = await Promise.all(matches.map(name => listFlatJsonlFiles(join(root, name), 'claude')));
-  return files.flat();
+  const matches = directories.filter(name => [...normalizedCandidates].some(candidate => name === candidate || name.startsWith(`${candidate}-`)));
+  if (matches.length > 0) {
+    const files = await Promise.all(matches.map(name => listFlatJsonlFiles(join(root, name), 'claude')));
+    return files.flat();
+  }
+
+  const fallbackFiles = (await Promise.all(directories.map(name => listFlatJsonlFiles(join(root, name), 'claude')))).flat();
+  const resolved = await Promise.all(fallbackFiles.map(async (file) => {
+    const meta = await readClaudeSessionMeta(file.path);
+    if (!meta?.cwd) return null;
+    return isSameOrWithinPath(meta.cwd, projectPath) ? file : null;
+  }));
+  return resolved.filter(Boolean);
 }
 
 function parseJson(line) {
@@ -147,6 +166,20 @@ async function readCodexSessionMeta(filePath) {
   const obj = parseJson(firstLine);
   if (!obj || obj.type !== 'session_meta') return null;
   return obj.payload || null;
+}
+
+async function readClaudeSessionMeta(filePath) {
+  const firstLine = await readFirstNonEmptyLine(filePath);
+  if (!firstLine) return null;
+
+  const obj = parseJson(firstLine);
+  if (!obj) return null;
+  return {
+    sessionId: obj.sessionId || null,
+    timestamp: obj.timestamp || null,
+    cwd: obj.cwd || null,
+    slug: obj.slug || null,
+  };
 }
 
 async function findCodexSessionsForProject(projectPath, count) {

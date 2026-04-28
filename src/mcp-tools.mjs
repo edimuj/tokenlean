@@ -11,10 +11,13 @@ import { promisify } from 'node:util';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { McpCache } from './mcp-cache.mjs';
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const binDir = join(__dirname, '..', 'bin');
+
+const cache = process.env.TL_MCP_CACHE !== '0' ? new McpCache() : null;
 
 // ─────────────────────────────────────────────────────────────
 // Subprocess dispatch
@@ -47,6 +50,19 @@ function textResult(text, isError = false) {
 }
 
 async function dispatchTool(tool, args, opts) {
+  if (cache) {
+    const k = cache.key(tool, args);
+    const hit = cache.get(k);
+    if (hit) return hit;
+    const result = await dispatchDirect(tool, args, opts);
+    // Only cache successful results
+    if (!result.isError) cache.set(k, result);
+    return result;
+  }
+  return dispatchDirect(tool, args, opts);
+}
+
+async function dispatchDirect(tool, args, opts) {
   const { stdout, stderr, ok } = await runCli(tool, args, opts);
   if (!ok && !stdout) return textResult(stderr || 'Tool failed with no output', true);
   // Return stdout; append stderr as note if present and tool succeeded
@@ -288,6 +304,47 @@ export const TOOLS = [
       if (type) args.push('--type', type);
       args.push('-j');
       return dispatchTool('entry', args);
+    },
+  },
+  {
+    name: 'tl_audit',
+    description: 'Analyze token waste in this session or project. Shows what patterns are costing tokens and how many were already saved by tokenlean.',
+    schema: {
+      path: z.string().optional().describe('Project directory or session file to analyze (default: cwd)'),
+      savings: z.boolean().optional().describe('Include tokens saved by tokenlean (default: false)'),
+      all: z.boolean().optional().describe('Analyze all sessions, not just the most recent'),
+    },
+    handler: async ({ path, savings, all }) => {
+      const args = [];
+      if (path) args.push(path);
+      if (savings) args.push('--savings');
+      if (all) args.push('--all');
+      args.push('-j');
+      return dispatchTool('audit', args);
+    },
+  },
+  {
+    name: 'tl_deps',
+    description: 'Show imports and dependency tree for a file. Reveals what a file depends on without reading it.',
+    schema: {
+      file: z.string().describe('File to show dependencies for'),
+      depth: z.number().optional().describe('Dependency depth to traverse (default: 1)'),
+    },
+    handler: async ({ file, depth }) => {
+      const args = [file];
+      if (depth) args.push('-d', String(depth));
+      args.push('-j');
+      return dispatchTool('deps', args);
+    },
+  },
+  {
+    name: 'tl_exports',
+    description: 'Show public API surface of a module or directory — what it exports without reading implementations.',
+    schema: {
+      path: z.string().describe('File or directory to analyze'),
+    },
+    handler: async ({ path }) => {
+      return dispatchTool('exports', [path, '-j']);
     },
   },
 ];

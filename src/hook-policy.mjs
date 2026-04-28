@@ -19,12 +19,34 @@ const TAIL_PATTERNS = [
   /^\s*tail\s+/,
 ];
 
+const GIT_VERBOSE_PATTERNS = [
+  /^\s*git\s+log\b(?!.*--oneline)(?!.*-n\s*[1-9])/,
+  /^\s*git\s+diff\b(?!.*--stat)(?!.*--name-only)/,
+  /^\s*git\s+show\b(?!.*--stat)(?!.*--name-only)/,
+];
+
+const LS_TREE_PATTERNS = [
+  /^\s*ls\s+-[a-z]*R/,
+  /^\s*ls\s+-[a-z]*l/,
+  /^\s*tree\b/,
+];
+
+const WRITE_VIA_BASH_PATTERNS = [
+  /<<\s*['"]?EOF/i,
+  />\s*\S+\.(js|ts|py|rb|go|rs|java|cs|cpp|c|h|sh|json|yaml|yml|toml|md)/,
+];
+
+const SED_AWK_EDIT_PATTERNS = [
+  /^\s*sed\s+-i/,
+  /^\s*awk\s+.*>\s*\S+/,
+];
+
 const NON_CODE_EXTS = new Set([
-  'md', 'txt', 'json', 'yaml', 'yml', 'toml', 'xml', 'csv',
-  'lock', 'svg', 'html', 'css', 'log', 'env',
+  'md', 'txt', 'toml', 'xml', 'csv', 'lock', 'svg', 'html', 'css', 'log', 'env',
 ]);
 
-const LARGE_FILE_BYTES = 12000; // ~300 lines of code
+const LARGE_FILE_BYTES = 12000;  // ~300 lines of code
+const LARGE_JSON_BYTES = 50000;  // 50KB JSON/YAML worth flagging
 
 function normalizeToolCall(data = {}) {
   const toolName = data.tool_name || data.tool || data.name || '';
@@ -45,10 +67,22 @@ export function evaluateToolCall(data = {}, options = {}) {
     if (!filePath) return null;
 
     const ext = filePath.split('.').pop().toLowerCase();
-    if (NON_CODE_EXTS.has(ext)) return null;
 
     let size;
     try { size = stat(filePath).size; } catch { return null; }
+
+    if (size > LARGE_JSON_BYTES && (ext === 'json' || ext === 'yaml' || ext === 'yml')) {
+      return {
+        id: 'read-large-json',
+        severity: 'nudge',
+        action: 'suggest',
+        message: `[tl] ${Math.round(size / 1024)}KB ${ext} — use tl-snippet to extract a specific path`,
+        alternative: 'tl snippet <key> <file>',
+        toolName,
+      };
+    }
+
+    if (NON_CODE_EXTS.has(ext)) return null;
 
     if (size > LARGE_FILE_BYTES) {
       return {
@@ -107,6 +141,72 @@ export function evaluateToolCall(data = {}, options = {}) {
         action: 'replace',
         message: '[tl] use Read with offset/limit',
         alternative: 'Read tool with limit',
+        toolName,
+      };
+    }
+
+    if (/^\s*(grep|rg|ag)\s/.test(cmd)) {
+      return {
+        id: 'bash-grep',
+        severity: 'nudge',
+        action: 'replace',
+        message: '[tl] use Grep tool, not bash',
+        alternative: 'Grep tool',
+        toolName,
+      };
+    }
+
+    if (/^\s*(find|fd)\s/.test(cmd)) {
+      return {
+        id: 'bash-find',
+        severity: 'nudge',
+        action: 'replace',
+        message: '[tl] use Glob tool, not bash',
+        alternative: 'Glob tool',
+        toolName,
+      };
+    }
+
+    if (LS_TREE_PATTERNS.some(p => p.test(cmd))) {
+      return {
+        id: 'bash-ls-tree',
+        severity: 'nudge',
+        action: 'replace',
+        message: '[tl] use tl-structure or Glob for directory exploration',
+        alternative: 'tl structure',
+        toolName,
+      };
+    }
+
+    if (GIT_VERBOSE_PATTERNS.some(p => p.test(cmd))) {
+      return {
+        id: 'bash-git-verbose',
+        severity: 'nudge',
+        action: 'replace',
+        message: '[tl] use tl-diff for token-efficient git output',
+        alternative: 'tl diff',
+        toolName,
+      };
+    }
+
+    if (WRITE_VIA_BASH_PATTERNS.some(p => p.test(cmd))) {
+      return {
+        id: 'bash-write',
+        severity: 'nudge',
+        action: 'replace',
+        message: '[tl] use Write tool instead of writing via bash',
+        alternative: 'Write tool',
+        toolName,
+      };
+    }
+
+    if (SED_AWK_EDIT_PATTERNS.some(p => p.test(cmd))) {
+      return {
+        id: 'bash-sed-awk',
+        severity: 'nudge',
+        action: 'replace',
+        message: '[tl] use Edit tool for targeted edits',
+        alternative: 'Edit tool',
         toolName,
       };
     }

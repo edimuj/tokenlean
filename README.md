@@ -181,15 +181,166 @@ MCP tools include the core context reducers (`tl_symbols`, `tl_snippet`, `tl_run
 **Hooks** — automatically nudge agents toward token-efficient tool usage:
 
 ```bash
-tl hook install claude-code    # Hard PreToolUse nudges for Claude Code
-tl hook install codex          # Hard PreToolUse nudges for Codex CLI
+tl hook install claude-code    # Claude Code (auto-detects claude-rig session)
+tl hook install codex          # Codex (~/.codex/hooks.json)
+tl hook install opencode       # Open Code (~/.config/opencode/plugins/)
 tl hook status --all           # Check hook adapters
 tl hook run -j                 # Structured policy decision for adapters/MCP
 tl audit --all --savings       # Measure actual savings across sessions
 tl audit --all --plan          # Turn audit findings into prioritized fixes
 ```
 
-See [measuring token savings](docs/workflows.md#measuring-token-savings) for full audit and hook setup details.
+## MCP Server
+
+`tl-mcp` exposes tokenlean tools as structured MCP function calls — no CLI argument construction, instant tool discovery.
+
+### Quick start (stdio)
+
+No daemon needed. Each agent session spawns a fresh process:
+
+```json
+{
+  "mcpServers": {
+    "tokenlean": { "command": "tl-mcp" }
+  }
+}
+```
+
+Only register specific MCP tools when you want a smaller surface area:
+
+```json
+{
+  "mcpServers": {
+    "tokenlean": {
+      "command": "tl-mcp",
+      "args": ["--tools", "symbols,snippet,run"]
+    }
+  }
+}
+```
+
+### Persistent daemon modes
+
+`tl-mcp` now supports three useful daemon styles:
+
+1. **Always on** — start at login via launchd/systemd
+2. **Just for one agent session** — stdio starts a helper daemon only if needed, then stops it when the session exits
+3. **Start on demand, self-expire later** — keep the daemon warm, but auto-exit after inactivity
+
+#### 1) Always on at startup
+
+**macOS (launchd):**
+
+```bash
+tl-mcp install-service
+# optional idle shutdown even under launchd docs:
+tl-mcp install-service --idle-timeout 120
+```
+
+**Linux (systemd user service):**
+
+```bash
+tl-mcp install-service
+# or:
+tl-mcp install-service --idle-timeout 120
+```
+
+To inspect the exact setup commands instead of piping them into bash:
+
+```bash
+tl-mcp install-service
+```
+
+#### 2) One Codex/agent session only
+
+Use stdio as normal, but add `--session-daemon` if you want a temporary helper daemon only for that session:
+
+```json
+{
+  "mcpServers": {
+    "tokenlean": {
+      "command": "tl-mcp",
+      "args": ["--session-daemon"]
+    }
+  }
+}
+```
+
+Behavior:
+- if no daemon is running, `tl-mcp` starts one
+- when that stdio session exits, it stops the daemon it created
+- if a daemon was already running, it reuses it and leaves it alone
+
+#### 3) Start if needed, then self-terminate after idle time
+
+```bash
+tl-mcp start --idle-timeout 120
+tl-mcp status
+tl-mcp stop
+```
+
+This keeps the daemon available across multiple sessions, but it shuts itself down after 120 minutes without MCP requests.
+
+You can also make stdio auto-start a warm daemon with an idle timeout:
+
+```bash
+tl-mcp --idle-timeout 120
+```
+
+#### Agent config (after daemon is running)
+
+**Claude Code:**
+```bash
+claude mcp add --transport http --scope user tokenlean http://127.0.0.1:3742/mcp
+```
+
+**`.mcp.json` (any agent):**
+```json
+{
+  "mcpServers": {
+    "tokenlean": { "type": "http", "url": "http://127.0.0.1:3742/mcp" }
+  }
+}
+```
+
+**Codex (`~/.codex/config.toml`):**
+```toml
+[mcp_servers.tokenlean]
+command = "/opt/homebrew/bin/tl-mcp"   # macOS Homebrew
+# command = "/usr/local/bin/tl-mcp"   # Linux
+args = []
+```
+
+**Codex with a one-session helper daemon:**
+```toml
+[mcp_servers.tokenlean]
+command = "/opt/homebrew/bin/tl-mcp"
+args = ["--session-daemon"]
+```
+
+**Codex with warm-cache daemon that idles out after 120m:**
+```toml
+[mcp_servers.tokenlean]
+command = "/opt/homebrew/bin/tl-mcp"
+args = ["--idle-timeout", "120"]
+```
+
+Codex uses stdio (spawns a process per session), but calling the installed binary directly avoids the `npx` registry-check overhead.
+
+### Available MCP tools
+
+| Tool | Description |
+|------|-------------|
+| `tl_symbols` | Extract function/class signatures without bodies |
+| `tl_snippet` | Extract a function/class by name |
+| `tl_run` | Token-efficient command output (tests, builds) |
+| `tl_impact` | What depends on a given file |
+| `tl_browse` | Fetch a URL as clean markdown |
+| `tl_tail` | Collapse repeated log patterns, surface errors |
+| `tl_guard` | Pre-commit check (secrets, TODOs, unused, circular) |
+| `tl_diff` | Token-efficient git diff summary |
+
+Selective registration: `tl-mcp --tools symbols,snippet,run`
 
 ## Agent Skills
 
