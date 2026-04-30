@@ -134,10 +134,10 @@ function parseProject(flag) {
   return { owner: match[1], number: parseInt(match[2]) };
 }
 
-function readStdinJSON() {
-  const raw = readFileSync('/dev/stdin', 'utf-8').trim();
+function readStdinJSON(inputArg) {
+  const raw = (inputArg || readFileSync('/dev/stdin', 'utf-8')).trim();
   if (!raw) {
-    console.error('Error: No input on stdin');
+    console.error('Error: No input on stdin or --input');
     process.exit(1);
   }
 
@@ -294,7 +294,7 @@ async function issueCreateBatch(args) {
     process.exit(1);
   }
 
-  const issues = readStdinJSON();
+  const issues = readStdinJSON(extractArg(args, '--input'));
   const out = createOutput(parseCommonArgs(args));
   out.header(`Creating ${issues.length} issues in ${repo}`);
 
@@ -431,10 +431,8 @@ async function issueCreateTree(args) {
     process.exit(1);
   }
 
-  const input = readStdinJSON();
-  // Input: [{ title, body, labels, children: [{ title, body, labels }] }]
-  // Or single object (not array)
-  const trees = Array.isArray(input) ? input : [input];
+  const inputData = readStdinJSON(extractArg(args, '--input'));
+  const trees = Array.isArray(inputData) ? inputData : [inputData];
 
   const out = createOutput(parseCommonArgs(args));
   out.header(`Creating ${trees.length} issue tree(s) in ${repo}`);

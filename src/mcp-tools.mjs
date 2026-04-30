@@ -290,6 +290,89 @@ export const TOOLS = [
       return dispatchTool('entry', args);
     },
   },
+  // ── GitHub batch operations ──────────────────────────────────
+
+  {
+    name: 'tl_gh_issue_add_sub',
+    description: 'Link existing issues as sub-issues of a parent issue via GitHub GraphQL.',
+    schema: {
+      repo: z.string().describe('Target repository (owner/repo)'),
+      parent: z.number().describe('Parent issue number'),
+      children: z.array(z.number()).describe('Child issue numbers to link as sub-issues'),
+    },
+    handler: async ({ repo, parent, children }) => {
+      const args = ['issue', 'add-sub', '-R', repo, '--parent', String(parent), ...children.map(String), '-j'];
+      return dispatchTool('gh', args, { timeout: 120000 });
+    },
+  },
+  {
+    name: 'tl_gh_issue_close_batch',
+    description: 'Close multiple issues at once with optional comment and reason.',
+    schema: {
+      repo: z.string().describe('Target repository (owner/repo)'),
+      issues: z.array(z.number()).describe('Issue numbers to close'),
+      comment: z.string().optional().describe('Comment to add when closing'),
+      reason: z.enum(['completed', 'not planned']).optional().describe('Close reason (default: completed)'),
+    },
+    handler: async ({ repo, issues, comment, reason }) => {
+      const args = ['issue', 'close-batch', '-R', repo, ...issues.map(String)];
+      if (comment) args.push('-c', comment);
+      if (reason) args.push('--reason', reason);
+      args.push('-j');
+      return dispatchTool('gh', args, { timeout: 120000 });
+    },
+  },
+  {
+    name: 'tl_gh_issue_label_batch',
+    description: 'Add and/or remove labels across multiple issues at once.',
+    schema: {
+      repo: z.string().describe('Target repository (owner/repo)'),
+      issues: z.array(z.number()).describe('Issue numbers to update'),
+      add: z.string().optional().describe('Comma-separated labels to add'),
+      remove: z.string().optional().describe('Comma-separated labels to remove'),
+    },
+    handler: async ({ repo, issues, add, remove }) => {
+      const args = ['issue', 'label-batch', '-R', repo, ...issues.map(String)];
+      if (add) args.push('--add', add);
+      if (remove) args.push('--remove', remove);
+      args.push('-j');
+      return dispatchTool('gh', args, { timeout: 120000 });
+    },
+  },
+  {
+    name: 'tl_gh_project_add_batch',
+    description: 'Add existing issues to a GitHub ProjectV2 board in bulk.',
+    schema: {
+      repo: z.string().describe('Target repository (owner/repo)'),
+      project: z.string().describe('Project identifier (owner/number, e.g. "edimuj/1")'),
+      issues: z.array(z.number()).describe('Issue numbers to add to the project'),
+    },
+    handler: async ({ repo, project, issues }) => {
+      const args = ['project', 'add-batch', '-R', repo, '--project', project, ...issues.map(String), '-j'];
+      return dispatchTool('gh', args, { timeout: 120000 });
+    },
+  },
+  {
+    name: 'tl_gh_issue_create_batch',
+    description: 'Create multiple issues from a JSON array. Each object: { title, body?, labels?, assignee?, milestone? }.',
+    schema: {
+      repo: z.string().describe('Target repository (owner/repo)'),
+      issues: z.array(z.object({
+        title: z.string().describe('Issue title'),
+        body: z.string().optional().describe('Issue body (markdown)'),
+        labels: z.array(z.string()).optional().describe('Labels to apply'),
+        assignee: z.string().optional().describe('Assignee username'),
+        milestone: z.string().optional().describe('Milestone name'),
+      })).describe('Array of issue objects to create'),
+      project: z.string().optional().describe('Add created issues to project (owner/number, e.g. "edimuj/1")'),
+    },
+    handler: async ({ repo, issues, project }) => {
+      const args = ['issue', 'create-batch', '-R', repo, '--input', JSON.stringify(issues)];
+      if (project) args.push('--project', project);
+      args.push('-j');
+      return dispatchTool('gh', args, { timeout: 120000 });
+    },
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────
