@@ -740,7 +740,7 @@ describe('CLI regressions', () => {
       assert.match(config, /# tokenlean hooks: begin/);
       assert.match(config, /features\.codex_hooks = true/);
       assert.match(config, /\[\[hooks\.PreToolUse\]\]/);
-      assert.match(config, /command = "tl-hook run"/);
+      assert.match(config, /command = "tl-hook run --target codex"/);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
