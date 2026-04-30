@@ -17,7 +17,7 @@ import { readFileSync, writeFileSync, statSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir } from 'node:os';
-import { evaluateToolCall } from '../src/hook-policy.mjs';
+import { evaluateToolCall, formatNudge } from '../src/hook-policy.mjs';
 
 const HELP = `Usage: tl-hook <command> [options]
 
@@ -33,6 +33,9 @@ Supported tools:
   claude-code            Claude Code (~/.claude/settings.json)
   codex                  Codex CLI (~/.codex/config.toml)
   opencode               Open Code (~/.config/opencode/plugins/)
+
+Options (run):
+  --target <client>      Output format: claude-code (default) or codex
 
 Options (claude-code only):
   --global               Install to ~/.claude/ (global user config)
@@ -72,7 +75,7 @@ function statSyncSafe(path) {
   try { return statSync(path); } catch { return null; }
 }
 
-function nudgeOnce(key, message) {
+function nudgeOnce(key, message, target) {
   const p = getSeenPath();
   if (p) {
     const seen = loadSeen(p);
@@ -80,7 +83,7 @@ function nudgeOnce(key, message) {
     seen[key] = Date.now();
     writeFileSync(p, JSON.stringify(seen), 'utf8');
   }
-  console.log(makeNudge(message));
+  console.log(formatNudge(message, target));
 }
 
 // --- Hook runner ---
@@ -96,17 +99,7 @@ function readStdin() {
   });
 }
 
-function makeNudge(message) {
-  return JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: 'PreToolUse',
-      permissionDecision: 'allow',
-      permissionDecisionReason: message,
-    }
-  });
-}
-
-async function runHook({ json = false } = {}) {
+async function runHook({ json = false, target } = {}) {
   const input = await readStdin();
   if (!input.trim()) return;
 
@@ -119,7 +112,7 @@ async function runHook({ json = false } = {}) {
     return;
   }
 
-  if (decision) nudgeOnce(decision.id, decision.message);
+  if (decision) nudgeOnce(decision.id, decision.message, target);
 }
 
 // --- Claude Code installer ---
@@ -239,7 +232,7 @@ function buildCodexManagedBlock({ includeFeatureFlag = true } = {}) {
       lines.push('');
       lines.push('[[hooks.PreToolUse.hooks]]');
       lines.push(`type = ${JSON.stringify(hook.type)}`);
-      lines.push(`command = ${JSON.stringify(hook.command)}`);
+      lines.push(`command = ${JSON.stringify(hook.command + ' --target codex')}`);
       lines.push(`timeout = ${hook.timeout}`);
     }
     lines.push('');
@@ -554,7 +547,9 @@ async function main() {
   const tool = args[1];
 
   if (command === 'run') {
-    await runHook({ json: args.includes('-j') || args.includes('--json') });
+    const targetIdx = args.indexOf('--target');
+    const target = targetIdx !== -1 ? args[targetIdx + 1] : undefined;
+    await runHook({ json: args.includes('-j') || args.includes('--json'), target });
     return;
   }
 

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluateToolCall, rewriteShellCommand } from './hook-policy.mjs';
+import { evaluateToolCall, rewriteShellCommand, formatNudge } from './hook-policy.mjs';
 
 describe('hook policy', () => {
   it('nudges build/test commands toward tl-run', () => {
@@ -35,5 +35,26 @@ describe('hook policy', () => {
   it('rewrites safe shell commands for rewriting adapters', () => {
     assert.equal(rewriteShellCommand('npm test'), 'tl-run "npm test"');
     assert.equal(rewriteShellCommand('curl https://example.com/page'), 'tl-browse "https://example.com/page"');
+  });
+});
+
+describe('formatNudge', () => {
+  it('emits hookSpecificOutput with permissionDecision for claude-code (default)', () => {
+    const result = JSON.parse(formatNudge('[tl] use tl-run'));
+    assert.equal(result.hookSpecificOutput.hookEventName, 'PreToolUse');
+    assert.equal(result.hookSpecificOutput.permissionDecision, 'allow');
+    assert.equal(result.hookSpecificOutput.permissionDecisionReason, '[tl] use tl-run');
+    assert.equal(result.systemMessage, undefined);
+  });
+
+  it('emits hookSpecificOutput for explicit claude-code target', () => {
+    const result = JSON.parse(formatNudge('[tl] use tl-run', 'claude-code'));
+    assert.equal(result.hookSpecificOutput.permissionDecision, 'allow');
+  });
+
+  it('emits systemMessage without permissionDecision for codex target', () => {
+    const result = JSON.parse(formatNudge('[tl] use tl-run', 'codex'));
+    assert.equal(result.systemMessage, '[tl] use tl-run');
+    assert.equal(result.hookSpecificOutput, undefined);
   });
 });

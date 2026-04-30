@@ -141,6 +141,19 @@ export function evaluateToolCall(data = {}, options = {}) {
   return null;
 }
 
+export function formatNudge(message, target) {
+  if (target === 'codex') {
+    return JSON.stringify({ systemMessage: message });
+  }
+  return JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'allow',
+      permissionDecisionReason: message,
+    }
+  });
+}
+
 export function rewriteShellCommand(command) {
   if (!command || isTokenleanCommand(command)) return null;
 
