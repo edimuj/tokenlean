@@ -20,8 +20,9 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execFile as execFileCb } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { promisify } from 'node:util';
 import { createOutput, parseCommonArgs, COMMON_OPTIONS_HELP } from '../src/output.mjs';
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -121,6 +122,102 @@ function addToProject(projectOwner, projectNumber, issueUrl) {
       item { id }
     }
   }`, { projectId, contentId });
+}
+
+// ── Async helpers for parallel batch operations ─────────────────────
+
+const execFileP = promisify(execFileCb);
+const PARALLEL_CONCURRENCY = 10;
+
+async function ghAsync(args, { json = false } = {}) {
+  const { stdout } = await execFileP('gh', args, {
+    encoding: 'utf-8',
+    timeout: 30_000,
+  });
+  return json ? JSON.parse(stdout) : stdout.trim();
+}
+
+async function ghGraphQLAsync(query, variables = {}) {
+  const gqlArgs = ['api', 'graphql', '-f', `query=${query}`];
+  for (const [k, v] of Object.entries(variables)) {
+    const flag = typeof v === 'number' || typeof v === 'boolean' ? '-F' : '-f';
+    gqlArgs.push(flag, `${k}=${v}`);
+  }
+  const { stdout } = await execFileP('gh', gqlArgs, {
+    encoding: 'utf-8',
+    timeout: 30_000,
+  });
+  const result = JSON.parse(stdout);
+  if (result.errors?.length) {
+    const msg = result.errors.map(e => e.message).join('; ');
+    const err = new Error(`GraphQL error: ${msg}`);
+    err.graphqlErrors = result.errors;
+    throw err;
+  }
+  return result;
+}
+
+async function withRetryAsync(fn, { retries = 2, backoff = 1000 } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (attempt >= retries) throw e;
+      await new Promise(r => setTimeout(r, backoff * (attempt + 1)));
+    }
+  }
+}
+
+async function getIssueNodeIdAsync(repo, number) {
+  const [owner, name] = repo.split('/');
+  const result = await ghGraphQLAsync(`{
+    repository(owner: "${owner}", name: "${name}") {
+      issue(number: ${number}) { id }
+    }
+  }`);
+  const issueId = result?.data?.repository?.issue?.id;
+  if (!issueId) throw new Error(`Issue not found: ${repo}#${number}`);
+  return issueId;
+}
+
+async function resolveProjectIdAsync(owner, number) {
+  try {
+    const r = await ghGraphQLAsync(`query($owner: String!, $number: Int!) {
+      user(login: $owner) { projectV2(number: $number) { id } }
+    }`, { owner, number });
+    if (r?.data?.user?.projectV2?.id) return r.data.user.projectV2.id;
+  } catch { /* not a user, try org */ }
+  try {
+    const r = await ghGraphQLAsync(`query($owner: String!, $number: Int!) {
+      organization(login: $owner) { projectV2(number: $number) { id } }
+    }`, { owner, number });
+    if (r?.data?.organization?.projectV2?.id) return r.data.organization.projectV2.id;
+  } catch { /* not an org either */ }
+  throw new Error(`Project not found: ${owner}/${number}`);
+}
+
+async function addIssueToProjectAsync(projectId, repo, issueNum) {
+  const contentId = await getIssueNodeIdAsync(repo, issueNum);
+  await ghGraphQLAsync(`mutation($projectId: ID!, $contentId: ID!) {
+    addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
+      item { id }
+    }
+  }`, { projectId, contentId });
+}
+
+async function parallelMap(items, fn, concurrency = PARALLEL_CONCURRENCY) {
+  const results = new Array(items.length);
+  let index = 0;
+  async function worker() {
+    while (index < items.length) {
+      const i = index++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => worker())
+  );
+  return results;
 }
 
 function parseProject(flag) {
@@ -298,33 +395,38 @@ async function issueCreateBatch(args) {
   const out = createOutput(parseCommonArgs(args));
   out.header(`Creating ${issues.length} issues in ${repo}`);
 
-  const results = [];
-  for (const issue of issues) {
-    const ghArgs = ['issue', 'create', '-R', repo, '--title', issue.title, '--body', issue.body || ''];
+  let projectId = null;
+  if (project) {
+    projectId = await resolveProjectIdAsync(project.owner, project.number);
+  }
+
+  const results = await parallelMap(issues, async (issue) => {
+    const createArgs = ['issue', 'create', '-R', repo, '--title', issue.title, '--body', issue.body || ''];
     if (issue.labels) {
       const labels = Array.isArray(issue.labels) ? issue.labels.join(',') : issue.labels;
-      ghArgs.push('--label', labels);
+      createArgs.push('--label', labels);
     }
-    if (issue.assignee) ghArgs.push('--assignee', issue.assignee);
-    if (issue.milestone) ghArgs.push('--milestone', issue.milestone);
+    if (issue.assignee) createArgs.push('--assignee', issue.assignee);
+    if (issue.milestone) createArgs.push('--milestone', issue.milestone);
 
     try {
-      const url = gh(ghArgs);
+      const url = await ghAsync(createArgs);
       const num = url.match(/\/(\d+)$/)?.[1] || '?';
-      results.push({ number: num, title: issue.title, url, status: 'created' });
+      const r = { number: num, title: issue.title, url, status: 'created' };
 
-      if (project) {
+      if (projectId) {
         try {
-          withRetry(() => addToProject(project.owner, project.number, url), { retries: 3, backoff: 2000 });
-          results[results.length - 1].project = true;
+          await withRetryAsync(() => addIssueToProjectAsync(projectId, repo, parseInt(num)), { retries: 3, backoff: 2000 });
+          r.project = true;
         } catch (e) {
-          results[results.length - 1].project = `failed: ${e.message}`;
+          r.project = `failed: ${e.message}`;
         }
       }
+      return r;
     } catch (e) {
-      results.push({ title: issue.title, status: 'failed', error: e.message });
+      return { title: issue.title, status: 'failed', error: e.message };
     }
-  }
+  });
 
   const created = results.filter(r => r.status === 'created');
   const failed = results.filter(r => r.status === 'failed');
@@ -363,7 +465,6 @@ async function issueAddSub(args) {
     process.exit(1);
   }
 
-  // Remaining positional args are child issue numbers
   const childNums = args.filter(a =>
     !a.startsWith('-') && a !== 'issue' && a !== 'add-sub'
     && a !== repo && a !== parentNum
@@ -379,7 +480,7 @@ async function issueAddSub(args) {
 
   let parentId;
   try {
-    parentId = getIssueNodeId(repo, parseInt(parentNum, 10));
+    parentId = await getIssueNodeIdAsync(repo, parseInt(parentNum, 10));
   } catch (e) {
     out.add(`  ⛔ Could not resolve parent #${parentNum}: ${e.message}`);
     out.stats('0 linked, 1 failed');
@@ -387,27 +488,28 @@ async function issueAddSub(args) {
     out.print();
     process.exit(1);
   }
-  const results = [];
 
-  for (const childNum of childNums) {
+  const results = await parallelMap(childNums, async (childNum) => {
     try {
-      const childId = getIssueNodeId(repo, childNum);
-      withRetry(() => ghGraphQL(`mutation($parentId: ID!, $childId: ID!) {
+      const childId = await getIssueNodeIdAsync(repo, childNum);
+      await withRetryAsync(() => ghGraphQLAsync(`mutation($parentId: ID!, $childId: ID!) {
         addSubIssue(input: {issueId: $parentId, subIssueId: $childId}) {
           issue { id }
         }
       }`, { parentId, childId }));
-      results.push({ number: childNum, status: 'linked' });
-      out.add(`  #${childNum} → sub of #${parentNum}`);
+      return { number: childNum, status: 'linked' };
     } catch (e) {
       if (/duplicate sub-issues|may only have one parent/.test(e.message)) {
-        results.push({ number: childNum, status: 'already linked' });
-        out.add(`  #${childNum} → already sub of #${parentNum}`);
-      } else {
-        results.push({ number: childNum, status: 'failed', error: e.message });
-        out.add(`  #${childNum} FAILED: ${e.message}`);
+        return { number: childNum, status: 'already linked' };
       }
+      return { number: childNum, status: 'failed', error: e.message };
     }
+  });
+
+  for (const r of results) {
+    if (r.status === 'linked') out.add(`  #${r.number} → sub of #${parentNum}`);
+    else if (r.status === 'already linked') out.add(`  #${r.number} → already sub of #${parentNum}`);
+    else out.add(`  #${r.number} FAILED: ${r.error}`);
   }
 
   const linked = results.filter(r => r.status === 'linked').length;
@@ -437,10 +539,14 @@ async function issueCreateTree(args) {
   const out = createOutput(parseCommonArgs(args));
   out.header(`Creating ${trees.length} issue tree(s) in ${repo}`);
 
+  let projectId = null;
+  if (project) {
+    projectId = await resolveProjectIdAsync(project.owner, project.number);
+  }
+
   const results = [];
 
   for (const tree of trees) {
-    // Create parent
     const parentArgs = ['issue', 'create', '-R', repo, '--title', tree.title, '--body', tree.body || ''];
     if (tree.labels) {
       const labels = Array.isArray(tree.labels) ? tree.labels.join(',') : tree.labels;
@@ -450,34 +556,29 @@ async function issueCreateTree(args) {
 
     let parentUrl, parentNum;
     try {
-      parentUrl = gh(parentArgs);
+      parentUrl = await ghAsync(parentArgs);
       parentNum = parentUrl.match(/\/(\d+)$/)?.[1];
     } catch (e) {
       results.push({ title: tree.title, status: 'failed', error: e.message });
-      out.add(`  FAILED parent: ${tree.title} — ${e.message}`);
       continue;
     }
 
     const treeResult = { number: parentNum, title: tree.title, status: 'created', url: parentUrl, children: [] };
 
-    if (project) {
+    if (projectId) {
       try {
-        withRetry(() => addToProject(project.owner, project.number, parentUrl), { retries: 3, backoff: 2000 });
+        await withRetryAsync(() => addIssueToProjectAsync(projectId, repo, parseInt(parentNum)), { retries: 3, backoff: 2000 });
         treeResult.project = true;
       } catch (e) {
         treeResult.project = `failed: ${e.message}`;
       }
     }
 
-    const projTag = treeResult.project === true ? ' [+project]' : '';
-    out.add(`  #${parentNum} ${tree.title}${projTag}`);
-
-    // Create children and link as sub-issues
     const children = tree.children || [];
     if (children.length) {
-      const parentId = getIssueNodeId(repo, parseInt(parentNum));
+      const parentId = await getIssueNodeIdAsync(repo, parseInt(parentNum));
 
-      for (const child of children) {
+      treeResult.children = await parallelMap(children, async (child) => {
         const childArgs = ['issue', 'create', '-R', repo, '--title', child.title, '--body', child.body || ''];
         if (child.labels) {
           const labels = Array.isArray(child.labels) ? child.labels.join(',') : child.labels;
@@ -486,37 +587,46 @@ async function issueCreateTree(args) {
         if (child.assignee) childArgs.push('--assignee', child.assignee);
 
         try {
-          const childUrl = gh(childArgs);
+          const childUrl = await ghAsync(childArgs);
           const childNum = childUrl.match(/\/(\d+)$/)?.[1];
 
-          // Resolve child node ID (retry — GitHub may not have indexed the new issue yet)
-          const childId = withRetry(
-            () => getIssueNodeId(repo, parseInt(childNum)),
+          const childId = await withRetryAsync(
+            () => getIssueNodeIdAsync(repo, parseInt(childNum)),
             { retries: 2, backoff: 2000 }
           );
-          withRetry(() => ghGraphQL(`mutation($parentId: ID!, $childId: ID!) {
+          await withRetryAsync(() => ghGraphQLAsync(`mutation($parentId: ID!, $childId: ID!) {
             addSubIssue(input: {issueId: $parentId, subIssueId: $childId}) {
               issue { id }
             }
           }`, { parentId, childId }));
 
-          // Add child to project too
-          if (project) {
+          if (projectId) {
             try {
-              withRetry(() => addToProject(project.owner, project.number, childUrl), { retries: 3, backoff: 2000 });
+              await withRetryAsync(() => addIssueToProjectAsync(projectId, repo, parseInt(childNum)), { retries: 3, backoff: 2000 });
             } catch { /* parent success is enough */ }
           }
 
-          treeResult.children.push({ number: childNum, title: child.title, status: 'created', url: childUrl });
-          out.add(`    └─ #${childNum} ${child.title}`);
+          return { number: childNum, title: child.title, status: 'created', url: childUrl };
         } catch (e) {
-          treeResult.children.push({ title: child.title, status: 'failed', error: e.message });
-          out.add(`    └─ FAILED: ${child.title} — ${e.message}`);
+          return { title: child.title, status: 'failed', error: e.message };
         }
-      }
+      });
     }
 
     results.push(treeResult);
+  }
+
+  for (const tree of results) {
+    if (tree.status === 'failed') {
+      out.add(`  FAILED parent: ${tree.title} — ${tree.error}`);
+      continue;
+    }
+    const projTag = tree.project === true ? ' [+project]' : '';
+    out.add(`  #${tree.number} ${tree.title}${projTag}`);
+    for (const c of tree.children || []) {
+      if (c.status === 'created') out.add(`    └─ #${c.number} ${c.title}`);
+      else out.add(`    └─ FAILED: ${c.title} — ${c.error}`);
+    }
   }
 
   const totalParents = results.filter(r => r.status === 'created').length;
@@ -817,19 +927,19 @@ async function issueCloseBatch(args) {
   const out = createOutput(parseCommonArgs(args));
   out.header(`Closing ${issueNums.length} issues in ${repo}`);
 
-  const results = [];
-  for (const num of issueNums) {
-    const ghArgs = ['issue', 'close', num, '-R', repo, '--reason', reason];
-    if (comment) ghArgs.push('-c', comment);
-
+  const results = await parallelMap(issueNums, async (num) => {
+    const closeArgs = ['issue', 'close', num, '-R', repo, '--reason', reason];
+    if (comment) closeArgs.push('-c', comment);
     try {
-      gh(ghArgs);
-      results.push({ number: num, status: 'closed' });
-      out.add(`  #${num} closed`);
+      await ghAsync(closeArgs);
+      return { number: num, status: 'closed' };
     } catch (e) {
-      results.push({ number: num, status: 'failed', error: e.message });
-      out.add(`  #${num} FAILED: ${e.message}`);
+      return { number: num, status: 'failed', error: e.message };
     }
+  });
+
+  for (const r of results) {
+    out.add(r.status === 'closed' ? `  #${r.number} closed` : `  #${r.number} FAILED: ${r.error}`);
   }
 
   const closed = results.filter(r => r.status === 'closed').length;
@@ -866,20 +976,20 @@ async function issueLabelBatch(args) {
   if (removeLabels) actions.push(`-${removeLabels}`);
   out.header(`Labeling ${issueNums.length} issues in ${repo} (${actions.join(', ')})`);
 
-  const results = [];
-  for (const num of issueNums) {
-    const ghArgs = ['issue', 'edit', num, '-R', repo];
-    if (addLabels) ghArgs.push('--add-label', addLabels);
-    if (removeLabels) ghArgs.push('--remove-label', removeLabels);
-
+  const results = await parallelMap(issueNums, async (num) => {
+    const editArgs = ['issue', 'edit', num, '-R', repo];
+    if (addLabels) editArgs.push('--add-label', addLabels);
+    if (removeLabels) editArgs.push('--remove-label', removeLabels);
     try {
-      gh(ghArgs);
-      results.push({ number: num, status: 'updated' });
-      out.add(`  #${num} updated`);
+      await ghAsync(editArgs);
+      return { number: num, status: 'updated' };
     } catch (e) {
-      results.push({ number: num, status: 'failed', error: e.message });
-      out.add(`  #${num} FAILED: ${e.message}`);
+      return { number: num, status: 'failed', error: e.message };
     }
+  });
+
+  for (const r of results) {
+    out.add(r.status === 'updated' ? `  #${r.number} updated` : `  #${r.number} FAILED: ${r.error}`);
   }
 
   const updated = results.filter(r => r.status === 'updated').length;
@@ -1182,17 +1292,21 @@ async function projectAddBatch(args) {
   const out = createOutput(parseCommonArgs(args));
   out.header(`Adding ${issueNums.length} issues to project ${project.owner}/${project.number}`);
 
-  const results = [];
-  for (const num of issueNums) {
+  const projectId = await resolveProjectIdAsync(project.owner, project.number);
+
+  const results = await parallelMap(issueNums, async (num) => {
     try {
-      const url = `https://github.com/${repo}/issues/${num}`;
-      withRetry(() => addToProject(project.owner, project.number, url), { retries: 3, backoff: 2000 });
-      results.push({ number: num, status: 'added' });
-      out.add(`  #${num} → project ${project.owner}/${project.number}`);
+      await withRetryAsync(() => addIssueToProjectAsync(projectId, repo, num), { retries: 3, backoff: 2000 });
+      return { number: num, status: 'added' };
     } catch (e) {
-      results.push({ number: num, status: 'failed', error: e.message });
-      out.add(`  #${num} FAILED: ${e.message}`);
+      return { number: num, status: 'failed', error: e.message };
     }
+  });
+
+  for (const r of results) {
+    out.add(r.status === 'added'
+      ? `  #${r.number} → project ${project.owner}/${project.number}`
+      : `  #${r.number} FAILED: ${r.error}`);
   }
 
   const added = results.filter(r => r.status === 'added').length;
