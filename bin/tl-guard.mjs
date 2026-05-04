@@ -220,7 +220,7 @@ function checkUnused() {
 // Check 4: Circular dependencies
 // ─────────────────────────────────────────────────────────────
 
-const RESOLVE_EXTENSIONS = ['', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '/index.js', '/index.ts', '/index.tsx', '/index.mjs'];
+const RESOLVE_EXTENSIONS = ['', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.mts', '.cts', '/index.js', '/index.ts', '/index.tsx', '/index.mjs'];
 
 function buildImportGraph(projectRoot) {
   const skipGlobs = [...getSkipDirs()].map(d => `!${d}`);
@@ -228,6 +228,8 @@ function buildImportGraph(projectRoot) {
     '-n', '--no-heading',
     ...skipGlobs.flatMap(g => ['--glob', g]),
     '-e', "from\\s+['\"]\\./|from\\s+['\"]\\.\\./",
+    '-e', "import\\s+['\"]\\./|import\\s+['\"]\\.\\./",
+    '-e', "import\\s*\\(",
     '-e', "require\\s*\\(\\s*['\"]\\./|require\\s*\\(\\s*['\"]\\.\\./",
     projectRoot
   ]);
@@ -235,7 +237,7 @@ function buildImportGraph(projectRoot) {
   if (!output) return new Map();
 
   const graph = new Map(); // file -> Set<file>
-  const importSpecRe = /(?:from|require\s*\()\s*['"](\.[^'"]+)['"]/g;
+  const importSpecRe = /(?:from\s*['"](\.[^'"]+)['"]|import\s*['"](\.[^'"]+)['"]|import\s*\(([^)]*)\)|require\s*\(\s*['"](\.[^'"]+)['"]\s*\))/g;
 
   for (const line of output.split('\n')) {
     if (!line) continue;
@@ -255,7 +257,9 @@ function buildImportGraph(projectRoot) {
     let match;
     importSpecRe.lastIndex = 0;
     while ((match = importSpecRe.exec(content)) !== null) {
-      const spec = match[1];
+      const dynamicSpec = match[3]?.match(/['"](\.[^'"]+)['"]/);
+      const spec = match[1] || match[2] || dynamicSpec?.[1] || match[4];
+      if (!spec) continue;
       const resolved = resolveImport(fileDir, spec, projectRoot);
       if (resolved) {
         const relFrom = relative(projectRoot, filePath);

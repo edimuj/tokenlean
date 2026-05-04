@@ -346,13 +346,41 @@ export function extractName(sig) {
   return match ? match[1] : null;
 }
 
+export function extractExportNames(sig) {
+  if (!sig || typeof sig !== 'string') return [];
+  const trimmed = sig.trim();
+
+  const namespaceMatch = trimmed.match(/^export\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\b/);
+  if (namespaceMatch) return [namespaceMatch[1]];
+
+  if (/^export\s+\*\s+from\b/.test(trimmed)) return ['*'];
+
+  const namedMatch = trimmed.match(/^export\s+(?:type\s+)?\{([^}]+)\}/);
+  if (namedMatch) {
+    return namedMatch[1]
+      .split(',')
+      .map(part => part.trim())
+      .map(part => part.replace(/^type\s+/, '').trim())
+      .filter(Boolean)
+      .map(part => {
+        const aliasMatch = part.match(/\s+as\s+([A-Za-z_$][\w$]*)$/);
+        if (aliasMatch) return aliasMatch[1];
+        const nameMatch = part.match(/^([A-Za-z_$][\w$]*)$/);
+        return nameMatch ? nameMatch[1] : null;
+      })
+      .filter(Boolean);
+  }
+
+  const name = extractName(trimmed);
+  return name ? [name] : [];
+}
+
 export function extractSymbolNames(symbols, lang, exportsOnly) {
   const names = [];
 
   if (exportsOnly && symbols.exports) {
     for (const e of symbols.exports) {
-      const name = extractName(typeof e === 'string' ? e : e.signature || e);
-      if (name) names.push(name);
+      names.push(...extractExportNames(typeof e === 'string' ? e : e.signature || e));
     }
     return names;
   }

@@ -21,7 +21,7 @@ if (process.argv.includes('--prompt')) {
 }
 
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -230,6 +230,12 @@ function buildOnboard(target, options) {
 
 function buildReview(target, options) {
   if (target) {
+    if (isExistingFile(target)) {
+      return buildFileReview(target, options);
+    }
+    if (isExistingDirectory(target)) {
+      return buildOnboard(target, options);
+    }
     return buildPr(target, options);
   }
 
@@ -237,6 +243,34 @@ function buildReview(target, options) {
     section('Commit context', 'commit-prep', options.full ? ['--full'] : []),
     section('Current diff', 'diff', options.full ? ['--full'] : []),
     section('Pre-commit risks', 'guard', [], { optional: true, timeout: 45000 })
+  ];
+}
+
+function isExistingFile(target) {
+  try {
+    return statSync(target).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isExistingDirectory(target) {
+  try {
+    return statSync(target).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function buildFileReview(target, options) {
+  const analyzeArgs = [target];
+  if (options.full) analyzeArgs.push('--full');
+
+  return [
+    section('File profile', 'analyze', analyzeArgs),
+    section('Blast radius', 'impact', [target]),
+    section('Related files', 'related', [target]),
+    section('Target diff', 'diff', ['--file', target], { optional: true })
   ];
 }
 

@@ -103,6 +103,21 @@ describe('CLI regressions', () => {
     }
   });
 
+  it('TLT-034: tl-symbols keeps named re-exports in directory export mode', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-symbols-reexport-'));
+    const filePath = join(tempDir, 'index.js');
+    writeFileSync(filePath, "export { Button as PrimaryButton, Input } from './components.js';\n", 'utf-8');
+
+    try {
+      const result = runCli(['bin/tl-symbols.mjs', tempDir, '-e', '-q']);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      assert.match(result.stdout, /index\.js: PrimaryButton, Input/);
+      assert.doesNotMatch(result.stdout, /0 files, 0 symbols/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('TLT-003: tl-run shows stderr details when tests exit non-zero without parsed failures', () => {
     const nodePath = JSON.stringify(process.execPath);
     const script = "console.log('1 passing'); console.error('fatal setup'); process.exit(1)";
@@ -687,6 +702,137 @@ describe('CLI regressions', () => {
       parsed.sections.map(section => section.title),
       ['File profile', 'Blast radius']
     );
+  });
+
+  it('TLT-035: tl-pack review treats existing file targets as file-review context', () => {
+    const result = runCli(['bin/tl-pack.mjs', 'review', 'src/cache.mjs', '--budget', '900', '-j']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.strictEqual(parsed.pack, 'review');
+    assert.strictEqual(parsed.target, 'src/cache.mjs');
+    assert.deepStrictEqual(
+      parsed.sections.map(section => section.title),
+      ['File profile', 'Blast radius']
+    );
+    assert.strictEqual(parsed.sections[0].command, 'tl analyze src/cache.mjs');
+  });
+
+  it('TLT-039: tl-pack review does not route directories into file-only review tools', () => {
+    const result = runCli(['bin/tl-pack.mjs', 'review', 'src', '--budget', '900', '-j']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.deepStrictEqual(
+      parsed.sections.map(section => section.title),
+      ['Project structure', 'Entry points']
+    );
+    assert.strictEqual(parsed.sections[0].command, 'tl structure src --depth 1');
+    assert.doesNotMatch(result.stdout, /EISDIR/);
+    assert.doesNotMatch(result.stdout, /tl analyze src/);
+  });
+
+  it('TLT-036: tl-guard detects cycles through side-effect imports', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-guard-cycle-'));
+    writeFileSync(join(tempDir, 'a.js'), "import './b.js';\nexport const a = 1;\n", 'utf-8');
+    writeFileSync(join(tempDir, 'b.js'), "import './a.js';\nexport const b = 1;\n", 'utf-8');
+
+    try {
+      const result = runCli([
+        join(repoRoot, 'bin/tl-guard.mjs'),
+        '--no-secrets',
+        '--no-todos',
+        '--no-unused',
+        '-j'
+      ], tempDir);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      assert.strictEqual(parsed.checks.circular.status, 'warn');
+      assert.match(parsed.checks.circular.details[0].cycle, /a\.js -> b\.js -> a\.js/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-040: tl-guard detects cycles through commented dynamic imports', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-guard-dynamic-cycle-'));
+    writeFileSync(join(tempDir, 'a.js'), "import(/* webpackChunkName: 'b' */ './b.js');\n", 'utf-8');
+    writeFileSync(join(tempDir, 'b.js'), "import './a.js';\n", 'utf-8');
+
+    try {
+      const result = runCli([
+        join(repoRoot, 'bin/tl-guard.mjs'),
+        '--no-secrets',
+        '--no-todos',
+        '--no-unused',
+        '-j'
+      ], tempDir);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      assert.strictEqual(parsed.checks.circular.status, 'warn');
+      assert.match(parsed.checks.circular.details[0].cycle, /a\.js -> b\.js -> a\.js/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-041: tl-guard ignores dynamic imports without relative string specs', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-guard-dynamic-nonrelative-'));
+    writeFileSync(join(tempDir, 'a.js'), [
+      "const mod = import(moduleName);",
+      "const pkg = import('react');",
+      "export const a = 1;"
+    ].join('\n') + '\n', 'utf-8');
+
+    try {
+      const result = runCli([
+        join(repoRoot, 'bin/tl-guard.mjs'),
+        '--no-secrets',
+        '--no-todos',
+        '--no-unused',
+        '-j'
+      ], tempDir);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      assert.strictEqual(parsed.checks.circular.status, 'pass');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-037: tl-parallel keeps env-prefixed commands intact', () => {
+    const script = 'console.log(process.env.NODE_ENV)';
+    const result = runCli([
+      'bin/tl-parallel.mjs',
+      `NODE_ENV=tokenlean ${process.execPath} -e ${JSON.stringify(script)}`,
+      '-j'
+    ]);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.strictEqual(parsed.results[0].command.startsWith('NODE_ENV=tokenlean '), true);
+    assert.strictEqual(parsed.results[0].stdout.trim(), 'tokenlean');
+  });
+
+  it('TLT-038: tl-parallel timeout terminates child process groups', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-parallel-timeout-'));
+    const sentinel = join(tempDir, 'sentinel.txt');
+    const script = `setTimeout(() => require('fs').writeFileSync(${JSON.stringify(sentinel)}, 'late'), 800)`;
+
+    try {
+      const result = runCli([
+        'bin/tl-parallel.mjs',
+        '-T',
+        '100',
+        `${process.execPath} -e ${JSON.stringify(script)}`,
+        '-q'
+      ]);
+      assert.strictEqual(result.status, 1, result.stdout || result.stderr);
+      assert.match(result.stdout, /\[TIMEOUT\]/);
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 1100));
+      assert.throws(() => readFileSync(sentinel, 'utf-8'));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('TLT-029: tl doctor --agents includes agent integration checks', () => {

@@ -20,12 +20,13 @@ const binDir = join(__dirname, '..', 'bin');
 // Subprocess dispatch
 // ─────────────────────────────────────────────────────────────
 
-async function runCli(tool, args = [], { timeout = 60000 } = {}) {
+async function runCli(tool, args = [], { timeout = 60000, maxBuffer = 50 * 1024 * 1024 } = {}) {
   const toolPath = join(binDir, `tl-${tool}.mjs`);
   try {
-    const { stdout, stderr } = await execFileAsync('node', [toolPath, ...args], {
+    const { stdout, stderr } = await execFileAsync(process.execPath, [toolPath, ...args], {
       timeout,
       encoding: 'utf-8',
+      maxBuffer,
       cwd: process.cwd(),
       env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
     });
@@ -63,12 +64,15 @@ export const TOOLS = [
     name: 'tl_symbols',
     description: 'Extract function/class/type signatures from source files without bodies. Shows API surface in minimal tokens.',
     schema: {
-      files: z.string().describe('File or directory path(s), space-separated'),
+      files: z.union([
+        z.string(),
+        z.array(z.string())
+      ]).describe('File or directory path(s). Prefer an array when paths may contain spaces.'),
       exportsOnly: z.boolean().optional().describe('Show only exported symbols'),
       filter: z.enum(['function', 'class', 'type', 'constant', 'export']).optional().describe('Filter by symbol type'),
     },
     handler: async ({ files, exportsOnly, filter }) => {
-      const args = files.split(/\s+/).filter(Boolean);
+      const args = Array.isArray(files) ? files.filter(Boolean) : files.split(/\s+/).filter(Boolean);
       if (exportsOnly) args.push('-e');
       if (filter) args.push('--filter', filter);
       args.push('-j');

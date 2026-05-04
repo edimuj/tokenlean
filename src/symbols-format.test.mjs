@@ -104,6 +104,18 @@ describe('extractSymbolNames', () => {
     assert.ok(names.includes('BAR'));
   });
 
+  it('extracts TypeScript named type re-export names when exportsOnly', () => {
+    const symbols = {
+      exports: [
+        "export type { ButtonProps, Theme as ButtonTheme } from './button.js'",
+        "export { default as Button, type ButtonVariant } from './button.js'"
+      ]
+    };
+
+    const names = extractSymbolNames(symbols, 'js', true);
+    assert.deepEqual(names, ['ButtonProps', 'ButtonTheme', 'Button', 'ButtonVariant']);
+  });
+
   it('returns all names when not exportsOnly', () => {
     const symbols = {
       functions: ['function foo()', 'function bar()'],

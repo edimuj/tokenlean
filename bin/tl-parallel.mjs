@@ -93,8 +93,13 @@ function parseCommand(input) {
   }
   const str = String(input);
   const eqIdx = str.indexOf('=');
-  if (eqIdx > 0 && eqIdx < 30 && !/\s/.test(str.slice(0, eqIdx))) {
-    return { label: str.slice(0, eqIdx), cmd: str.slice(eqIdx + 1) };
+  const prefix = str.slice(0, eqIdx);
+  const valueAndCommand = str.slice(eqIdx + 1);
+  const looksLikeEnvAssignment =
+    /^[A-Z_][A-Z0-9_]*$/.test(prefix) &&
+    /^\S+\s+/.test(valueAndCommand);
+  if (eqIdx > 0 && eqIdx < 30 && !/\s/.test(prefix) && !looksLikeEnvAssignment) {
+    return { label: prefix, cmd: valueAndCommand };
   }
   return { label: deriveLabel(str), cmd: str };
 }
@@ -115,24 +120,39 @@ function runOne(cmd, timeout) {
     const start = Date.now();
     const chunks = { stdout: [], stderr: [] };
     let killed = false;
+    let forceKillTimer = null;
 
     const child = spawn(cmd, {
       shell: true,
+      detached: process.platform !== 'win32',
       env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0', TERM: 'dumb' }
     });
+
+    function killChild(signal) {
+      try {
+        if (process.platform !== 'win32') {
+          process.kill(-child.pid, signal);
+        } else {
+          child.kill(signal);
+        }
+      } catch {
+        try { child.kill(signal); } catch {}
+      }
+    }
 
     child.stdout.on('data', chunk => chunks.stdout.push(chunk));
     child.stderr.on('data', chunk => chunks.stderr.push(chunk));
 
     const timer = setTimeout(() => {
       killed = true;
-      child.kill('SIGTERM');
+      killChild('SIGTERM');
       // Force kill after 5s grace period
-      setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 5000);
+      forceKillTimer = setTimeout(() => killChild('SIGKILL'), 5000);
     }, timeout);
 
     child.on('error', err => {
       clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       resolve({
         stdout: '',
         stderr: err.message,
@@ -144,6 +164,7 @@ function runOne(cmd, timeout) {
 
     child.on('close', code => {
       clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       resolve({
         stdout: stripAnsi(Buffer.concat(chunks.stdout).toString('utf-8')),
         stderr: stripAnsi(Buffer.concat(chunks.stderr).toString('utf-8')),
@@ -258,11 +279,14 @@ async function main() {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '-T' || arg === '--timeout') {
-      timeout = parseInt(args[++i], 10) || DEFAULT_TIMEOUT;
+      const parsed = parseInt(args[++i], 10);
+      timeout = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_TIMEOUT;
     } else if (arg === '--max') {
-      maxConcurrent = parseInt(args[++i], 10) || DEFAULT_MAX_CONCURRENT;
+      const parsed = parseInt(args[++i], 10);
+      maxConcurrent = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_CONCURRENT;
     } else if (arg === '--lines') {
-      maxLinesPerCmd = parseInt(args[++i], 10) || DEFAULT_LINES_PER_CMD;
+      const parsed = parseInt(args[++i], 10);
+      maxLinesPerCmd = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_LINES_PER_CMD;
     } else if (arg === '--raw') {
       raw = true;
     } else {
