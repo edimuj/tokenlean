@@ -63,9 +63,9 @@ Wraps multi-step GitHub API calls into single commands. Requires `-R owner/repo`
 
 | Scenario | Tool |
 |---|---|
-| Single issue/PR read or write | `gh` CLI |
+| Single issue read with sub-issues or close with comment | `tl gh issue read` / `tl gh issue close` |
 | Bulk operations (create/close/label many) | `tl gh` |
-| View issue with all sub-issues | `tl gh issue view` |
+| View issue with direct sub-issues | `tl gh issue read` |
 | Full PR status (CI + reviews + merge readiness) | `tl gh pr digest` |
 | Check CI → merge → close issues → delete branch | `tl gh pr land` |
 | Auto-generate release changelog | `tl gh release notes` |
@@ -73,10 +73,10 @@ Wraps multi-step GitHub API calls into single commands. Requires `-R owner/repo`
 ### Issue commands
 
 ```bash
-# View issue with sub-issues (single GraphQL call)
-tl gh issue view -R owner/repo 434
-tl gh issue view -R owner/repo 434 --no-body    # compact
-tl gh issue view -R owner/repo 434 --full        # complete bodies
+# Read issue with sub-issues (single GraphQL call)
+tl gh issue read -R owner/repo 434
+tl gh issue read -R owner/repo 434 --no-body    # compact
+tl gh issue read -R owner/repo 434 --full        # complete bodies
 
 # Bulk create from JSON array or JSONL on stdin
 echo '[{"title":"Bug A","labels":["bug"]},{"title":"Bug B"}]' | tl gh issue create-batch -R owner/repo
@@ -88,9 +88,9 @@ cat tree.json | tl gh issue create-tree -R owner/repo
 # Link existing issues as sub-issues
 tl gh issue add-sub -R owner/repo --parent 10 42 43 44
 
-# Close multiple issues
-tl gh issue close-batch -R owner/repo 1 2 3 -c "Sprint complete"
-tl gh issue close-batch -R owner/repo 10 11 --reason "not planned"
+# Close one or more issues
+tl gh issue close -R owner/repo 1 2 3 -c "Sprint complete"
+tl gh issue close -R owner/repo 10 11 --reason "not planned"
 
 # Add/remove labels in bulk
 tl gh issue label-batch -R owner/repo --add "bug,P0" --remove "triage" 1 2 3
@@ -134,6 +134,6 @@ All `tl gh` commands support: `-R owner/repo` (required), `-j` (JSON output), `-
 
 - Always use `tl push` instead of raw `git add` + `git commit` + `git push` sequences
 - When multiple files are modified, run `tl commit-prep` first to see the full picture, then specify files explicitly
-- `tl gh issue view` fetches sub-issues in a single API call — much cheaper than listing + fetching individually
+- `tl gh issue read` fetches sub-issues in a single API call — much cheaper than listing + fetching individually
 - `tl gh pr land --dry-run` is safe to run — shows what would happen without acting
 - Pipe JSON into bulk commands: `tl gh issue create-batch`, `tl gh issue create-tree`

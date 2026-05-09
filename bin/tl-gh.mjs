@@ -27,10 +27,17 @@ import { createOutput, parseCommonArgs, COMMON_OPTIONS_HELP } from '../src/outpu
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
+const GH_ENV = {
+  ...process.env,
+  GH_PROMPT_DISABLED: '1',
+  GH_NO_UPDATE_NOTIFIER: '1',
+};
+
 function gh(args, { json = false } = {}) {
   const result = execFileSync('gh', args, {
     encoding: 'utf-8',
     timeout: 30_000,
+    env: GH_ENV,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   return json ? JSON.parse(result) : result.trim();
@@ -45,6 +52,7 @@ function ghGraphQL(query, variables = {}) {
   const result = JSON.parse(execFileSync('gh', args, {
     encoding: 'utf-8',
     timeout: 30_000,
+    env: GH_ENV,
     stdio: ['pipe', 'pipe', 'pipe'],
   }));
   if (result.errors?.length) {
@@ -128,11 +136,6 @@ function addToProject(projectOwner, projectNumber, issueUrl) {
 
 const execFileP = promisify(execFileCb);
 const PARALLEL_CONCURRENCY = 10;
-const GH_ENV = {
-  ...process.env,
-  GH_PROMPT_DISABLED: '1',
-  GH_NO_UPDATE_NOTIFIER: '1',
-};
 
 async function ghAsync(args, { json = false } = {}) {
   const { stdout } = await execFileP('gh', args, {
@@ -399,7 +402,7 @@ async function issueView(args) {
 
   if (!repo || !issueNum) {
     console.error('Error: --repo/-R and issue number are required');
-    console.error('Usage: tl-gh issue view -R owner/repo 434');
+    console.error('Usage: tl-gh issue read -R owner/repo 434');
     process.exit(1);
   }
 
@@ -419,7 +422,7 @@ async function issueView(args) {
           assignees(first: 5) { nodes { login } }
           labels(first: 10) { nodes { name } }
           comments { totalCount }
-          subIssues(first: 50) {
+          subIssues(first: 100) {
             totalCount
             nodes {
               number title state body url
@@ -467,7 +470,8 @@ async function issueView(args) {
     out.blank();
     const openCount = subs.filter(s => s.state === 'OPEN').length;
     const closedCount = subs.filter(s => s.state !== 'OPEN').length;
-    out.add(`  Sub-issues: ${subCount} (${openCount} open, ${closedCount} closed)`);
+    const shownNote = subCount > subs.length ? `, showing ${subs.length}` : '';
+    out.add(`  Sub-issues: ${subCount}${shownNote} (${openCount} open, ${closedCount} closed)`);
     out.add('  ─'.padEnd(60, '─'));
 
     for (const sub of subs) {
@@ -1053,7 +1057,7 @@ async function issueCloseBatch(args) {
   const issueNums = args.filter(a => /^\d+$/.test(a));
   if (!issueNums.length) {
     console.error('Error: Provide issue numbers as positional arguments');
-    console.error('Usage: tl-gh issue close-batch -R owner/repo 1 2 3 -c "Sprint done"');
+    console.error('Usage: tl-gh issue close -R owner/repo 1 2 3 -c "Sprint done"');
     process.exit(1);
   }
 
@@ -1458,11 +1462,13 @@ tl-gh - Token-efficient GitHub CLI wrapper
 Wraps multi-step gh workflows into single commands.
 
 Issue Commands:
-  issue view            View issue with sub-issues in one call
+  issue read            Read issue with sub-issues in one call
+  issue view            Alias for issue read
   issue create-batch    Create multiple issues from JSON/JSONL on stdin
   issue add-sub         Link existing issues as sub-issues
   issue create-tree     Create parent + children with sub-issue links
-  issue close-batch     Close multiple issues with optional comment
+  issue close           Close one or more issues with optional comment
+  issue close-batch     Alias for issue close
   issue label-batch     Add/remove labels across multiple issues
 
 Project Commands:
@@ -1481,9 +1487,9 @@ Global Options:
   --project <owner/num> Add created issues to a GitHub project board (e.g. edimuj/1)
 ${COMMON_OPTIONS_HELP}
 
-─── issue view ───
+─── issue read / view ───
 
-  View an issue with all sub-issues in a single API call.
+  Read an issue with direct sub-issues in a single API call.
   Bodies truncated to 5 lines by default — use --full for complete text.
 
   Options:
@@ -1492,8 +1498,9 @@ ${COMMON_OPTIONS_HELP}
     --body-lines <n>      Lines of body to show per issue (default: 5)
 
   Usage:
+    tl-gh issue read -R owner/repo 434
+    tl-gh issue read -R owner/repo 434 --no-body
     tl-gh issue view -R owner/repo 434
-    tl-gh issue view -R owner/repo 434 --no-body
     tl-gh issue view -R owner/repo 434 --full
     tl-gh issue view -R owner/repo 434 --body-lines 10
 
@@ -1525,11 +1532,13 @@ ${COMMON_OPTIONS_HELP}
   Usage:
     cat tree.json | tl-gh issue create-tree -R owner/repo --project edimuj/1
 
-─── issue close-batch ───
+─── issue close / close-batch ───
 
-  Close multiple issues at once with optional comment.
+  Close one or more issues at once with optional comment.
 
   Usage:
+    tl-gh issue close -R owner/repo 1 -c "Done"
+    tl-gh issue close -R owner/repo 1 2 3 -c "Sprint complete"
     tl-gh issue close-batch -R owner/repo 1 2 3 -c "Sprint complete"
     tl-gh issue close-batch -R owner/repo 10 11 --reason "not planned"
 
@@ -1605,6 +1614,7 @@ if (hasFlag(args, '-h') || hasFlag(args, '--help') || args.length === 0) {
 const sub = `${args[0]} ${args[1] || ''}`.trim();
 
 switch (sub) {
+  case 'issue read':
   case 'issue view':
     await issueView(args.slice(2));
     break;
@@ -1617,6 +1627,7 @@ switch (sub) {
   case 'issue create-tree':
     await issueCreateTree(args.slice(2));
     break;
+  case 'issue close':
   case 'issue close-batch':
     await issueCloseBatch(args.slice(2));
     break;

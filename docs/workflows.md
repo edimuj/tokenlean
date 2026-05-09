@@ -115,10 +115,10 @@ tl npm chalk --versions                 # Version history
 ## GitHub batch operations
 
 ```bash
-# View an issue with all its sub-issues (one API call)
-tl gh issue view -R owner/repo 434              # Bodies truncated to 5 lines
-tl gh issue view -R owner/repo 434 --no-body    # Compact: titles + labels only
-tl gh issue view -R owner/repo 434 --full       # Complete bodies
+# Read an issue with its direct sub-issues (one API call)
+tl gh issue read -R owner/repo 434              # Bodies truncated to 5 lines
+tl gh issue read -R owner/repo 434 --no-body    # Compact: titles + labels only
+tl gh issue read -R owner/repo 434 --full       # Complete bodies
 
 # Create issues in bulk from JSON
 echo '[{"title":"Bug A","labels":["bug"]},{"title":"Bug B"}]' | \
@@ -128,8 +128,8 @@ echo '[{"title":"Bug A","labels":["bug"]},{"title":"Bug B"}]' | \
 echo '{"title":"Epic","children":[{"title":"Task 1"},{"title":"Task 2"}]}' | \
   tl gh issue create-tree -R owner/repo --project edimuj/1
 
-# Sprint cleanup — close a batch with comment
-tl gh issue close-batch -R owner/repo 10 11 12 -c "Sprint complete"
+# Sprint cleanup — close one or more issues with comment
+tl gh issue close -R owner/repo 10 11 12 -c "Sprint complete"
 
 # Label triage
 tl gh issue label-batch -R owner/repo --add "P1" --remove "triage" 5 6 7

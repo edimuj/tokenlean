@@ -47,7 +47,7 @@ _tl() {
                 return
             elif [[ \$COMP_CWORD -eq 3 ]]; then
                 case "\${COMP_WORDS[2]}" in
-                    issue) COMPREPLY=(\$(compgen -W "view create-batch create-tree add-sub close-batch label-batch" -- "\$cur")) ;;
+                    issue) COMPREPLY=(\$(compgen -W "read view create-batch create-tree add-sub close close-batch label-batch" -- "\$cur")) ;;
                     pr) COMPREPLY=(\$(compgen -W "digest comments land" -- "\$cur")) ;;
                     project) COMPREPLY=(\$(compgen -W "add-batch" -- "\$cur")) ;;
                     release) COMPREPLY=(\$(compgen -W "notes" -- "\$cur")) ;;
@@ -112,7 +112,7 @@ _tl() {
                 return
             elif (( CURRENT == 4 )); then
                 case "\$words[3]" in
-                    issue) _describe 'action' '(view create-batch create-tree add-sub close-batch label-batch)' ;;
+                    issue) _describe 'action' '(read view create-batch create-tree add-sub close close-batch label-batch)' ;;
                     pr) _describe 'action' '(digest comments land)' ;;
                     project) _describe 'action' '(add-batch)' ;;
                     release) _describe 'action' '(notes)' ;;

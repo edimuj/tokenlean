@@ -92,11 +92,13 @@ Multi-step `gh` operations in single commands.
 
 | Tool | Description | Example |
 |------|-------------|---------|
-| `tl gh issue view` | View issue + all sub-issues in one call | `tl gh issue view -R owner/repo 434 --no-body` |
+| `tl gh issue read` | Read issue + direct sub-issues in one call | `tl gh issue read -R owner/repo 434 --no-body` |
+| `tl gh issue view` | Alias for `issue read` | `tl gh issue view -R owner/repo 434 --no-body` |
 | `tl gh issue create-batch` | Create issues in bulk from JSON/JSONL | `echo '[...]' \| tl gh issue create-batch -R owner/repo` |
 | `tl gh issue create-tree` | Create parent + children with sub-issue links | `echo '{...}' \| tl gh issue create-tree -R owner/repo` |
 | `tl gh issue add-sub` | Link existing issues as sub-issues | `tl gh issue add-sub -R owner/repo --parent 10 42 43` |
-| `tl gh issue close-batch` | Close multiple issues with optional comment | `tl gh issue close-batch -R owner/repo 1 2 3 -c "Done"` |
+| `tl gh issue close` | Close one or more issues with optional comment | `tl gh issue close -R owner/repo 1 2 3 -c "Done"` |
+| `tl gh issue close-batch` | Alias for `issue close` | `tl gh issue close-batch -R owner/repo 1 2 3 -c "Done"` |
 | `tl gh issue label-batch` | Add/remove labels across multiple issues | `tl gh issue label-batch -R owner/repo --add "P0" 1 2 3` |
 | `tl gh pr digest` | Full PR status: CI, reviews, comments, merge readiness | `tl gh pr digest -R owner/repo 123` |
 | `tl gh pr comments` | Review comments grouped by file with resolution status | `tl gh pr comments -R owner/repo 123 --unresolved` |

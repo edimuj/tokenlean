@@ -763,7 +763,7 @@ describe('CLI regressions', () => {
     }
   });
 
-  it('TLT-043: tl-gh issue close-batch uses batched non-interactive GraphQL calls', () => {
+  it('TLT-043: tl-gh issue close uses batched non-interactive GraphQL calls', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-gh-close-batch-'));
     const ghPath = join(tempDir, 'gh');
     const logPath = join(tempDir, 'gh-calls.jsonl');
@@ -787,7 +787,7 @@ describe('CLI regressions', () => {
       const result = spawnSync(process.execPath, [
         'bin/tl-gh.mjs',
         'issue',
-        'close-batch',
+        'close',
         '-R',
         'edimuj/app-chat-game',
         '1378',
@@ -828,7 +828,82 @@ describe('CLI regressions', () => {
     }
   });
 
-  it('TLT-044: tl-gh issue close-batch maps partial GraphQL errors per issue', () => {
+  it('TLT-045: tl-gh issue read aliases view and returns direct sub-issues', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-gh-issue-read-'));
+    const ghPath = join(tempDir, 'gh');
+    const logPath = join(tempDir, 'gh-calls.jsonl');
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'const fs = require("node:fs");',
+      'if (process.env.GH_PROMPT_DISABLED !== "1") process.exit(42);',
+      'const args = process.argv.slice(2);',
+      'fs.appendFileSync(process.env.GH_LOG, JSON.stringify(args) + "\\n");',
+      'process.stdout.write(JSON.stringify({ data: { repository: { issue: {',
+      '  number: 434,',
+      '  title: "Parent issue",',
+      '  state: "OPEN",',
+      '  body: "Parent body",',
+      '  url: "https://github.com/edimuj/app-chat-game/issues/434",',
+      '  createdAt: "2026-05-09T00:00:00Z",',
+      '  closedAt: null,',
+      '  author: { login: "edimuj" },',
+      '  assignees: { nodes: [{ login: "agent" }] },',
+      '  labels: { nodes: [{ name: "P1" }] },',
+      '  comments: { totalCount: 2 },',
+      '  subIssues: {',
+      '    totalCount: 1,',
+      '    nodes: [{',
+      '      number: 435,',
+      '      title: "Child issue",',
+      '      state: "CLOSED",',
+      '      body: "Child body",',
+      '      url: "https://github.com/edimuj/app-chat-game/issues/435",',
+      '      labels: { nodes: [{ name: "fixed" }] },',
+      '      assignees: { nodes: [] },',
+      '      comments: { totalCount: 0 }',
+      '    }]',
+      '  }',
+      '} } } }) + "\\n");'
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    try {
+      const result = spawnSync(process.execPath, [
+        'bin/tl-gh.mjs',
+        'issue',
+        'read',
+        '-R',
+        'edimuj/app-chat-game',
+        '434',
+        '--no-body',
+        '-j'
+      ], {
+        cwd: repoRoot,
+        encoding: 'utf-8',
+        env: {
+          ...process.env,
+          GH_LOG: logPath,
+          PATH: `${tempDir}:${process.env.PATH}`
+        }
+      });
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      const calls = readFileSync(logPath, 'utf-8').trim().split('\n').map(line => JSON.parse(line));
+      const queryText = calls[0].find(arg => arg.startsWith('query=')).slice('query='.length);
+
+      assert.strictEqual(parsed.issue.number, 434);
+      assert.strictEqual(parsed.issue.title, 'Parent issue');
+      assert.deepStrictEqual(parsed.issue.labels, ['P1']);
+      assert.deepStrictEqual(parsed.issue.assignees, ['agent']);
+      assert.strictEqual(parsed.issue.subIssues[0].number, 435);
+      assert.strictEqual(parsed.issue.subIssues[0].title, 'Child issue');
+      assert.match(queryText, /subIssues\(first: 100\)/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-046: tl-gh issue close-batch maps partial GraphQL errors per issue', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-gh-close-partial-'));
     const ghPath = join(tempDir, 'gh');
     writeFileSync(ghPath, [

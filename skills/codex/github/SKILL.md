@@ -49,12 +49,12 @@ Wraps multi-step GitHub API calls into single commands. Always pass `-R owner/re
 ### Issue commands
 
 ```bash
-tl gh issue view -R owner/repo 434                 # with sub-issues
-tl gh issue view -R owner/repo 434 --no-body        # compact
+tl gh issue read -R owner/repo 434                 # with sub-issues
+tl gh issue read -R owner/repo 434 --no-body        # compact
 
 echo '[{"title":"A"},{"title":"B"}]' | tl gh issue create-batch -R owner/repo
 tl gh issue add-sub -R owner/repo --parent 10 42 43
-tl gh issue close-batch -R owner/repo 1 2 3 -c "Done"
+tl gh issue close -R owner/repo 1 2 3 -c "Done"
 tl gh issue label-batch -R owner/repo --add "bug" 1 2 3
 ```
 
@@ -74,9 +74,8 @@ tl gh release notes -R owner/repo --tag v1.2.0
 
 ## When to use which
 
-- Single issue/PR read or write: `gh` CLI directly
-- Bulk operations: `tl gh` (create-batch, close-batch, label-batch)
-- View issue with sub-issues: `tl gh issue view`
+- Issue read with sub-issues or issue close with comment: `tl gh issue read` / `tl gh issue close`
+- Bulk operations: `tl gh` (create-batch, close, label-batch)
 - Full PR readiness check: `tl gh pr digest`
 - Merge + cleanup: `tl gh pr land`
 

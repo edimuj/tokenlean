@@ -297,6 +297,25 @@ export const TOOLS = [
   // ── GitHub batch operations ──────────────────────────────────
 
   {
+    name: 'tl_gh_issue_read',
+    description: 'Read a GitHub issue with its direct sub-issues, labels, assignees, comments count, and optionally bodies.',
+    schema: {
+      repo: z.string().describe('Target repository (owner/repo)'),
+      issue: z.number().describe('Issue number to read'),
+      full: z.boolean().optional().describe('Show complete bodies instead of truncating'),
+      noBody: z.boolean().optional().describe('Omit issue bodies for compact output'),
+      bodyLines: z.number().optional().describe('Lines of body to show per issue (default: 5)'),
+    },
+    handler: async ({ repo, issue, full, noBody, bodyLines }) => {
+      const args = ['issue', 'read', '-R', repo, String(issue)];
+      if (full) args.push('--full');
+      if (noBody) args.push('--no-body');
+      if (bodyLines) args.push('--body-lines', String(bodyLines));
+      args.push('-j');
+      return dispatchTool('gh', args, { timeout: 120000 });
+    },
+  },
+  {
     name: 'tl_gh_issue_add_sub',
     description: 'Link existing issues as sub-issues of a parent issue via GitHub GraphQL.',
     schema: {
@@ -310,8 +329,26 @@ export const TOOLS = [
     },
   },
   {
+    name: 'tl_gh_issue_close',
+    description: 'Close one or more GitHub issues with optional comment and close reason.',
+    schema: {
+      repo: z.string().describe('Target repository (owner/repo)'),
+      issues: z.union([z.number(), z.array(z.number())]).describe('Issue number or issue numbers to close'),
+      comment: z.string().optional().describe('Comment to add when closing'),
+      reason: z.enum(['completed', 'not planned']).optional().describe('Close reason (default: completed)'),
+    },
+    handler: async ({ repo, issues, comment, reason }) => {
+      const issueList = Array.isArray(issues) ? issues : [issues];
+      const args = ['issue', 'close', '-R', repo, ...issueList.map(String)];
+      if (comment) args.push('-c', comment);
+      if (reason) args.push('--reason', reason);
+      args.push('-j');
+      return dispatchTool('gh', args, { timeout: 120000 });
+    },
+  },
+  {
     name: 'tl_gh_issue_close_batch',
-    description: 'Close multiple issues at once with optional comment and reason.',
+    description: 'Close multiple issues at once with optional comment and reason. Alias-compatible with tl_gh_issue_close.',
     schema: {
       repo: z.string().describe('Target repository (owner/repo)'),
       issues: z.array(z.number()).describe('Issue numbers to close'),
