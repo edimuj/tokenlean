@@ -143,6 +143,7 @@ npm link
 # Summarize noisy logs            tl tail logs/app.log
 # What's the tech stack?         tl stack
 # Workflow-ready briefing        tl pack refactor src/auth.ts
+# Area refactor briefing          tl pack refactor src/
 # What should I run next?       tl advise "debug npm test"
 ```
 

@@ -41,7 +41,7 @@ Packs:
   onboard [path]        Project shape, entry points, stack, and token hotspots
   review [target]      Review context for current branch, staged diff, or branch/PR
   pr <target>          PR/branch review briefing
-  refactor <file>      File profile, impact, related files, and test mapping
+  refactor <path>      File or directory context for a planned refactor
   debug [command]      Token-efficient command output plus likely follow-up checks
 
 Options:
@@ -76,8 +76,8 @@ const PACKS = {
     defaultTarget: null
   },
   refactor: {
-    summary: 'File profile, impact, related files, and test mapping',
-    targetLabel: 'file',
+    summary: 'File or directory context for a planned refactor',
+    targetLabel: 'path',
     defaultTarget: null
   },
   debug: {
@@ -274,6 +274,19 @@ function buildFileReview(target, options) {
   ];
 }
 
+function buildDirectoryRefactor(target, options) {
+  const tier = budgetTier(options);
+  const depth = tier === 'small' ? '1' : options.full ? '3' : '2';
+  const symbolLineLimit = options.full ? '80' : '40';
+
+  return [
+    section('Project structure', 'structure', [target, '--depth', depth]),
+    section('Exported symbols', 'symbols', [target, '--exports-only', '--max-lines', symbolLineLimit]),
+    section('Context hotspots', 'context', [target, '--top', options.full ? '20' : '10']),
+    section('Entry points', 'entry', [target])
+  ];
+}
+
 function buildPr(target, options) {
   if (!target) {
     return [
@@ -319,6 +332,10 @@ function buildRefactor(target, options) {
         optional: false
       }
     ];
+  }
+
+  if (isExistingDirectory(target)) {
+    return buildDirectoryRefactor(target, options);
   }
 
   const analyzeArgs = [target];

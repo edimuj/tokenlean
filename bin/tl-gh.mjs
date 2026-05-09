@@ -133,6 +133,12 @@ async function ghAsync(args, { json = false } = {}) {
   const { stdout } = await execFileP('gh', args, {
     encoding: 'utf-8',
     timeout: 30_000,
+    maxBuffer: 5 * 1024 * 1024,
+    env: {
+      ...process.env,
+      GH_PROMPT_DISABLED: '1',
+      GH_NO_UPDATE_NOTIFIER: '1',
+    },
   });
   return json ? JSON.parse(stdout) : stdout.trim();
 }
@@ -229,6 +235,41 @@ function parseProject(flag) {
     process.exit(1);
   }
   return { owner: match[1], number: parseInt(match[2]) };
+}
+
+function parseRepo(repo) {
+  const match = repo?.match(/^([^/\s]+)\/([^/\s]+)$/);
+  if (!match) {
+    throw new Error(`Invalid repo: ${repo}. Expected owner/repo.`);
+  }
+  return { owner: match[1], name: match[2] };
+}
+
+function normalizeCloseReason(reason) {
+  if (!reason || reason === 'completed') return 'completed';
+  if (reason === 'not planned' || reason === 'not_planned') return 'not_planned';
+  throw new Error(`Invalid close reason: ${reason}. Expected "completed" or "not planned".`);
+}
+
+async function closeIssueViaApi(repo, number, reason) {
+  const { owner, name } = parseRepo(repo);
+  await ghAsync([
+    'api',
+    '--method', 'PATCH',
+    `repos/${owner}/${name}/issues/${number}`,
+    '-f', 'state=closed',
+    '-f', `state_reason=${reason}`
+  ]);
+}
+
+async function commentIssueViaApi(repo, number, body) {
+  const { owner, name } = parseRepo(repo);
+  await ghAsync([
+    'api',
+    '--method', 'POST',
+    `repos/${owner}/${name}/issues/${number}/comments`,
+    '-f', `body=${body}`
+  ]);
 }
 
 function readStdinJSON(inputArg) {
@@ -910,7 +951,13 @@ async function prComments(args) {
 async function issueCloseBatch(args) {
   const repo = extractArg(args, '--repo') || extractArg(args, '-R');
   const comment = extractArg(args, '--comment') || extractArg(args, '-c');
-  const reason = extractArg(args, '--reason') || 'completed';
+  let reason;
+  try {
+    reason = normalizeCloseReason(extractArg(args, '--reason'));
+  } catch (e) {
+    console.error(`Error: ${e.message}`);
+    process.exit(1);
+  }
 
   if (!repo) {
     console.error('Error: --repo/-R is required');
@@ -928,10 +975,9 @@ async function issueCloseBatch(args) {
   out.header(`Closing ${issueNums.length} issues in ${repo}`);
 
   const results = await parallelMap(issueNums, async (num) => {
-    const closeArgs = ['issue', 'close', num, '-R', repo, '--reason', reason];
-    if (comment) closeArgs.push('-c', comment);
     try {
-      await ghAsync(closeArgs);
+      await closeIssueViaApi(repo, num, reason);
+      if (comment) await commentIssueViaApi(repo, num, comment);
       return { number: num, status: 'closed' };
     } catch (e) {
       return { number: num, status: 'failed', error: e.message };

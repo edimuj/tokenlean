@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -730,6 +730,90 @@ describe('CLI regressions', () => {
     assert.strictEqual(parsed.sections[0].command, 'tl structure src --depth 1');
     assert.doesNotMatch(result.stdout, /EISDIR/);
     assert.doesNotMatch(result.stdout, /tl analyze src/);
+  });
+
+  it('TLT-042: tl-pack refactor treats directory targets as area context', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-pack-refactor-dir-'));
+    const srcDir = join(tempDir, 'src');
+    mkdirSync(srcDir, { recursive: true });
+    writeFileSync(join(srcDir, 'api.ts'), [
+      'export function loadUser() {',
+      '  return { id: 1 };',
+      '}'
+    ].join('\n') + '\n', 'utf-8');
+
+    try {
+      const result = runCli(['bin/tl-pack.mjs', 'refactor', srcDir, '--budget', '4000', '-j']);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+
+      assert.strictEqual(parsed.pack, 'refactor');
+      assert.strictEqual(parsed.target, srcDir);
+      assert.deepStrictEqual(
+        parsed.sections.map(section => section.title),
+        ['Project structure', 'Exported symbols', 'Context hotspots', 'Entry points']
+      );
+      assert.strictEqual(parsed.sections[0].command, `tl structure ${srcDir} --depth 2`);
+      assert.match(parsed.sections[1].command, /^tl symbols .+ --exports-only --max-lines 40$/);
+      assert.doesNotMatch(result.stdout, /EISDIR/);
+      assert.doesNotMatch(result.stdout, /tl analyze/);
+      assert.doesNotMatch(result.stdout, /tl impact/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-043: tl-gh issue close-batch uses non-interactive API calls', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-gh-close-batch-'));
+    const ghPath = join(tempDir, 'gh');
+    const logPath = join(tempDir, 'gh-calls.jsonl');
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'const fs = require("node:fs");',
+      'if (process.env.GH_PROMPT_DISABLED !== "1") process.exit(42);',
+      'fs.appendFileSync(process.env.GH_LOG, JSON.stringify(process.argv.slice(2)) + "\\n");',
+      'process.stdout.write("{}\\n");'
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    try {
+      const result = spawnSync(process.execPath, [
+        'bin/tl-gh.mjs',
+        'issue',
+        'close-batch',
+        '-R',
+        'edimuj/app-chat-game',
+        '1378',
+        '1379',
+        '-c',
+        'Fixed in Felix playtest polish batch.',
+        '-j'
+      ], {
+        cwd: repoRoot,
+        encoding: 'utf-8',
+        env: {
+          ...process.env,
+          GH_LOG: logPath,
+          PATH: `${tempDir}:${process.env.PATH}`
+        }
+      });
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      const calls = readFileSync(logPath, 'utf-8').trim().split('\n').map(line => JSON.parse(line));
+      const patchCalls = calls.filter(call => call.includes('PATCH'));
+      const commentCalls = calls.filter(call => call.includes('POST'));
+
+      assert.deepStrictEqual(parsed.results.map(item => item.status), ['closed', 'closed']);
+      assert.strictEqual(patchCalls.length, 2);
+      assert.strictEqual(commentCalls.length, 2);
+      assert.ok(patchCalls.every(call => call[0] === 'api'));
+      assert.ok(patchCalls.every(call => call.includes('state=closed')));
+      assert.ok(patchCalls.every(call => call.includes('state_reason=completed')));
+      assert.ok(commentCalls.every(call => call.includes('body=Fixed in Felix playtest polish batch.')));
+      assert.ok(!calls.some(call => call[0] === 'issue' && call[1] === 'close'));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('TLT-036: tl-guard detects cycles through side-effect imports', () => {

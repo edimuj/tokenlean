@@ -10,7 +10,7 @@
  *   importantFiles: ["ARCHITECTURE.md"]
  */
 
-import { existsSync, readdirSync } from 'fs';
+import { existsSync, readFileSync, readdirSync } from 'fs';
 import { dirname, join, relative, extname } from 'path';
 import { getConfig } from './config.mjs';
 
@@ -90,10 +90,26 @@ export function clearProjectCache() { _cachedSets = null; }
 /**
  * Find the project root by looking for package.json or .git
  */
+function hasValidGitMarker(dir) {
+  const gitPath = join(dir, '.git');
+  if (!existsSync(gitPath)) return false;
+
+  try {
+    const entries = new Set(readdirSync(gitPath));
+    return entries.has('HEAD') || entries.has('config') || entries.has('objects');
+  } catch {
+    try {
+      return readFileSync(gitPath, 'utf-8').trim().startsWith('gitdir:');
+    } catch {
+      return false;
+    }
+  }
+}
+
 export function findProjectRoot(startDir = process.cwd()) {
   let dir = startDir;
   while (dir !== '/') {
-    if (existsSync(join(dir, 'package.json')) || existsSync(join(dir, '.git'))) {
+    if (existsSync(join(dir, 'package.json')) || hasValidGitMarker(dir)) {
       return dir;
     }
     dir = dirname(dir);

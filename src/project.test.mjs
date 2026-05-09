@@ -1,9 +1,12 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   categorizeFile, shouldSkip, isImportant, detectLanguage, isCodeFile,
   getSkipDirs, getSkipExtensions, getImportantFiles, getImportantDirs,
-  clearProjectCache
+  clearProjectCache, findProjectRoot
 } from './project.mjs';
 import { clearConfigCache } from './config.mjs';
 
@@ -209,5 +212,20 @@ describe('getters', () => {
     assert.ok(dirs instanceof Set);
     assert.ok(dirs.has('src'));
     assert.ok(dirs.has('.claude'));
+  });
+});
+
+describe('findProjectRoot', () => {
+  it('ignores invalid parent .git directories', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-project-root-'));
+    const childDir = join(tempDir, 'child');
+    mkdirSync(join(tempDir, '.git'), { recursive: true });
+    mkdirSync(childDir, { recursive: true });
+
+    try {
+      assert.strictEqual(findProjectRoot(childDir), childDir);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
