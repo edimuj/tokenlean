@@ -128,17 +128,18 @@ function addToProject(projectOwner, projectNumber, issueUrl) {
 
 const execFileP = promisify(execFileCb);
 const PARALLEL_CONCURRENCY = 10;
+const GH_ENV = {
+  ...process.env,
+  GH_PROMPT_DISABLED: '1',
+  GH_NO_UPDATE_NOTIFIER: '1',
+};
 
 async function ghAsync(args, { json = false } = {}) {
   const { stdout } = await execFileP('gh', args, {
     encoding: 'utf-8',
     timeout: 30_000,
     maxBuffer: 5 * 1024 * 1024,
-    env: {
-      ...process.env,
-      GH_PROMPT_DISABLED: '1',
-      GH_NO_UPDATE_NOTIFIER: '1',
-    },
+    env: GH_ENV,
   });
   return json ? JSON.parse(stdout) : stdout.trim();
 }
@@ -152,6 +153,8 @@ async function ghGraphQLAsync(query, variables = {}) {
   const { stdout } = await execFileP('gh', gqlArgs, {
     encoding: 'utf-8',
     timeout: 30_000,
+    maxBuffer: 5 * 1024 * 1024,
+    env: GH_ENV,
   });
   const result = JSON.parse(stdout);
   if (result.errors?.length) {
@@ -251,25 +254,67 @@ function normalizeCloseReason(reason) {
   throw new Error(`Invalid close reason: ${reason}. Expected "completed" or "not planned".`);
 }
 
-async function closeIssueViaApi(repo, number, reason) {
-  const { owner, name } = parseRepo(repo);
-  await ghAsync([
-    'api',
-    '--method', 'PATCH',
-    `repos/${owner}/${name}/issues/${number}`,
-    '-f', 'state=closed',
-    '-f', `state_reason=${reason}`
-  ]);
+function graphQlString(value) {
+  return JSON.stringify(String(value));
 }
 
-async function commentIssueViaApi(repo, number, body) {
+function graphQlCloseReason(reason) {
+  return reason === 'not_planned' ? 'NOT_PLANNED' : 'COMPLETED';
+}
+
+function issueAlias(prefix, number) {
+  return `${prefix}${number}`;
+}
+
+async function getIssueIdsBatch(repo, issueNums) {
   const { owner, name } = parseRepo(repo);
-  await ghAsync([
-    'api',
-    '--method', 'POST',
-    `repos/${owner}/${name}/issues/${number}/comments`,
-    '-f', `body=${body}`
-  ]);
+  const fields = issueNums
+    .map(num => `${issueAlias('issue', num)}: issue(number: ${num}) { id }`)
+    .join('\n');
+  const result = await ghGraphQLAsync(`query($owner: String!, $name: String!) {
+    repository(owner: $owner, name: $name) {
+      ${fields}
+    }
+  }`, { owner, name });
+  const repository = result?.data?.repository || {};
+  return new Map(issueNums.map(num => [num, repository[issueAlias('issue', num)]?.id || null]));
+}
+
+async function closeIssuesBatchViaGraphQL(repo, issueNums, reason, comment) {
+  const issueIds = await getIssueIdsBatch(repo, issueNums);
+  const mutationFields = [];
+  const missing = new Set();
+
+  for (const num of issueNums) {
+    const issueId = issueIds.get(num);
+    if (!issueId) {
+      missing.add(num);
+      continue;
+    }
+
+    const quotedId = graphQlString(issueId);
+    mutationFields.push(`${issueAlias('close', num)}: closeIssue(input: {issueId: ${quotedId}, stateReason: ${graphQlCloseReason(reason)}}) {
+      issue { number }
+    }`);
+
+    if (comment) {
+      mutationFields.push(`${issueAlias('comment', num)}: addComment(input: {subjectId: ${quotedId}, body: ${graphQlString(comment)}}) {
+        commentEdge { node { id } }
+      }`);
+    }
+  }
+
+  if (mutationFields.length > 0) {
+    await ghGraphQLAsync(`mutation {
+      ${mutationFields.join('\n')}
+    }`);
+  }
+
+  return issueNums.map(num => (
+    missing.has(num)
+      ? { number: num, status: 'failed', error: `Issue not found: ${repo}#${num}` }
+      : { number: num, status: 'closed' }
+  ));
 }
 
 function readStdinJSON(inputArg) {
@@ -974,15 +1019,12 @@ async function issueCloseBatch(args) {
   const out = createOutput(parseCommonArgs(args));
   out.header(`Closing ${issueNums.length} issues in ${repo}`);
 
-  const results = await parallelMap(issueNums, async (num) => {
-    try {
-      await closeIssueViaApi(repo, num, reason);
-      if (comment) await commentIssueViaApi(repo, num, comment);
-      return { number: num, status: 'closed' };
-    } catch (e) {
-      return { number: num, status: 'failed', error: e.message };
-    }
-  });
+  let results;
+  try {
+    results = await closeIssuesBatchViaGraphQL(repo, issueNums, reason, comment);
+  } catch (e) {
+    results = issueNums.map(num => ({ number: num, status: 'failed', error: e.message }));
+  }
 
   for (const r of results) {
     out.add(r.status === 'closed' ? `  #${r.number} closed` : `  #${r.number} FAILED: ${r.error}`);

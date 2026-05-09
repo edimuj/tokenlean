@@ -763,7 +763,7 @@ describe('CLI regressions', () => {
     }
   });
 
-  it('TLT-043: tl-gh issue close-batch uses non-interactive API calls', () => {
+  it('TLT-043: tl-gh issue close-batch uses batched non-interactive GraphQL calls', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-gh-close-batch-'));
     const ghPath = join(tempDir, 'gh');
     const logPath = join(tempDir, 'gh-calls.jsonl');
@@ -771,8 +771,15 @@ describe('CLI regressions', () => {
       '#!/usr/bin/env node',
       'const fs = require("node:fs");',
       'if (process.env.GH_PROMPT_DISABLED !== "1") process.exit(42);',
-      'fs.appendFileSync(process.env.GH_LOG, JSON.stringify(process.argv.slice(2)) + "\\n");',
-      'process.stdout.write("{}\\n");'
+      'const args = process.argv.slice(2);',
+      'fs.appendFileSync(process.env.GH_LOG, JSON.stringify(args) + "\\n");',
+      'const queryArg = args.find(arg => arg.startsWith("query=")) || "";',
+      'const query = queryArg.slice("query=".length);',
+      'if (query.includes("repository(")) {',
+      '  process.stdout.write(JSON.stringify({ data: { repository: { issue1378: { id: "I_1378" }, issue1379: { id: "I_1379" } } } }) + "\\n");',
+      '} else {',
+      '  process.stdout.write(JSON.stringify({ data: { close1378: { issue: { number: 1378 } }, close1379: { issue: { number: 1379 } } } }) + "\\n");',
+      '}'
     ].join('\n') + '\n', 'utf-8');
     chmodSync(ghPath, 0o755);
 
@@ -800,17 +807,22 @@ describe('CLI regressions', () => {
       assert.strictEqual(result.status, 0, result.stdout || result.stderr);
       const parsed = JSON.parse(result.stdout);
       const calls = readFileSync(logPath, 'utf-8').trim().split('\n').map(line => JSON.parse(line));
-      const patchCalls = calls.filter(call => call.includes('PATCH'));
-      const commentCalls = calls.filter(call => call.includes('POST'));
+      const queryCalls = calls.filter(call => call[0] === 'api' && call[1] === 'graphql');
+      const queryText = queryCalls[0].find(arg => arg.startsWith('query=')).slice('query='.length);
+      const mutationText = queryCalls[1].find(arg => arg.startsWith('query=')).slice('query='.length);
 
       assert.deepStrictEqual(parsed.results.map(item => item.status), ['closed', 'closed']);
-      assert.strictEqual(patchCalls.length, 2);
-      assert.strictEqual(commentCalls.length, 2);
-      assert.ok(patchCalls.every(call => call[0] === 'api'));
-      assert.ok(patchCalls.every(call => call.includes('state=closed')));
-      assert.ok(patchCalls.every(call => call.includes('state_reason=completed')));
-      assert.ok(commentCalls.every(call => call.includes('body=Fixed in Felix playtest polish batch.')));
+      assert.strictEqual(queryCalls.length, 2);
+      assert.match(queryText, /issue1378: issue\(number: 1378\)/);
+      assert.match(queryText, /issue1379: issue\(number: 1379\)/);
+      assert.match(mutationText, /close1378: closeIssue/);
+      assert.match(mutationText, /close1379: closeIssue/);
+      assert.match(mutationText, /stateReason: COMPLETED/);
+      assert.match(mutationText, /comment1378: addComment/);
+      assert.match(mutationText, /comment1379: addComment/);
+      assert.match(mutationText, /Fixed in Felix playtest polish batch\./);
       assert.ok(!calls.some(call => call[0] === 'issue' && call[1] === 'close'));
+      assert.ok(!calls.some(call => call.includes('PATCH') || call.includes('POST')));
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
