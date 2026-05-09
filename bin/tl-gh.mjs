@@ -144,7 +144,7 @@ async function ghAsync(args, { json = false } = {}) {
   return json ? JSON.parse(stdout) : stdout.trim();
 }
 
-async function ghGraphQLAsync(query, variables = {}) {
+async function ghGraphQLAsync(query, variables = {}, { allowErrors = false } = {}) {
   const gqlArgs = ['api', 'graphql', '-f', `query=${query}`];
   for (const [k, v] of Object.entries(variables)) {
     const flag = typeof v === 'number' || typeof v === 'boolean' ? '-F' : '-f';
@@ -157,7 +157,7 @@ async function ghGraphQLAsync(query, variables = {}) {
     env: GH_ENV,
   });
   const result = JSON.parse(stdout);
-  if (result.errors?.length) {
+  if (result.errors?.length && !allowErrors) {
     const msg = result.errors.map(e => e.message).join('; ');
     const err = new Error(`GraphQL error: ${msg}`);
     err.graphqlErrors = result.errors;
@@ -266,6 +266,23 @@ function issueAlias(prefix, number) {
   return `${prefix}${number}`;
 }
 
+function aliasIssueNumber(alias) {
+  const match = String(alias || '').match(/^(?:close|comment)(\d+)$/);
+  return match ? match[1] : null;
+}
+
+function groupGraphQLErrorsByIssue(errors = []) {
+  const byNumber = new Map();
+  for (const error of errors) {
+    const alias = Array.isArray(error.path) ? error.path[0] : null;
+    const number = aliasIssueNumber(alias);
+    if (!number) continue;
+    if (!byNumber.has(number)) byNumber.set(number, []);
+    byNumber.get(number).push(error.message || 'GraphQL field failed');
+  }
+  return byNumber;
+}
+
 async function getIssueIdsBatch(repo, issueNums) {
   const { owner, name } = parseRepo(repo);
   const fields = issueNums
@@ -305,9 +322,33 @@ async function closeIssuesBatchViaGraphQL(repo, issueNums, reason, comment) {
   }
 
   if (mutationFields.length > 0) {
-    await ghGraphQLAsync(`mutation {
+    const mutationResult = await ghGraphQLAsync(`mutation {
       ${mutationFields.join('\n')}
-    }`);
+    }`, {}, { allowErrors: true });
+    const mutationData = mutationResult?.data || {};
+    const fieldErrors = groupGraphQLErrorsByIssue(mutationResult?.errors || []);
+
+    return issueNums.map(num => {
+      if (missing.has(num)) {
+        return { number: num, status: 'failed', error: `Issue not found: ${repo}#${num}` };
+      }
+
+      const closeData = mutationData[issueAlias('close', num)];
+      const commentData = comment ? mutationData[issueAlias('comment', num)] : true;
+      const issueErrors = fieldErrors.get(num) || [];
+
+      if (!closeData?.issue?.number) {
+        const error = issueErrors.join('; ') || `Close mutation returned no issue for ${repo}#${num}`;
+        return { number: num, status: 'failed', error };
+      }
+
+      if (comment && !commentData?.commentEdge?.node?.id) {
+        const warning = issueErrors.join('; ') || `Comment mutation returned no comment for ${repo}#${num}`;
+        return { number: num, status: 'closed', warning };
+      }
+
+      return { number: num, status: 'closed' };
+    });
   }
 
   return issueNums.map(num => (
@@ -1027,12 +1068,17 @@ async function issueCloseBatch(args) {
   }
 
   for (const r of results) {
-    out.add(r.status === 'closed' ? `  #${r.number} closed` : `  #${r.number} FAILED: ${r.error}`);
+    if (r.status === 'closed' && r.warning) {
+      out.add(`  #${r.number} closed (warning: ${r.warning})`);
+    } else {
+      out.add(r.status === 'closed' ? `  #${r.number} closed` : `  #${r.number} FAILED: ${r.error}`);
+    }
   }
 
   const closed = results.filter(r => r.status === 'closed').length;
   const failed = results.filter(r => r.status === 'failed').length;
-  out.stats(`${closed} closed, ${failed} failed`);
+  const warnings = results.filter(r => r.warning).length;
+  out.stats(`${closed} closed, ${failed} failed${warnings ? `, ${warnings} warning(s)` : ''}`);
   out.setData('results', results);
   out.print();
 }

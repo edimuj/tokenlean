@@ -828,6 +828,65 @@ describe('CLI regressions', () => {
     }
   });
 
+  it('TLT-044: tl-gh issue close-batch maps partial GraphQL errors per issue', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-gh-close-partial-'));
+    const ghPath = join(tempDir, 'gh');
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'const args = process.argv.slice(2);',
+      'const queryArg = args.find(arg => arg.startsWith("query=")) || "";',
+      'const query = queryArg.slice("query=".length);',
+      'if (query.includes("repository(")) {',
+      '  process.stdout.write(JSON.stringify({ data: { repository: { issue1378: { id: "I_1378" }, issue1379: { id: "I_1379" } } } }) + "\\n");',
+      '} else {',
+      '  process.stdout.write(JSON.stringify({',
+      '    data: {',
+      '      close1378: { issue: { number: 1378 } },',
+      '      comment1378: null,',
+      '      close1379: null,',
+      '      comment1379: null',
+      '    },',
+      '    errors: [',
+      '      { message: "comment body rejected", path: ["comment1378"] },',
+      '      { message: "already closed by policy", path: ["close1379"] }',
+      '    ]',
+      '  }) + "\\n");',
+      '}'
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    try {
+      const result = spawnSync(process.execPath, [
+        'bin/tl-gh.mjs',
+        'issue',
+        'close-batch',
+        '-R',
+        'edimuj/app-chat-game',
+        '1378',
+        '1379',
+        '-c',
+        'Fixed in Felix playtest polish batch.',
+        '-j'
+      ], {
+        cwd: repoRoot,
+        encoding: 'utf-8',
+        env: {
+          ...process.env,
+          PATH: `${tempDir}:${process.env.PATH}`
+        }
+      });
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+
+      assert.strictEqual(parsed.results[0].status, 'closed');
+      assert.strictEqual(parsed.results[0].warning, 'comment body rejected');
+      assert.strictEqual(parsed.results[1].status, 'failed');
+      assert.strictEqual(parsed.results[1].error, 'already closed by policy');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('TLT-036: tl-guard detects cycles through side-effect imports', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-guard-cycle-'));
     writeFileSync(join(tempDir, 'a.js'), "import './b.js';\nexport const a = 1;\n", 'utf-8');
