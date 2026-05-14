@@ -1030,6 +1030,58 @@ describe('CLI regressions', () => {
     }
   });
 
+  it('TLT-047: tl-guard caps noisy unused details by default', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-guard-unused-limit-'));
+    for (let i = 1; i <= 25; i++) {
+      writeFileSync(join(tempDir, `f${i}.js`), `export const unused${i} = ${i};\n`, 'utf-8');
+    }
+
+    try {
+      const result = runCli([
+        join(repoRoot, 'bin/tl-guard.mjs'),
+        '--no-secrets',
+        '--no-todos',
+        '--no-circular',
+        '-j'
+      ], tempDir);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      assert.strictEqual(parsed.checks.unused.status, 'warn');
+      assert.strictEqual(parsed.checks.unused.count, 25);
+      assert.strictEqual(parsed.checks.unused.details.length, 20);
+      assert.strictEqual(parsed.checks.unused.omittedDetails, 5);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-048: tl-guard --full returns all noisy details', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-guard-full-details-'));
+    for (let i = 1; i <= 25; i++) {
+      writeFileSync(join(tempDir, `a${i}.js`), `import './b${i}.js';\n`, 'utf-8');
+      writeFileSync(join(tempDir, `b${i}.js`), `import './a${i}.js';\n`, 'utf-8');
+    }
+
+    try {
+      const result = runCli([
+        join(repoRoot, 'bin/tl-guard.mjs'),
+        '--no-secrets',
+        '--no-todos',
+        '--no-unused',
+        '--full',
+        '-j'
+      ], tempDir);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      assert.strictEqual(parsed.checks.circular.status, 'warn');
+      assert.strictEqual(parsed.checks.circular.count, 25);
+      assert.strictEqual(parsed.checks.circular.details.length, 25);
+      assert.strictEqual(parsed.checks.circular.omittedDetails, undefined);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('TLT-037: tl-parallel keeps env-prefixed commands intact', () => {
     const script = 'console.log(process.env.NODE_ENV)';
     const result = runCli([

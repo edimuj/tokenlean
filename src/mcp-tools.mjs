@@ -160,14 +160,18 @@ export const TOOLS = [
       noUnused: z.boolean().optional().describe('Skip unused exports check'),
       noCircular: z.boolean().optional().describe('Skip circular deps check'),
       strict: z.boolean().optional().describe('Treat warnings as failures'),
+      full: z.boolean().optional().describe('Return all detail rows instead of the default capped summary'),
+      detailLimit: z.number().optional().describe('Maximum detail rows per check (default 20)'),
     },
-    handler: async ({ noSecrets, noTodos, noUnused, noCircular, strict }) => {
+    handler: async ({ noSecrets, noTodos, noUnused, noCircular, strict, full, detailLimit }) => {
       const args = [];
       if (noSecrets) args.push('--no-secrets');
       if (noTodos) args.push('--no-todos');
       if (noUnused) args.push('--no-unused');
       if (noCircular) args.push('--no-circular');
       if (strict) args.push('--strict');
+      if (full) args.push('--full');
+      if (detailLimit !== undefined) args.push('--detail-limit', String(detailLimit));
       args.push('-j');
       return dispatchTool('guard', args);
     },

@@ -138,7 +138,7 @@ npm link
 # Where are the tests?           tl related src/Button.tsx
 
 # What changed recently?         tl diff --staged
-# Is it safe to commit?          tl guard
+# Is it safe to commit?          tl guard              # Caps noisy details; use --full for all
 # Find real usage examples       tl example useAuth
 # Summarize noisy logs            tl tail logs/app.log
 # What's the tech stack?         tl stack

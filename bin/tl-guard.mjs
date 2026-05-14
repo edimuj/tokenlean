@@ -6,7 +6,7 @@
  * Runs 4 checks: secrets, new TODOs, unused exports, circular deps.
  * Reports pass/warn/fail for each.
  *
- * Usage: tl-guard [--no-secrets] [--no-todos] [--no-unused] [--no-circular] [--strict] [-j] [-q]
+ * Usage: tl-guard [--no-secrets] [--no-todos] [--no-unused] [--no-circular] [--strict] [--full] [-j] [-q]
  */
 
 // Prompt info for tl-prompt
@@ -53,6 +53,8 @@ Options:
   --no-circular         Skip circular deps check
   --strict              Treat warnings as failures (exit 1)
   --fix                 Auto-fix: remove console.log statements from staged files
+  --detail-limit N      Max detail rows per check (default: 20)
+  --full                Show all detail rows
 ${COMMON_OPTIONS_HELP}
 
 Examples:
@@ -83,6 +85,29 @@ const skipChecks = {
 };
 const strict = rawArgs.includes('--strict');
 const fix = rawArgs.includes('--fix');
+const fullDetails = rawArgs.includes('--full');
+const detailLimitArgIndex = rawArgs.findIndex(arg => arg === '--detail-limit');
+const parsedDetailLimit = detailLimitArgIndex >= 0
+  ? Number.parseInt(rawArgs[detailLimitArgIndex + 1], 10)
+  : NaN;
+const DEFAULT_DETAIL_LIMIT = 20;
+const detailLimit = fullDetails
+  ? Infinity
+  : Number.isFinite(parsedDetailLimit) && parsedDetailLimit >= 0
+    ? parsedDetailLimit
+    : DEFAULT_DETAIL_LIMIT;
+
+function limitDetails(result) {
+  if (!Array.isArray(result.details) || result.details.length <= detailLimit) {
+    return result;
+  }
+
+  return {
+    ...result,
+    details: result.details.slice(0, detailLimit),
+    omittedDetails: result.details.length - detailLimit
+  };
+}
 
 // ─────────────────────────────────────────────────────────────
 // Sub-tool Runner (tl-analyze pattern)
@@ -418,19 +443,19 @@ const stagedFiles = stagedRaw ? stagedRaw.split('\n').filter(Boolean) : [];
 const checks = {};
 
 if (!skipChecks.secrets) {
-  checks.secrets = checkSecrets();
+  checks.secrets = limitDetails(checkSecrets());
 }
 
 if (!skipChecks.todos) {
-  checks.todos = checkTodos();
+  checks.todos = limitDetails(checkTodos());
 }
 
 if (!skipChecks.unused) {
-  checks.unused = checkUnused();
+  checks.unused = limitDetails(checkUnused());
 }
 
 if (!skipChecks.circular) {
-  checks.circular = checkCircular(projectRoot);
+  checks.circular = limitDetails(checkCircular(projectRoot));
 }
 
 // Compute summary
@@ -487,6 +512,9 @@ for (const [name, result] of Object.entries(checks)) {
       } else if (name === 'circular') {
         out.add(`                     ${d.cycle}`);
       }
+    }
+    if (result.omittedDetails > 0) {
+      out.add(`                     ... ${result.omittedDetails} more; rerun with --full for all details`);
     }
   }
 }
