@@ -219,64 +219,86 @@ function detectType(command, stdout, stderr) {
 // ─────────────────────────────────────────────────────────────
 
 function summarizeTest(stdout, stderr, exitCode) {
+  const stdoutLines = stdout.split('\n');
+  const stderrLines = stderr.split('\n');
   const combined = stdout + '\n' + stderr;
   const lines = combined.split('\n');
   const result = { summary: '', failures: [], parsed: false };
 
-  // Extract pass/fail counts from various test runners
-  let passed = 0, failed = 0, skipped = 0, total = 0;
-  let goPassed = 0, goFailed = 0;
-  let foundCounts = false;
+  function extractCounts(sourceLines) {
+    // Extract pass/fail counts from various test runners.
+    let passed = 0, failed = 0, skipped = 0, total = 0;
+    let goPassed = 0, goFailed = 0;
+    let foundCounts = false;
 
-  for (const line of lines) {
-    // Jest/Vitest: Tests: 3 failed, 47 passed, 50 total
-    let m = line.match(/Tests:\s+(?:(\d+)\s+failed,?\s*)?(?:(\d+)\s+passed,?\s*)?(?:(\d+)\s+skipped,?\s*)?(?:(\d+)\s+total)?/i);
-    if (m && (m[1] || m[2])) {
-      failed = parseInt(m[1] || '0', 10);
-      passed = parseInt(m[2] || '0', 10);
-      skipped = parseInt(m[3] || '0', 10);
-      total = parseInt(m[4] || '0', 10) || (passed + failed + skipped);
-      foundCounts = true;
-      continue;
-    }
+    for (const line of sourceLines) {
+      // Jest/Vitest: Tests: 3 failed, 47 passed, 50 total
+      let m = line.match(/Tests:\s+(?:(\d+)\s+failed,?\s*)?(?:(\d+)\s+passed,?\s*)?(?:(\d+)\s+skipped,?\s*)?(?:(\d+)\s+total)?/i);
+      if (m && (m[1] || m[2])) {
+        failed = parseInt(m[1] || '0', 10);
+        passed = parseInt(m[2] || '0', 10);
+        skipped = parseInt(m[3] || '0', 10);
+        total = parseInt(m[4] || '0', 10) || (passed + failed + skipped);
+        foundCounts = true;
+        continue;
+      }
 
-    // Mocha/generic: N passing, N failing
-    m = line.match(/(\d+)\s+passing/i);
-    if (m) { passed = parseInt(m[1], 10); foundCounts = true; }
-    m = line.match(/(\d+)\s+failing/i);
-    if (m) { failed = parseInt(m[1], 10); foundCounts = true; }
-
-    // pytest: "3 passed, 2 failed in 0.12s" or "====== 3 passed ======"
-    // Gated behind summary indicators to avoid matching random log lines
-    if (/={3,}|in\s+[\d.]+s/.test(line)) {
-      m = line.match(/(\d+)\s+passed/i);
+      // Mocha/generic: N passing, N failing
+      m = line.match(/(\d+)\s+passing/i);
       if (m) { passed = parseInt(m[1], 10); foundCounts = true; }
-      m = line.match(/(\d+)\s+failed/i);
+      m = line.match(/(\d+)\s+failing/i);
       if (m) { failed = parseInt(m[1], 10); foundCounts = true; }
+
+      // pytest: "3 passed, 2 failed in 0.12s" or "====== 3 passed ======"
+      // Gated behind summary indicators to avoid matching random log lines.
+      if (/={3,}|in\s+[\d.]+s/.test(line)) {
+        m = line.match(/(\d+)\s+passed/i);
+        if (m) { passed = parseInt(m[1], 10); foundCounts = true; }
+        m = line.match(/(\d+)\s+failed/i);
+        if (m) { failed = parseInt(m[1], 10); foundCounts = true; }
+      }
+
+      // Go test: ok/FAIL per package (counted separately, used as fallback)
+      if (line.match(/^ok\s+\S+\/\S+/)) { goPassed++; }
+      if (line.match(/^FAIL\s+\S+\/\S+/)) { goFailed++; }
+
+      // Rust: test result: ok. N passed; N failed
+      m = line.match(/test result:.*?(\d+)\s+passed.*?(\d+)\s+failed/i);
+      if (m) {
+        passed = parseInt(m[1], 10);
+        failed = parseInt(m[2], 10);
+        foundCounts = true;
+      }
     }
 
-    // Go test: ok/FAIL per package (counted separately, used as fallback)
-    if (line.match(/^ok\s+\S+\/\S+/)) { goPassed++; }
-    if (line.match(/^FAIL\s+\S+\/\S+/)) { goFailed++; }
-
-    // Rust: test result: ok. N passed; N failed
-    m = line.match(/test result:.*?(\d+)\s+passed.*?(\d+)\s+failed/i);
-    if (m) {
-      passed = parseInt(m[1], 10);
-      failed = parseInt(m[2], 10);
+    // Go fallback: use per-package counts if no other runner was detected.
+    if (!foundCounts && (goPassed > 0 || goFailed > 0)) {
+      passed = goPassed;
+      failed = goFailed;
       foundCounts = true;
     }
+
+    if (!foundCounts) {
+      total = total || (passed + failed + skipped);
+    }
+
+    return { passed, failed, skipped, total, foundCounts };
   }
 
-  // Go fallback: use per-package counts if no other runner was detected
-  if (!foundCounts && (goPassed > 0 || goFailed > 0)) {
-    passed = goPassed;
-    failed = goFailed;
-    foundCounts = true;
-  }
+  const stdoutCounts = extractCounts(stdoutLines);
+  const stderrCounts = extractCounts(stderrLines);
+  const combinedCounts = extractCounts(lines);
+  let { passed, failed, skipped, foundCounts } = combinedCounts;
 
-  if (!foundCounts) {
-    total = total || (passed + failed + skipped);
+  // stdout/stderr ordering is unavailable after spawnSync separates streams.
+  // For successful runs, prefer any zero-failure runner summary over stale
+  // failure-looking diagnostics appended from the other stream.
+  if (exitCode === 0) {
+    if (stdoutCounts.foundCounts && stdoutCounts.failed === 0) {
+      ({ passed, failed, skipped, foundCounts } = stdoutCounts);
+    } else if (stderrCounts.foundCounts && stderrCounts.failed === 0) {
+      ({ passed, failed, skipped, foundCounts } = stderrCounts);
+    }
   }
 
   // Build summary line

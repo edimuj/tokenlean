@@ -231,6 +231,22 @@ describe('CLI regressions', () => {
     assert.doesNotMatch(result.stdout, /total lines/);
   });
 
+  it('TLT-049: tl-run does not let stale stderr failure summaries override passing stdout', () => {
+    const nodePath = JSON.stringify(process.execPath);
+    const script = [
+      "console.log('Tests: 1942 passed, 1942 total');",
+      "console.error('Tests: 28 failed, 1914 passed, 1942 total');"
+    ].join(' ');
+    const command = `${nodePath} -e ${JSON.stringify(script)}`;
+
+    const result = runCli(['bin/tl-run.mjs', command, '--type', 'test', '-j']);
+    assert.strictEqual(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+    assert.strictEqual(parsed.exitCode, 0);
+    assert.strictEqual(parsed.summary, '1942 passed');
+    assert.deepStrictEqual(parsed.failures, []);
+  });
+
   it('TLT-009: tl-symbols function filter preserves fallback extraction for non-fast languages', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-symbols-fallback-'));
     const filePath = join(tempDir, 'main.swift');

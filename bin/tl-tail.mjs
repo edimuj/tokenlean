@@ -376,6 +376,7 @@ async function followFile(filePath, sourceLabel, tailLines, options) {
   let stopped = false;
 
   const initialContent = readFileSync(filePath, 'utf-8');
+  offset = Buffer.byteLength(initialContent, 'utf8');
   const initialLines = takeTail(splitLines(initialContent), tailLines);
   const initialAdded = reducer.ingest(initialLines);
   emitSnapshot(options, reducer.snapshot(), {
@@ -383,7 +384,6 @@ async function followFile(filePath, sourceLabel, tailLines, options) {
     follow: true,
     addedLines: initialAdded
   });
-  offset = statSync(filePath).size;
 
   const stop = (code = 0) => {
     if (stopped) return;
