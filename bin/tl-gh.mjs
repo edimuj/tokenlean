@@ -286,54 +286,101 @@ function groupGraphQLErrorsByIssue(errors = []) {
   return byNumber;
 }
 
+// GitHub rejects oversized GraphQL documents. Keep chunks small so that even
+// `close + comment` (2 mutation fields per issue) stays well under the limit.
+const ISSUE_ID_QUERY_CHUNK = 50;
+const CLOSE_MUTATION_CHUNK = 10;
+
+function chunkArray(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
 async function getIssueIdsBatch(repo, issueNums) {
   const { owner, name } = parseRepo(repo);
-  const fields = issueNums
-    .map(num => `${issueAlias('issue', num)}: issue(number: ${num}) { id }`)
-    .join('\n');
-  const result = await ghGraphQLAsync(`query($owner: String!, $name: String!) {
-    repository(owner: $owner, name: $name) {
-      ${fields}
+  const ids = new Map();
+  for (const chunk of chunkArray(issueNums, ISSUE_ID_QUERY_CHUNK)) {
+    const fields = chunk
+      .map(num => `${issueAlias('issue', num)}: issue(number: ${num}) { id }`)
+      .join('\n');
+    const result = await ghGraphQLAsync(`query($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) {
+        ${fields}
+      }
+    }`, { owner, name });
+    const repository = result?.data?.repository || {};
+    for (const num of chunk) {
+      ids.set(num, repository[issueAlias('issue', num)]?.id || null);
     }
-  }`, { owner, name });
-  const repository = result?.data?.repository || {};
-  return new Map(issueNums.map(num => [num, repository[issueAlias('issue', num)]?.id || null]));
+  }
+  return ids;
 }
 
 async function closeIssuesBatchViaGraphQL(repo, issueNums, reason, comment) {
-  const issueIds = await getIssueIdsBatch(repo, issueNums);
-  const mutationFields = [];
-  const missing = new Set();
+  let issueIds;
+  try {
+    issueIds = await getIssueIdsBatch(repo, issueNums);
+  } catch (e) {
+    return issueNums.map(num => ({ number: num, status: 'failed', error: `Could not resolve issue id: ${e.message}` }));
+  }
 
-  for (const num of issueNums) {
-    const issueId = issueIds.get(num);
-    if (!issueId) {
-      missing.add(num);
+  const chunks = chunkArray(issueNums, CLOSE_MUTATION_CHUNK);
+  const results = [];
+
+  for (const chunk of chunks) {
+    const mutationFields = [];
+    const missing = new Set();
+
+    for (const num of chunk) {
+      const issueId = issueIds.get(num);
+      if (!issueId) {
+        missing.add(num);
+        continue;
+      }
+
+      const quotedId = graphQlString(issueId);
+      mutationFields.push(`${issueAlias('close', num)}: closeIssue(input: {issueId: ${quotedId}, stateReason: ${graphQlCloseReason(reason)}}) {
+        issue { number }
+      }`);
+
+      if (comment) {
+        mutationFields.push(`${issueAlias('comment', num)}: addComment(input: {subjectId: ${quotedId}, body: ${graphQlString(comment)}}) {
+          commentEdge { node { id } }
+        }`);
+      }
+    }
+
+    if (mutationFields.length === 0) {
+      for (const num of chunk) {
+        results.push(missing.has(num)
+          ? { number: num, status: 'failed', error: `Issue not found: ${repo}#${num}` }
+          : { number: num, status: 'closed' });
+      }
       continue;
     }
 
-    const quotedId = graphQlString(issueId);
-    mutationFields.push(`${issueAlias('close', num)}: closeIssue(input: {issueId: ${quotedId}, stateReason: ${graphQlCloseReason(reason)}}) {
-      issue { number }
-    }`);
-
-    if (comment) {
-      mutationFields.push(`${issueAlias('comment', num)}: addComment(input: {subjectId: ${quotedId}, body: ${graphQlString(comment)}}) {
-        commentEdge { node { id } }
-      }`);
+    let mutationData = {};
+    let fieldErrors = new Map();
+    let chunkError = null;
+    try {
+      const mutationResult = await ghGraphQLAsync(`mutation {
+        ${mutationFields.join('\n')}
+      }`, {}, { allowErrors: true });
+      mutationData = mutationResult?.data || {};
+      fieldErrors = groupGraphQLErrorsByIssue(mutationResult?.errors || []);
+    } catch (e) {
+      chunkError = e.message;
     }
-  }
 
-  if (mutationFields.length > 0) {
-    const mutationResult = await ghGraphQLAsync(`mutation {
-      ${mutationFields.join('\n')}
-    }`, {}, { allowErrors: true });
-    const mutationData = mutationResult?.data || {};
-    const fieldErrors = groupGraphQLErrorsByIssue(mutationResult?.errors || []);
-
-    return issueNums.map(num => {
+    for (const num of chunk) {
       if (missing.has(num)) {
-        return { number: num, status: 'failed', error: `Issue not found: ${repo}#${num}` };
+        results.push({ number: num, status: 'failed', error: `Issue not found: ${repo}#${num}` });
+        continue;
+      }
+      if (chunkError) {
+        results.push({ number: num, status: 'failed', error: chunkError });
+        continue;
       }
 
       const closeData = mutationData[issueAlias('close', num)];
@@ -342,23 +389,21 @@ async function closeIssuesBatchViaGraphQL(repo, issueNums, reason, comment) {
 
       if (!closeData?.issue?.number) {
         const error = issueErrors.join('; ') || `Close mutation returned no issue for ${repo}#${num}`;
-        return { number: num, status: 'failed', error };
+        results.push({ number: num, status: 'failed', error });
+        continue;
       }
 
       if (comment && !commentData?.commentEdge?.node?.id) {
         const warning = issueErrors.join('; ') || `Comment mutation returned no comment for ${repo}#${num}`;
-        return { number: num, status: 'closed', warning };
+        results.push({ number: num, status: 'closed', warning });
+        continue;
       }
 
-      return { number: num, status: 'closed' };
-    });
+      results.push({ number: num, status: 'closed' });
+    }
   }
 
-  return issueNums.map(num => (
-    missing.has(num)
-      ? { number: num, status: 'failed', error: `Issue not found: ${repo}#${num}` }
-      : { number: num, status: 'closed' }
-  ));
+  return results;
 }
 
 function readStdinJSON(inputArg) {
@@ -1064,12 +1109,7 @@ async function issueCloseBatch(args) {
   const out = createOutput(parseCommonArgs(args));
   out.header(`Closing ${issueNums.length} issues in ${repo}`);
 
-  let results;
-  try {
-    results = await closeIssuesBatchViaGraphQL(repo, issueNums, reason, comment);
-  } catch (e) {
-    results = issueNums.map(num => ({ number: num, status: 'failed', error: e.message }));
-  }
+  const results = await closeIssuesBatchViaGraphQL(repo, issueNums, reason, comment);
 
   for (const r of results) {
     if (r.status === 'closed' && r.warning) {

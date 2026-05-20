@@ -978,6 +978,78 @@ describe('CLI regressions', () => {
     }
   });
 
+  it('TLT-050: tl-gh issue close-batch chunks large batches and isolates chunk failures', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-gh-close-chunk-'));
+    const ghPath = join(tempDir, 'gh');
+    const logPath = join(tempDir, 'gh-calls.jsonl');
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'const fs = require("node:fs");',
+      'const args = process.argv.slice(2);',
+      'fs.appendFileSync(process.env.GH_LOG, JSON.stringify(args) + "\\n");',
+      'const queryArg = args.find(arg => arg.startsWith("query=")) || "";',
+      'const query = queryArg.slice("query=".length);',
+      'if (query.includes("repository(")) {',
+      '  const nums = [...query.matchAll(/issue(\\d+): issue/g)].map(m => Number(m[1]));',
+      '  const fields = Object.fromEntries(nums.map(n => [`issue${n}`, { id: `I_${n}` }]));',
+      '  process.stdout.write(JSON.stringify({ data: { repository: fields } }) + "\\n");',
+      '  process.exit(0);',
+      '}',
+      // Mutations: succeed for first chunk (1..10), reject the second chunk (11..15) entirely.
+      'const closeNums = [...query.matchAll(/close(\\d+): closeIssue/g)].map(m => Number(m[1]));',
+      'if (closeNums.includes(11)) {',
+      '  process.stderr.write("Query has complexity fees, exceeding max\\n");',
+      '  process.exit(1);',
+      '}',
+      'const data = {};',
+      'for (const n of closeNums) { data[`close${n}`] = { issue: { number: n } }; }',
+      'process.stdout.write(JSON.stringify({ data }) + "\\n");'
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    try {
+      const issueNums = Array.from({ length: 15 }, (_, i) => String(i + 1));
+      const result = spawnSync(process.execPath, [
+        'bin/tl-gh.mjs',
+        'issue',
+        'close-batch',
+        '-R',
+        'edimuj/app-chat-game',
+        ...issueNums,
+        '-j'
+      ], {
+        cwd: repoRoot,
+        encoding: 'utf-8',
+        env: {
+          ...process.env,
+          GH_LOG: logPath,
+          PATH: `${tempDir}:${process.env.PATH}`
+        }
+      });
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      const calls = readFileSync(logPath, 'utf-8').trim().split('\n').map(line => JSON.parse(line));
+      const mutationCalls = calls.filter(c => {
+        const q = (c.find(a => a.startsWith('query=')) || '').slice('query='.length);
+        return q.startsWith('mutation') || q.includes('closeIssue');
+      });
+
+      // 15 issues with chunk size 10 → 2 mutation requests.
+      assert.strictEqual(mutationCalls.length, 2, `expected 2 mutation chunks, got ${mutationCalls.length}`);
+
+      // First 10 close successfully, last 5 fail with the chunk error.
+      const closed = parsed.results.filter(r => r.status === 'closed').map(r => Number(r.number));
+      const failed = parsed.results.filter(r => r.status === 'failed').map(r => Number(r.number));
+      assert.deepStrictEqual(closed, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      assert.deepStrictEqual(failed, [11, 12, 13, 14, 15]);
+      for (const r of parsed.results.filter(r => r.status === 'failed')) {
+        assert.match(r.error, /complexity|exceed/i);
+      }
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('TLT-036: tl-guard detects cycles through side-effect imports', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-guard-cycle-'));
     writeFileSync(join(tempDir, 'a.js'), "import './b.js';\nexport const a = 1;\n", 'utf-8');
