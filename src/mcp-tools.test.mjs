@@ -38,6 +38,42 @@ describe('MCP tool definitions', () => {
     }
   });
 
+  it('tl_run respects explicit cwd for shared MCP server sessions', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-mcp-cwd-'));
+    const runTool = TOOLS.find(tool => tool.name === 'tl_run');
+
+    try {
+      const result = await runTool.handler({
+        command: 'node -e "process.stdout.write(process.cwd())"',
+        raw: true,
+        cwd: tempDir,
+      });
+      assert.strictEqual(result.isError, undefined, result.content?.[0]?.text);
+      const parsed = JSON.parse(result.content[0].text);
+      assert.strictEqual(parsed.stdout, tempDir);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('tl_pack debug does not execute prose targets from MCP calls', async () => {
+    const packTool = TOOLS.find(tool => tool.name === 'tl_pack');
+    const result = await packTool.handler({
+      pack: 'debug',
+      target: 'delivery attempts dead-letter observability issue 43',
+      budget: 900,
+      cwd: process.cwd(),
+    });
+
+    assert.strictEqual(result.isError, undefined, result.content?.[0]?.text);
+    const parsed = JSON.parse(result.content[0].text);
+    const output = parsed.sections[0].output.join('\n');
+
+    assert.strictEqual(parsed.failed, false);
+    assert.match(output, /kept as context only/);
+    assert.doesNotMatch(output, /delivery: not found/);
+  });
+
   it('tl_gh_issue_read dispatches the natural issue read workflow', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-mcp-gh-read-'));
     const ghPath = join(tempDir, 'gh');

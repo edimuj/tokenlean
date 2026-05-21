@@ -23,6 +23,27 @@ describe('hook policy', () => {
     assert.equal(decision, null);
   });
 
+  it('does not recommend tl-symbols for markdown Read calls', () => {
+    const decision = evaluateToolCall({
+      tool_name: 'Read',
+      tool_input: { file_path: 'README.md' },
+    }, {
+      stat: () => ({ size: 50000 }),
+    });
+
+    assert.equal(decision, null);
+  });
+
+  it('does not recommend tl-symbols for cat on non-code files', () => {
+    const decision = evaluateToolCall({
+      tool_name: 'Bash',
+      tool_input: { command: 'cat README.md' },
+    });
+
+    assert.equal(decision.id, 'bash-cat-non-code');
+    assert.equal(decision.alternative, 'Read tool');
+  });
+
   it('supports Codex-style command payloads', () => {
     const decision = evaluateToolCall({
       tool: 'exec_command',

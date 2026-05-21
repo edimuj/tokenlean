@@ -40,6 +40,9 @@ Examples:
   tl-advise "review PR 123"
   tl-advise "debug npm test"
   tl-advise "refactor src/cache.mjs"
+  tl-advise "fix GitHub issue #42"
+  tl-advise "run typecheck"
+  tl-advise "find unused exports"
   tl-advise "understand this repo"
   tl-advise "prepare commit"
   tl-advise "look up React useEffect docs"
@@ -49,7 +52,7 @@ const ROUTES = [
   {
     name: 'pr-review',
     label: 'PR review',
-    pattern: /\b(pr|pull request|review)\b/i,
+    pattern: /\b(pr|pull request)\b|\breview\b(?!.*\bissues?\b)/i,
     build: buildReviewAdvice
   },
   {
@@ -57,6 +60,12 @@ const ROUTES = [
     label: 'Debugging',
     pattern: /\b(debug|bug|failing|failure|fix test|test fail|repro)\b/i,
     build: buildDebugAdvice
+  },
+  {
+    name: 'github-issue',
+    label: 'GitHub issue workflow',
+    pattern: /\b(issues?|sub-issues?|github issue|close issue|label issue|triage)\b/i,
+    build: buildIssueAdvice
   },
   {
     name: 'refactor',
@@ -77,9 +86,33 @@ const ROUTES = [
     build: buildTestAdvice
   },
   {
+    name: 'validate',
+    label: 'Validation',
+    pattern: /\b(typecheck|type check|build|lint|check|ci|verify|validate)\b|\brun\s+(test|build|lint|typecheck|type check|checks?)\b/i,
+    build: buildValidationAdvice
+  },
+  {
+    name: 'maintenance',
+    label: 'Code maintenance',
+    pattern: /\b(unused|dead code|dead exports|orphan|circular|cycles?|secrets?|todo|todos)\b/i,
+    build: buildMaintenanceAdvice
+  },
+  {
+    name: 'search',
+    label: 'Code search',
+    pattern: /\b(search|find|locate|grep|rg|usages?|references?|where is)\b/i,
+    build: buildSearchAdvice
+  },
+  {
+    name: 'deps',
+    label: 'Dependency work',
+    pattern: /\b(upgrade|update|bump|migrate|dependency|dependencies|package)\b/i,
+    build: buildDependencyAdvice
+  },
+  {
     name: 'feature',
     label: 'Add feature',
-    pattern: /\b(add|implement|feature|build|support)\b/i,
+    pattern: /\b(add|implement|feature|support)\b|\bbuild\s+(?!test|lint|typecheck|check)\b/i,
     build: buildFeatureAdvice
   },
   {
@@ -132,12 +165,58 @@ function extractPath(goal) {
   return match ? match[1] : null;
 }
 
+function isCodePath(path) {
+  if (!path) return false;
+  return /\.(?:mjs|cjs|js|jsx|ts|tsx|mts|py|go|rs|rb|java|kt|php|cs)$/i.test(path);
+}
+
+function extractIssueNumbers(goal) {
+  const numbers = [];
+  const seen = new Set();
+  for (const match of goal.matchAll(/(?:#|\bissue\s+|\bissues\s+|\b)(\d+)\b/gi)) {
+    const value = match[1];
+    if (seen.has(value)) continue;
+    seen.add(value);
+    numbers.push(value);
+  }
+  return numbers;
+}
+
 function extractCommand(goal) {
   const quoted = goal.match(/"([^"]+)"/) || goal.match(/'([^']+)'/);
   if (quoted) return quoted[1];
 
-  const commandMatch = goal.match(/\b((?:npm|pnpm|yarn|bun|node|npx|pytest|go test|cargo test|cargo build|make|just|uv|pytest|vitest|jest)\b.*)$/i);
+  const commandMatch = goal.match(/\b((?:npm|pnpm|yarn|bun|node|npx|pytest|go test|go build|cargo test|cargo build|cargo check|make|just|uv|vitest|jest|tsc|eslint)\b.*)$/i);
   return commandMatch ? commandMatch[1].trim() : null;
+}
+
+function inferValidationCommand(goal) {
+  if (/\b(typecheck|type check)\b/i.test(goal)) return 'npm run typecheck';
+  if (/\blint\b/i.test(goal)) return 'npm run lint';
+  if (/\bbuild\b/i.test(goal)) return 'npm run build';
+  if (/\b(test|specs?)\b/i.test(goal)) return 'npm test';
+  return null;
+}
+
+function validationType(goal, command) {
+  const text = `${goal} ${command || ''}`;
+  if (/\b(test|specs?|jest|vitest|pytest|go test|cargo test)\b/i.test(text)) return 'test';
+  if (/\b(lint|eslint|prettier|clippy)\b/i.test(text)) return 'lint';
+  return 'build';
+}
+
+function extractSearchTerm(goal) {
+  const quoted = goal.match(/"([^"]+)"/) || goal.match(/'([^']+)'/);
+  if (quoted) return quoted[1];
+  const match = goal.match(/\b(?:search|find|locate|grep|rg|usages? of|references? to|where is)\s+(?:for\s+)?(.+)$/i);
+  return match ? match[1].replace(/\b(code|usage|usages|references?)\b/gi, '').trim() : '<pattern>';
+}
+
+function extractPackageName(goal) {
+  const scoped = goal.match(/@[a-z0-9_.-]+\/[a-z0-9_.-]+/i);
+  if (scoped) return scoped[0];
+  const match = goal.match(/\b(?:upgrade|update|bump|migrate|docs?|documentation|lookup|look up|package)\s+([a-z0-9_.-]+)\b/i);
+  return match ? match[1] : '<package>';
 }
 
 function add(command, why) {
@@ -181,6 +260,30 @@ function buildDebugAdvice(goal) {
     advice.push(add('tl errors .', 'Scan likely throw/error sites if the failure is unclear.'));
   }
   return advice;
+}
+
+function buildIssueAdvice(goal) {
+  const issues = extractIssueNumbers(goal);
+  const issueList = issues.length > 0 ? issues.join(' ') : '<issue>';
+  if (/\b(close|resolve|done|fixed)\b/i.test(goal)) {
+    return [
+      add(`tl gh issue read -R owner/repo ${issues[0] || '<issue>'} --no-body`, 'Confirm issue state before mutating it.'),
+      add(`tl gh issue close -R owner/repo ${issueList} -c "<summary>"`, 'Close one or more issues with one API workflow.'),
+      add('tl gh issue label-batch -R owner/repo --add fixed <issue>', 'Use labels when implementation is done but validation is pending.')
+    ];
+  }
+  if (/\b(label|triage|priority|p0|p1|p2)\b/i.test(goal)) {
+    return [
+      add(`tl gh issue read -R owner/repo ${issues[0] || '<issue>'} --no-body`, 'Read labels and sub-issues compactly before changing metadata.'),
+      add(`tl gh issue label-batch -R owner/repo --add "<labels>" ${issueList}`, 'Apply or remove labels across issues in one call.'),
+      add('tl gh project add-batch -R owner/repo --project owner/number <issue>', 'Add triaged issues to a project board in bulk.')
+    ];
+  }
+  return [
+    add(`tl gh issue read -R owner/repo ${issues[0] || '<issue>'}`, 'Start from the issue and direct sub-issues.'),
+    add(`tl gh issue read -R owner/repo ${issues[0] || '<issue>'} --full`, 'Use full bodies only when the compact issue view is not enough.'),
+    add('tl pack debug "<repro command>"', 'If it is a bug issue, capture the failing behavior next.')
+  ];
 }
 
 function buildRefactorAdvice(goal) {
@@ -227,6 +330,51 @@ function buildTestAdvice(goal) {
   ];
 }
 
+function buildValidationAdvice(goal) {
+  const command = extractCommand(goal) || inferValidationCommand(goal) || '<validation command>';
+  const type = validationType(goal, command);
+  return [
+    add(`tl run ${shellQuote(command)} --type ${type}`, 'Summarize validation output instead of streaming full logs.'),
+    add('tl test --dry-run', 'Map changed files to likely targeted tests.'),
+    add('tl guard', 'Run cheap pre-commit risk checks when validation is broad or release-bound.')
+  ];
+}
+
+function buildMaintenanceAdvice(goal) {
+  const path = extractPath(goal) || '.';
+  if (/\b(secret|secrets|todo|todos|circular|cycles?)\b/i.test(goal)) {
+    return [
+      add('tl guard', 'Run the bundled risk checks first.'),
+      add('tl unused .', 'Follow up with dead export/file detection if cleanup is part of the task.'),
+      add(`tl search ${shellQuote(extractSearchTerm(goal))}`, 'Use targeted search when the guard points at a pattern.')
+    ];
+  }
+  return [
+    add(`tl unused ${path}`, 'Find unused exports and unreferenced files.'),
+    add('tl guard', 'Catch secrets, TODOs, unused exports, and cycles before editing.'),
+    add(`tl search ${shellQuote(extractSearchTerm(goal))}`, 'Track the concrete symbol or pattern behind the cleanup.')
+  ];
+}
+
+function buildSearchAdvice(goal) {
+  const term = extractSearchTerm(goal);
+  const path = extractPath(goal);
+  return [
+    add(`tl search ${shellQuote(term)}`, 'Use token-efficient project search before opening files.'),
+    add(path && isCodePath(path) ? `tl symbols ${path}` : 'tl structure --depth 2', 'Use structure or signatures to narrow the next read.'),
+    add('tl snippet <symbol>', 'Extract only the implementation once the symbol is known.')
+  ];
+}
+
+function buildDependencyAdvice(goal) {
+  const pkg = extractPackageName(goal);
+  return [
+    add(`tl npm ${shellQuote(pkg)} --versions`, 'Check current package metadata and release cadence.'),
+    add(`tl context7 ${shellQuote(pkg)} "migration guide"`, 'Read current migration docs before changing APIs.'),
+    add('tl search "<old-api-or-package-name>"', 'Find usage sites before editing dependency-sensitive code.')
+  ];
+}
+
 function buildDocsAdvice(goal) {
   const libMatch = goal.match(/\b(?:docs|documentation|lookup|look up)\s+([@\w./-]+)/i);
   const lib = libMatch ? libMatch[1] : '<library>';
@@ -247,6 +395,13 @@ function buildCommitAdvice() {
 
 function defaultAdvice(goal) {
   const path = extractPath(goal);
+  if (path && !isCodePath(path)) {
+    return [
+      add(`tl context ${path}`, 'Estimate prose/config file size before reading it.'),
+      add('Read tool', 'Use normal file reading for non-code content.'),
+      add('tl advise "<more specific goal>"', 'Add intent words like docs, issue, debug, test, or commit for a sharper plan.')
+    ];
+  }
   return [
     add(path ? `tl analyze ${path}` : 'tl pack onboard', 'Start with compact context before reading files.'),
     add(path ? `tl symbols ${path}` : 'tl structure --depth 2', 'Prefer signatures and structure over full file reads.'),

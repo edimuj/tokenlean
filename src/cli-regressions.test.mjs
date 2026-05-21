@@ -706,6 +706,71 @@ describe('CLI regressions', () => {
     assert.match(parsed.suggestions[0].command, /^tl related src\/cache\.mjs/);
   });
 
+  it('TLT-053: tl-advise routes GitHub issue work to issue tools', () => {
+    const result = runCli(['bin/tl-advise.mjs', 'fix github issue #3', '-j']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.strictEqual(parsed.intent, 'github-issue');
+    assert.strictEqual(parsed.suggestions[0].command, 'tl gh issue read -R owner/repo 3');
+
+    const review = runCli(['bin/tl-advise.mjs', 'review issue #3', '-j']);
+    assert.strictEqual(review.status, 0, review.stdout || review.stderr);
+    assert.strictEqual(JSON.parse(review.stdout).intent, 'github-issue');
+  });
+
+  it('TLT-054: tl-advise routes issue closing to batched issue close', () => {
+    const result = runCli(['bin/tl-advise.mjs', 'close issues 2 and 3', '-j']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.strictEqual(parsed.intent, 'github-issue');
+    assert.strictEqual(parsed.suggestions[1].command, 'tl gh issue close -R owner/repo 2 3 -c "<summary>"');
+  });
+
+  it('TLT-055: tl-advise routes validation commands through tl-run', () => {
+    const result = runCli(['bin/tl-advise.mjs', 'run typecheck', '-j']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.strictEqual(parsed.intent, 'validate');
+    assert.strictEqual(parsed.suggestions[0].command, 'tl run "npm run typecheck" --type build');
+  });
+
+  it('TLT-056: tl-advise routes maintenance and search work to dedicated tools', () => {
+    const unused = runCli(['bin/tl-advise.mjs', 'find unused exports', '-j']);
+    assert.strictEqual(unused.status, 0, unused.stdout || unused.stderr);
+    const unusedParsed = JSON.parse(unused.stdout);
+    assert.strictEqual(unusedParsed.intent, 'maintenance');
+    assert.strictEqual(unusedParsed.suggestions[0].command, 'tl unused .');
+
+    const search = runCli(['bin/tl-advise.mjs', 'search for auth code', '-j']);
+    assert.strictEqual(search.status, 0, search.stdout || search.stderr);
+    const searchParsed = JSON.parse(search.stdout);
+    assert.strictEqual(searchParsed.intent, 'search');
+    assert.strictEqual(searchParsed.suggestions[0].command, 'tl search auth');
+  });
+
+  it('TLT-057: tl-advise avoids tl-symbols for non-code files', () => {
+    const result = runCli(['bin/tl-advise.mjs', 'inspect large README.md', '-j']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    const commands = parsed.suggestions.map(item => item.command);
+
+    assert.strictEqual(commands[0], 'tl context README.md');
+    assert.ok(!commands.some(command => command.includes('tl symbols README.md')));
+  });
+
+  it('TLT-058: tl-advise routes dependency work through npm and docs tools', () => {
+    const result = runCli(['bin/tl-advise.mjs', 'upgrade react', '-j']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.strictEqual(parsed.intent, 'deps');
+    assert.strictEqual(parsed.suggestions[0].command, 'tl npm react --versions');
+    assert.strictEqual(parsed.suggestions[1].command, 'tl context7 react "migration guide"');
+  });
+
   it('TLT-028: tl-pack small budgets omit lower-priority sections before output', () => {
     const result = runCli(['bin/tl-pack.mjs', 'refactor', 'bin/tl-pack.mjs', '--budget', '900', '-j']);
     assert.strictEqual(result.status, 0, result.stdout || result.stderr);
@@ -774,6 +839,59 @@ describe('CLI regressions', () => {
       assert.doesNotMatch(result.stdout, /EISDIR/);
       assert.doesNotMatch(result.stdout, /tl analyze/);
       assert.doesNotMatch(result.stdout, /tl impact/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-051: tl-pack debug keeps prose targets as context instead of shell commands', () => {
+    const target = 'delivery attempts dead-letter observability issue 43';
+    const result = runCli(['bin/tl-pack.mjs', 'debug', target, '--budget', '900', '-j']);
+
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    const output = parsed.sections[0].output.join('\n');
+
+    assert.strictEqual(parsed.failed, false);
+    assert.strictEqual(parsed.sections[0].title, 'Command result');
+    assert.strictEqual(parsed.sections[0].exitCode, 0);
+    assert.match(output, /kept as context only/);
+    assert.doesNotMatch(output, /delivery: not found/);
+  });
+
+  it('TLT-059: tl-pack emits copy-pasteable commands for args with spaces', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-pack-command-quote-'));
+    const spacedDir = join(tempDir, 'space dir');
+    const filePath = join(spacedDir, 'a file.ts');
+    mkdirSync(spacedDir, { recursive: true });
+    writeFileSync(filePath, 'export function x() { return 1; }\n', 'utf-8');
+
+    try {
+      const refactor = runCli(['bin/tl-pack.mjs', 'refactor', filePath, '--budget', '900', '-j']);
+      assert.strictEqual(refactor.status, 0, refactor.stdout || refactor.stderr);
+      const parsedRefactor = JSON.parse(refactor.stdout);
+      assert.strictEqual(parsedRefactor.sections[0].command, `tl analyze ${JSON.stringify(filePath)}`);
+      assert.strictEqual(parsedRefactor.omittedSections[0].command, `tl related ${JSON.stringify(filePath)}`);
+
+      const debug = runCli(['bin/tl-pack.mjs', 'debug', 'npm test -- --help', '--budget', '900', '-j']);
+      assert.strictEqual(debug.status, 0, debug.stdout || debug.stderr);
+      const parsedDebug = JSON.parse(debug.stdout);
+      assert.strictEqual(parsedDebug.sections[0].command, 'tl run "npm test -- --help" --type test');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-052: tl-symbols rejects markdown files with a useful alternative', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-symbols-markdown-'));
+    const filePath = join(tempDir, 'README.md');
+    writeFileSync(filePath, '# Notes\n\nUse prose here.\n', 'utf-8');
+
+    try {
+      const result = runCli(['bin/tl-symbols.mjs', filePath, '-q']);
+      assert.strictEqual(result.status, 1);
+      assert.match(result.stderr, /Not a code file for tl-symbols/);
+      assert.match(result.stderr, /Read tool/);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

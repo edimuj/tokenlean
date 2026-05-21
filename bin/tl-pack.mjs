@@ -21,8 +21,8 @@ if (process.argv.includes('--prompt')) {
 }
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { accessSync, constants, existsSync, statSync } from 'node:fs';
+import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   createOutput,
@@ -89,6 +89,16 @@ const PACKS = {
 
 function toolPath(name) {
   return join(__dirname, `tl-${name}.mjs`);
+}
+
+function shellQuote(value) {
+  if (!value) return '""';
+  if (/^[\w@./:=+-]+$/.test(value)) return value;
+  return JSON.stringify(value);
+}
+
+function formatToolCommand(name, args = []) {
+  return `tl ${name}${args.length ? ` ${args.map(shellQuote).join(' ')}` : ''}`;
 }
 
 function parseArgs(rawArgs) {
@@ -169,7 +179,7 @@ function compactLines(text, maxLines) {
 
 function runTool(name, args, opts = {}) {
   const commandArgs = [toolPath(name), ...args];
-  const command = `tl ${name}${args.length ? ` ${args.join(' ')}` : ''}`;
+  const command = formatToolCommand(name, args);
   const result = spawnSync(process.execPath, commandArgs, {
     cwd: process.cwd(),
     encoding: 'utf-8',
@@ -204,7 +214,7 @@ function section(title, name, args, opts = {}) {
     title,
     name,
     args,
-    command: `tl ${name}${args.length ? ` ${args.join(' ')}` : ''}`,
+    command: formatToolCommand(name, args),
     optional: Boolean(opts.optional),
     timeout: opts.timeout,
   };
@@ -260,6 +270,68 @@ function isExistingDirectory(target) {
   } catch {
     return false;
   }
+}
+
+function firstShellToken(command) {
+  let rest = String(command || '').trim();
+
+  while (rest) {
+    const match = rest.match(/^(?:"([^"]+)"|'([^']+)'|(\S+))(?:\s+|$)/);
+    if (!match) return null;
+
+    const token = match[1] || match[2] || match[3] || '';
+    rest = rest.slice(match[0].length).trimStart();
+
+    if (/^[A-Za-z_][A-Za-z0-9_]*=.*/.test(token)) continue;
+    return token;
+  }
+
+  return null;
+}
+
+function executablePathExists(candidate) {
+  try {
+    const stat = statSync(candidate);
+    if (!stat.isFile()) return false;
+    accessSync(candidate, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function commandExists(name, cwd = process.cwd()) {
+  const shellBuiltins = new Set([
+    ':', '.', '[', 'alias', 'bg', 'break', 'cd', 'command', 'continue',
+    'echo', 'eval', 'exec', 'exit', 'export', 'false', 'fg', 'hash',
+    'jobs', 'kill', 'pwd', 'read', 'return', 'set', 'shift', 'test',
+    'trap', 'true', 'type', 'ulimit', 'umask', 'unalias', 'unset', 'wait'
+  ]);
+  if (!name) return false;
+  if (shellBuiltins.has(name)) return true;
+
+  if (name.includes('/') || name.includes('\\')) {
+    const candidate = isAbsolute(name) ? name : join(cwd, name);
+    return executablePathExists(candidate);
+  }
+
+  const pathDirs = String(process.env.PATH || '').split(delimiter).filter(Boolean);
+  const pathExts = process.platform === 'win32'
+    ? String(process.env.PATHEXT || '.EXE;.CMD;.BAT;.COM').split(';').filter(Boolean)
+    : [''];
+
+  for (const dir of pathDirs) {
+    for (const ext of pathExts) {
+      if (executablePathExists(join(dir, `${name}${ext}`))) return true;
+    }
+  }
+
+  return false;
+}
+
+function looksLikeRunnableCommand(command) {
+  const token = firstShellToken(command);
+  return commandExists(token);
 }
 
 function buildFileReview(target, options) {
@@ -353,7 +425,17 @@ function buildDebug(target, options) {
   const sections = [];
 
   if (target) {
-    sections.push(section('Command result', 'run', [target, '--type', 'test'], { timeout: 300000 }));
+    if (looksLikeRunnableCommand(target)) {
+      sections.push(section('Command result', 'run', [target, '--type', 'test'], { timeout: 300000 }));
+    } else {
+      sections.push({
+        title: 'Command result',
+        command: 'tl pack debug <command>',
+        exitCode: 0,
+        output: `Target kept as context only because it does not start with an executable command: ${target}`,
+        optional: true
+      });
+    }
   } else {
     sections.push({
       title: 'Command result',

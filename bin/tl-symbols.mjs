@@ -107,6 +107,11 @@ const ALL_SUPPORTED_EXTS = new Set([
   '.hs', '.ml', '.mli', '.php', '.dart', '.v', '.sv',
 ]);
 
+const NON_SYMBOL_EXTS = new Set([
+  '.md', '.mdx', '.txt', '.json', '.yaml', '.yml', '.toml', '.xml',
+  '.csv', '.lock', '.log', '.env', '.svg', '.html', '.css',
+]);
+
 // ─────────────────────────────────────────────────────────────
 // File Collection & Symbol Extraction
 // ─────────────────────────────────────────────────────────────
@@ -247,6 +252,12 @@ if (options.help || paths.length === 0) {
 for (const p of paths) {
   if (!existsSync(p)) {
     console.error(`Not found: ${p}`);
+    process.exit(1);
+  }
+
+  if (statSync(p).isFile() && NON_SYMBOL_EXTS.has(extname(p).toLowerCase())) {
+    console.error(`Not a code file for tl-symbols: ${p}`);
+    console.error('Use the Read tool for prose/config files, or tl context to estimate size.');
     process.exit(1);
   }
 }

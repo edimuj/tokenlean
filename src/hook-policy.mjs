@@ -1,4 +1,5 @@
 import { statSync } from 'node:fs';
+import { extname } from 'node:path';
 
 const BUILD_TEST_PATTERNS = [
   /\b(npm|yarn|pnpm|bun)\s+(test|run\s+test|run\s+build|run\s+lint)/,
@@ -20,7 +21,7 @@ const TAIL_PATTERNS = [
 ];
 
 const NON_CODE_EXTS = new Set([
-  'md', 'txt', 'json', 'yaml', 'yml', 'toml', 'xml', 'csv',
+  'md', 'mdx', 'txt', 'json', 'yaml', 'yml', 'toml', 'xml', 'csv',
   'lock', 'svg', 'html', 'css', 'log', 'env',
 ]);
 
@@ -34,6 +35,34 @@ function normalizeToolCall(data = {}) {
 
 function isTokenleanCommand(command) {
   return /\btl(?:-[\w-]+|\s+\w+)/.test(command);
+}
+
+function isNonCodePath(filePath) {
+  const ext = extname(String(filePath || '')).slice(1).toLowerCase();
+  return NON_CODE_EXTS.has(ext);
+}
+
+function unquoteShellToken(token) {
+  if (!token) return token;
+  if ((token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'"))) {
+    return token.slice(1, -1);
+  }
+  return token;
+}
+
+function extractCatTargets(command) {
+  const tokens = String(command || '').match(/"[^"]*"|'[^']*'|\S+/g) || [];
+  if (tokens[0] !== 'cat') return [];
+
+  const targets = [];
+  for (const token of tokens.slice(1)) {
+    if (token === '|' || token === '&&' || token === '||' || token === ';') break;
+    if (token.startsWith('>') || token.startsWith('<')) break;
+    if (token === '--') continue;
+    if (token.startsWith('-')) continue;
+    targets.push(unquoteShellToken(token));
+  }
+  return targets;
 }
 
 export function evaluateToolCall(data = {}, options = {}) {
@@ -90,6 +119,18 @@ export function evaluateToolCall(data = {}, options = {}) {
     }
 
     if (/^\s*cat\s+[^|]/.test(cmd)) {
+      const catTargets = extractCatTargets(cmd.trim());
+      if (catTargets.some(isNonCodePath)) {
+        return {
+          id: 'bash-cat-non-code',
+          severity: 'nudge',
+          action: 'replace',
+          message: '[tl] use Read tool for non-code files',
+          alternative: 'Read tool',
+          toolName,
+        };
+      }
+
       return {
         id: 'bash-cat',
         severity: 'nudge',

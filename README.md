@@ -179,6 +179,8 @@ Add tokenlean instructions to your AI tool's config with a single command:
 
 MCP tools include the core context reducers (`tl_symbols`, `tl_snippet`, `tl_run`, `tl_impact`, `tl_browse`, `tl_tail`, `tl_guard`, `tl_diff`), workflow routers (`tl_advise`, `tl_pack`), briefing tools (`tl_analyze`, `tl_related`, `tl_context`, `tl_structure`, `tl_entry`), and GitHub operations (`tl_gh_issue_read`, `tl_gh_issue_close`, `tl_gh_issue_add_sub`, `tl_gh_issue_close_batch`, `tl_gh_issue_label_batch`, `tl_gh_project_add_batch`, `tl_gh_issue_create_batch`). Structured JSON in/out — no bash command construction, no argument parsing, no stdout scraping.
 
+All MCP tools accept an optional `cwd` argument for shared-server setups where the MCP server process is not already running in the target repo. For `tl_pack` debug packs, pass `command` when you want to execute a command; prose `target` values are kept as context instead of being treated as shell commands.
+
 **Hooks** — automatically nudge agents toward token-efficient tool usage:
 
 ```bash
