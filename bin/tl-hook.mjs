@@ -57,12 +57,22 @@ Examples:
 
 // --- Nudge dedup (once per type, re-nudge after TTL) ---
 
-const NUDGE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const NUDGE_TTL_MS = Number(process.env.TL_HOOK_NUDGE_TTL_MS || 15 * 60 * 1000);
+
+function safeSeenName(value) {
+  return String(value || '')
+    .replace(/[^a-zA-Z0-9_.-]+/g, '-')
+    .slice(0, 120);
+}
 
 function getSeenPath() {
-  const port = process.env.CLAUDE_CODE_SSE_PORT;
-  if (!port) return null;
-  return join(tmpdir(), `tl-hook-${port}.seen`);
+  const sessionId = process.env.TL_HOOK_SESSION_ID
+    || process.env.CODEX_THREAD_ID
+    || process.env.CLAUDE_CODE_SSE_PORT
+    || process.env.AGENT_RELAY_ID
+    || process.env.AGENT_RELAY_TMUX_SESSION
+    || `ppid-${process.ppid}`;
+  return join(tmpdir(), `tl-hook-${safeSeenName(sessionId)}.seen`);
 }
 
 function loadSeen(p) {
@@ -77,12 +87,10 @@ function statSyncSafe(path) {
 
 function nudgeOnce(key, message, target) {
   const p = getSeenPath();
-  if (p) {
-    const seen = loadSeen(p);
-    if (seen[key] && (Date.now() - seen[key]) < NUDGE_TTL_MS) return;
-    seen[key] = Date.now();
-    writeFileSync(p, JSON.stringify(seen), 'utf8');
-  }
+  const seen = loadSeen(p);
+  if (seen[key] && (Date.now() - seen[key]) < NUDGE_TTL_MS) return;
+  seen[key] = Date.now();
+  writeFileSync(p, JSON.stringify(seen), 'utf8');
   console.log(formatNudge(message, target));
 }
 

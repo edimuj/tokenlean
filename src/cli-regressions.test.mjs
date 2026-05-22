@@ -1358,6 +1358,42 @@ describe('CLI regressions', () => {
     assert.strictEqual(parsed.decision.alternative, 'tl run "npm test"');
   });
 
+  it('TLT-030b: tl-hook deduplicates Codex nudges per session id', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-hook-seen-'));
+    const env = {
+      ...process.env,
+      TMPDIR: tempDir,
+      CODEX_THREAD_ID: 'codex-session-1',
+      TL_HOOK_NUDGE_TTL_MS: '900000',
+    };
+    const input = JSON.stringify({
+      tool_name: 'Bash',
+      tool_input: { command: 'npm test' },
+    });
+
+    try {
+      const first = spawnSync(process.execPath, ['bin/tl-hook.mjs', 'run', '--target', 'codex'], {
+        cwd: repoRoot,
+        env,
+        input,
+        encoding: 'utf-8'
+      });
+      const second = spawnSync(process.execPath, ['bin/tl-hook.mjs', 'run', '--target', 'codex'], {
+        cwd: repoRoot,
+        env,
+        input,
+        encoding: 'utf-8'
+      });
+
+      assert.strictEqual(first.status, 0, first.stdout || first.stderr);
+      assert.strictEqual(second.status, 0, second.stdout || second.stderr);
+      assert.match(first.stdout, /\[tl\] wrap with tl-run/);
+      assert.strictEqual(second.stdout, '');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('TLT-031: tl-hook install codex writes a managed hook block', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-codex-hooks-'));
     try {

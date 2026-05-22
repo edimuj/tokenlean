@@ -53,9 +53,40 @@ describe('hook policy', () => {
     assert.equal(decision.id, 'bash-tail');
   });
 
+  it('does not recommend tl-browse for local API curl probes', () => {
+    const decision = evaluateToolCall({
+      tool: 'exec_command',
+      input: {
+        cmd: 'curl -sS -H "X-Agent-Relay-Token: $AGENT_RELAY_TOKEN" http://127.0.0.1:4850/api/messages/queued -i | sed -n \'1,80p\'',
+      },
+    });
+
+    assert.equal(decision, null);
+  });
+
+  it('does not recommend tl-browse for public API curl requests', () => {
+    const decision = evaluateToolCall({
+      tool_name: 'Bash',
+      tool_input: { command: 'curl https://api.github.com/repos/edimuj/tokenlean' },
+    });
+
+    assert.equal(decision, null);
+  });
+
+  it('still recommends tl-browse for simple public page curl requests', () => {
+    const decision = evaluateToolCall({
+      tool_name: 'Bash',
+      tool_input: { command: 'curl -sS https://example.com/docs' },
+    });
+
+    assert.equal(decision.id, 'bash-curl');
+    assert.equal(decision.alternative, 'tl browse "https://example.com/docs"');
+  });
+
   it('rewrites safe shell commands for rewriting adapters', () => {
     assert.equal(rewriteShellCommand('npm test'), 'tl-run "npm test"');
     assert.equal(rewriteShellCommand('curl https://example.com/page'), 'tl-browse "https://example.com/page"');
+    assert.equal(rewriteShellCommand('curl -sS http://localhost:4850/api/messages/queued'), null);
   });
 });
 

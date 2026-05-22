@@ -129,6 +129,33 @@ describe('parseSession — Claude', () => {
     assert.equal(findings[0].suggestion, 'tl-run');
   });
 
+  it('detects simple public curl page waste', () => {
+    const bigOutput = 'x'.repeat(2000);
+    const jsonl = makeClaudeJsonl([{
+      id: 'call-curl-page',
+      name: 'Bash',
+      input: { command: 'curl -sS https://example.com/docs' },
+      result: bigOutput,
+    }]);
+    const { findings } = parseSession(jsonl, 'claude');
+    assert.equal(findings[0].category, 'curl-command');
+    assert.equal(findings[0].suggestion, 'tl-browse');
+  });
+
+  it('ignores local API curl probes', () => {
+    const bigOutput = 'x'.repeat(2000);
+    const jsonl = makeClaudeJsonl([{
+      id: 'call-curl-api',
+      name: 'Bash',
+      input: {
+        command: 'curl -sS -H "X-Agent-Relay-Token: $AGENT_RELAY_TOKEN" http://127.0.0.1:4850/api/messages/queued -i | sed -n \'1,80p\'',
+      },
+      result: bigOutput,
+    }]);
+    const { findings } = parseSession(jsonl, 'claude');
+    assert.deepEqual(findings, []);
+  });
+
   it('detects large file read waste', () => {
     const bigContent = Array.from({ length: 200 }, (_, i) => `line ${i}`).join('\n');
     const jsonl = makeClaudeJsonl([{

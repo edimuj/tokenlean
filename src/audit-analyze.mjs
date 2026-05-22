@@ -105,6 +105,48 @@ function parseJson(line) {
   }
 }
 
+function extractHttpUrl(command) {
+  return String(command || '').match(/https?:\/\/[^\s"'<>|)]+/)?.[0] || null;
+}
+
+function isLocalOrPrivateHost(hostname) {
+  const host = String(hostname || '').toLowerCase();
+  if (host === 'localhost' || host === '0.0.0.0' || host === '::1') return true;
+  if (/^127\./.test(host)) return true;
+  if (/^10\./.test(host)) return true;
+  if (/^192\.168\./.test(host)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
+  return false;
+}
+
+function isApiLikeUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    return isLocalOrPrivateHost(host)
+      || host.startsWith('api.')
+      || path === '/api'
+      || path.startsWith('/api/')
+      || path === '/graphql'
+      || path.startsWith('/graphql/');
+  } catch {
+    return true;
+  }
+}
+
+function hasApiCurlOptions(command) {
+  return /(?:^|\s)(?:-[XHI]|--request|--header|--data(?:-[\w-]+)?|-d|--include|--head)\b/i.test(command);
+}
+
+function shouldSuggestBrowseForCurl(command) {
+  if (!CURL_PATTERNS.some(pattern => pattern.test(command))) return false;
+  if (hasApiCurlOptions(command)) return false;
+
+  const url = extractHttpUrl(command);
+  return Boolean(url && !isApiLikeUrl(url));
+}
+
 export function mergeSessionMeta(existing, update) {
   const current = existing || {};
   return {
@@ -283,7 +325,7 @@ function analyzeShell(call, resultText, tokens, findings) {
     return;
   }
 
-  if (CURL_PATTERNS.some(pattern => pattern.test(command)) && !/(-X\s|--data|--header.*auth|-d\s)/i.test(command)) {
+  if (shouldSuggestBrowseForCurl(command)) {
     const savedTokens = Math.round(tokens * (1 - RATIOS.BASH_CURL_TO_BROWSE));
     findings.push({
       category: 'curl-command',
