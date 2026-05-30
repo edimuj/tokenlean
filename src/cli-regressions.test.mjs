@@ -1099,7 +1099,7 @@ describe('CLI regressions', () => {
     }
   });
 
-  it('TLT-050: tl-gh issue close-batch chunks large batches and isolates chunk failures', () => {
+  it('TLT-050: tl-gh issue close-batch binary-splits a failing chunk to isolate the bad issue and recover the rest', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-gh-close-chunk-'));
     const ghPath = join(tempDir, 'gh');
     const logPath = join(tempDir, 'gh-calls.jsonl');
@@ -1116,7 +1116,9 @@ describe('CLI regressions', () => {
       '  process.stdout.write(JSON.stringify({ data: { repository: fields } }) + "\\n");',
       '  process.exit(0);',
       '}',
-      // Mutations: succeed for first chunk (1..10), reject the second chunk (11..15) entirely.
+      // Mutations: succeed for the first chunk (1..10). Issue 11 is "poison" —
+      // any mutation containing it throws, forcing a recursive binary split that
+      // isolates 11 and lets 12..15 through on the sub-batches that omit it.
       'const closeNums = [...query.matchAll(/close(\\d+): closeIssue/g)].map(m => Number(m[1]));',
       'if (closeNums.includes(11)) {',
       '  process.stderr.write("Query has complexity fees, exceeding max\\n");',
@@ -1155,17 +1157,16 @@ describe('CLI regressions', () => {
         return q.startsWith('mutation') || q.includes('closeIssue');
       });
 
-      // 15 issues with chunk size 10 → 2 mutation requests.
-      assert.strictEqual(mutationCalls.length, 2, `expected 2 mutation chunks, got ${mutationCalls.length}`);
+      // The failing second chunk gets split (>2 mutation requests total),
+      // rather than the whole chunk being marked failed in one shot.
+      assert.ok(mutationCalls.length > 2, `expected the failing chunk to split (>2 requests), got ${mutationCalls.length}`);
 
-      // First 10 close successfully, last 5 fail with the chunk error.
+      // Everything except the poison issue 11 closes; results stay in input order.
       const closed = parsed.results.filter(r => r.status === 'closed').map(r => Number(r.number));
       const failed = parsed.results.filter(r => r.status === 'failed').map(r => Number(r.number));
-      assert.deepStrictEqual(closed, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-      assert.deepStrictEqual(failed, [11, 12, 13, 14, 15]);
-      for (const r of parsed.results.filter(r => r.status === 'failed')) {
-        assert.match(r.error, /complexity|exceed/i);
-      }
+      assert.deepStrictEqual(closed, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15]);
+      assert.deepStrictEqual(failed, [11]);
+      assert.match(parsed.results.find(r => Number(r.number) === 11).error, /complexity|exceed/i);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

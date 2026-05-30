@@ -314,25 +314,27 @@ async function closeIssuesBatchViaGraphQL(repo, issueNums, reason, comment) {
     return issueNums.map(num => ({ number: num, status: 'failed', error: `Could not resolve issue id: ${e.message}` }));
   }
 
-  const chunks = chunkArray(issueNums, CLOSE_MUTATION_CHUNK);
   const results = [];
+  const resolvable = [];
+  for (const num of issueNums) {
+    if (!issueIds.get(num)) {
+      results.push({ number: num, status: 'failed', error: `Issue not found: ${repo}#${num}` });
+    } else {
+      resolvable.push(num);
+    }
+  }
 
-  for (const chunk of chunks) {
+  // Run one GraphQL mutation for a set of issues. On a chunk-level failure (the
+  // whole request throws — e.g. complexity/rate limits, or one poison issue),
+  // recursively split the set in half to isolate the offending issue(s) and
+  // recover the rest: ~log(n) extra requests instead of failing the whole chunk.
+  async function closeSet(nums) {
     const mutationFields = [];
-    const missing = new Set();
-
-    for (const num of chunk) {
-      const issueId = issueIds.get(num);
-      if (!issueId) {
-        missing.add(num);
-        continue;
-      }
-
-      const quotedId = graphQlString(issueId);
+    for (const num of nums) {
+      const quotedId = graphQlString(issueIds.get(num));
       mutationFields.push(`${issueAlias('close', num)}: closeIssue(input: {issueId: ${quotedId}, stateReason: ${graphQlCloseReason(reason)}}) {
         issue { number }
       }`);
-
       if (comment) {
         mutationFields.push(`${issueAlias('comment', num)}: addComment(input: {subjectId: ${quotedId}, body: ${graphQlString(comment)}}) {
           commentEdge { node { id } }
@@ -340,18 +342,8 @@ async function closeIssuesBatchViaGraphQL(repo, issueNums, reason, comment) {
       }
     }
 
-    if (mutationFields.length === 0) {
-      for (const num of chunk) {
-        results.push(missing.has(num)
-          ? { number: num, status: 'failed', error: `Issue not found: ${repo}#${num}` }
-          : { number: num, status: 'closed' });
-      }
-      continue;
-    }
-
     let mutationData = {};
     let fieldErrors = new Map();
-    let chunkError = null;
     try {
       const mutationResult = await ghGraphQLAsync(`mutation {
         ${mutationFields.join('\n')}
@@ -359,40 +351,39 @@ async function closeIssuesBatchViaGraphQL(repo, issueNums, reason, comment) {
       mutationData = mutationResult?.data || {};
       fieldErrors = groupGraphQLErrorsByIssue(mutationResult?.errors || []);
     } catch (e) {
-      chunkError = e.message;
+      if (nums.length > 1) {
+        const mid = Math.ceil(nums.length / 2);
+        const left = await closeSet(nums.slice(0, mid));
+        const right = await closeSet(nums.slice(mid));
+        return [...left, ...right];
+      }
+      return [{ number: nums[0], status: 'failed', error: e.message }];
     }
 
-    for (const num of chunk) {
-      if (missing.has(num)) {
-        results.push({ number: num, status: 'failed', error: `Issue not found: ${repo}#${num}` });
-        continue;
-      }
-
-      if (chunkError) {
-        results.push({ number: num, status: 'failed', error: chunkError });
-        continue;
-      }
-
+    const out = [];
+    for (const num of nums) {
       const closeData = mutationData[issueAlias('close', num)];
       const commentData = comment ? mutationData[issueAlias('comment', num)] : true;
       const issueErrors = fieldErrors.get(num) || [];
 
       if (!closeData?.issue?.number) {
-        const error = issueErrors.join('; ') || `Close mutation returned no issue for ${repo}#${num}`;
-        results.push({ number: num, status: 'failed', error });
-        continue;
+        out.push({ number: num, status: 'failed', error: issueErrors.join('; ') || `Close mutation returned no issue for ${repo}#${num}` });
+      } else if (comment && !commentData?.commentEdge?.node?.id) {
+        out.push({ number: num, status: 'closed', warning: issueErrors.join('; ') || `Comment mutation returned no comment for ${repo}#${num}` });
+      } else {
+        out.push({ number: num, status: 'closed' });
       }
-
-      if (comment && !commentData?.commentEdge?.node?.id) {
-        const warning = issueErrors.join('; ') || `Comment mutation returned no comment for ${repo}#${num}`;
-        results.push({ number: num, status: 'closed', warning });
-        continue;
-      }
-
-      results.push({ number: num, status: 'closed' });
     }
+    return out;
   }
 
+  for (const chunk of chunkArray(resolvable, CLOSE_MUTATION_CHUNK)) {
+    results.push(...await closeSet(chunk));
+  }
+
+  // Restore original input order (missing issues were collected up front).
+  const order = new Map(issueNums.map((n, i) => [n, i]));
+  results.sort((a, b) => order.get(a.number) - order.get(b.number));
   return results;
 }
 
