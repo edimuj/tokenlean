@@ -1484,4 +1484,93 @@ describe('CLI regressions', () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('TLT-060: tl push -A stages everything and bypasses the multi-file guard', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'tokenlean-push-all-'));
+    const gitIn = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf-8' });
+    try {
+      gitIn('init', '-q');
+      gitIn('config', 'user.email', 't@t.t');
+      gitIn('config', 'user.name', 't');
+      writeFileSync(join(repo, 'a.txt'), 'a\n');
+      writeFileSync(join(repo, 'b.txt'), 'b\n');
+      gitIn('add', '-A');
+      gitIn('commit', '-qm', 'init');
+      // Two modified + one untracked → would trip the guard without -A.
+      writeFileSync(join(repo, 'a.txt'), 'a2\n');
+      writeFileSync(join(repo, 'b.txt'), 'b2\n');
+      writeFileSync(join(repo, 'c.txt'), 'c\n');
+
+      const result = spawnSync(process.execPath, [
+        join(repoRoot, 'bin/tl-push.mjs'), 'feat: stage all', '-A', '--no-push'
+      ], { cwd: repo, encoding: 'utf-8' });
+
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const staged = spawnSync('git', ['show', '--stat', '--format=', 'HEAD'], { cwd: repo, encoding: 'utf-8' }).stdout;
+      assert.match(staged, /a\.txt/);
+      assert.match(staged, /b\.txt/);
+      assert.match(staged, /c\.txt/); // untracked file included by -A
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-061: tl push without -A still guards multiple modified files', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'tokenlean-push-guard-'));
+    const gitIn = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf-8' });
+    try {
+      gitIn('init', '-q');
+      gitIn('config', 'user.email', 't@t.t');
+      gitIn('config', 'user.name', 't');
+      writeFileSync(join(repo, 'a.txt'), 'a\n');
+      writeFileSync(join(repo, 'b.txt'), 'b\n');
+      gitIn('add', '-A');
+      gitIn('commit', '-qm', 'init');
+      writeFileSync(join(repo, 'a.txt'), 'a2\n');
+      writeFileSync(join(repo, 'b.txt'), 'b2\n');
+
+      const result = spawnSync(process.execPath, [
+        join(repoRoot, 'bin/tl-push.mjs'), 'feat: oops', '--no-push'
+      ], { cwd: repo, encoding: 'utf-8' });
+
+      assert.strictEqual(result.status, 1);
+      assert.match(result.stderr, /Multiple modified files/);
+      assert.match(result.stderr, /use -A to stage all/);
+      // Nothing should have been committed beyond init.
+      const log = spawnSync('git', ['log', '--oneline'], { cwd: repo, encoding: 'utf-8' }).stdout.trim();
+      assert.strictEqual(log.split('\n').length, 1);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-062: tl push -F reads a multi-line commit body from a file', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'tokenlean-push-msgfile-'));
+    const gitIn = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf-8' });
+    try {
+      gitIn('init', '-q');
+      gitIn('config', 'user.email', 't@t.t');
+      gitIn('config', 'user.name', 't');
+      writeFileSync(join(repo, 'a.txt'), 'a\n');
+      gitIn('add', '-A');
+      gitIn('commit', '-qm', 'init');
+      writeFileSync(join(repo, 'a.txt'), 'a2\n');
+      const msgPath = join(repo, 'msg.txt');
+      writeFileSync(msgPath, 'subject line\n\nbody paragraph\n- a bullet\n');
+
+      const result = spawnSync(process.execPath, [
+        join(repoRoot, 'bin/tl-push.mjs'), '-F', msgPath, 'a.txt', '--no-push'
+      ], { cwd: repo, encoding: 'utf-8' });
+
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      // Human summary shows only the subject line.
+      assert.match(result.stdout, /subject line/);
+      assert.doesNotMatch(result.stdout.split('\n')[0], /a bullet/);
+      // The committed message carries the full multi-line body.
+      const body = spawnSync('git', ['log', '-1', '--format=%B'], { cwd: repo, encoding: 'utf-8' }).stdout;
+      assert.match(body, /subject line\n\nbody paragraph\n- a bullet/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
 });

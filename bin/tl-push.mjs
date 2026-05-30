@@ -21,6 +21,7 @@ if (process.argv.includes('--prompt')) {
 }
 
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import {
   createOutput,
   parseCommonArgs,
@@ -35,10 +36,16 @@ Usage: tl-push "commit message" [files...] [options]
 
 If no files are specified, stages tracked modified files only (git add -u).
 If files are specified, stages only those files.
+With multiple modified files and no explicit list, pass -A to stage everything.
+
+The message may be multi-line (subject + blank line + body). For long bodies,
+write them to a file and use -F to avoid shell-quoting.
 
 Options:
-  --all, -A             Include untracked files (git add -A instead of -u)
+  --all, -A             Stage everything incl. untracked (git add -A); also
+                        bypasses the "specify which files" guard
   --force, -f           Force-add files (git add -f), for gitignored files
+  --message-file, -F P  Read the commit message from file P (multi-line bodies)
   --no-push             Commit only, don't push
   --amend               Amend the previous commit (message optional)
   --dry-run             Show what would happen without doing it
@@ -46,8 +53,9 @@ ${COMMON_OPTIONS_HELP}
 
 Examples:
   tl-push "feat: add caching"                    # Stage modified, commit, push
-  tl-push "feat: new tool" -A                    # Include untracked files too
+  tl-push "feat: new tool" -A                    # Stage all (incl. untracked)
   tl-push "fix: typo" README.md                  # Stage README.md only
+  tl-push -F /tmp/msg.txt -A                     # Long body from file, stage all
   tl-push "chore: cleanup" --no-push             # Commit without pushing
   tl-push --amend                                # Amend last commit, push
   tl-push "fix: better msg" --amend              # Amend with new message
@@ -82,6 +90,7 @@ const args = process.argv.slice(2);
 const options = parseCommonArgs(args);
 
 let message = null;
+let messageFile = null;
 let amend = false;
 let noPush = false;
 let dryRun = false;
@@ -89,19 +98,52 @@ let includeUntracked = false;
 let forceAdd = false;
 const files = [];
 
-for (const arg of options.remaining) {
+// Collect positional (non-flag) args first; assign them to message/files after
+// the loop, since -F may appear before or after the file list.
+const positionals = [];
+const remaining = options.remaining;
+for (let i = 0; i < remaining.length; i++) {
+  const arg = remaining[i];
   if (arg === '--no-push') noPush = true;
   else if (arg === '--amend') amend = true;
   else if (arg === '--dry-run') dryRun = true;
   else if (arg === '--all' || arg === '-A') includeUntracked = true;
   else if (arg === '--force' || arg === '-f') forceAdd = true;
-  else if (message === null && !arg.startsWith('-')) message = arg;
-  else if (!arg.startsWith('-')) files.push(arg);
+  else if (arg === '--message-file' || arg === '-F') {
+    messageFile = remaining[++i];
+    if (!messageFile) {
+      console.error('Error: -F/--message-file requires a path');
+      process.exit(2);
+    }
+  }
+  else if (!arg.startsWith('-')) positionals.push(arg);
+}
+
+// With -F, every positional is a file to stage (like `git commit -F`).
+// Otherwise the first positional is the commit message, the rest are files.
+if (messageFile) {
+  files.push(...positionals);
+} else if (positionals.length > 0) {
+  message = positionals[0];
+  files.push(...positionals.slice(1));
 }
 
 if (options.help) {
   console.log(HELP);
   process.exit(0);
+}
+
+if (messageFile) {
+  try {
+    message = readFileSync(messageFile, 'utf-8').replace(/\n+$/, '');
+  } catch (e) {
+    console.error(`Error: cannot read message file ${messageFile}: ${e.message}`);
+    process.exit(1);
+  }
+  if (!message.trim()) {
+    console.error(`Error: message file ${messageFile} is empty`);
+    process.exit(2);
+  }
 }
 
 if (!message && !amend) {
@@ -111,6 +153,7 @@ if (!message && !amend) {
 }
 
 const out = createOutput(options);
+const subject = message ? message.split('\n')[0] : null;
 
 const branch = gitCommand(['branch', '--show-current']);
 if (!branch) {
@@ -157,9 +200,10 @@ if (filesToStage) {
   }
 }
 
-// Refuse to auto-stage when multiple files are modified — force explicit file list
-if (!filesToStage && stagedFiles.length > 1 && !amend) {
-  console.error(`Multiple modified files — specify which to include:`);
+// Refuse to auto-stage when multiple files are modified — force explicit file
+// list. Bypassed by -A/--all, which is an explicit "stage everything" opt-in.
+if (!filesToStage && !includeUntracked && stagedFiles.length > 1 && !amend) {
+  console.error(`Multiple modified files — specify which to include (or use -A to stage all):`);
   for (const f of stagedFiles) console.error(`  ${f}`);
   console.error(`\nUsage: tl push "${message}" file1 file2 ...`);
   process.exit(1);
@@ -176,9 +220,9 @@ if (dryRun) {
     out.add(`  git add ${includeUntracked ? '-A' : '-u'}`);
   }
   if (amend) {
-    out.add(`  git commit --amend ${message ? `-m "${message}"` : '--no-edit'}`);
+    out.add(`  git commit --amend ${message ? `-m "${subject}"` : '--no-edit'}`);
   } else {
-    out.add(`  git commit -m "${message}"`);
+    out.add(`  git commit -m "${subject}"`);
   }
   if (!noPush) out.add(`  git push origin ${branch}`);
   out.print();
@@ -261,7 +305,7 @@ if (summary) out.setData('summary', summary);
 
 const action = amend ? 'Amended' : 'Committed';
 const pushStr = pushed ? ', pushed' : '';
-out.add(`${action} ${shortHash} on ${branch}${pushStr}: ${message || '(no message change)'}`);
+out.add(`${action} ${shortHash} on ${branch}${pushStr}: ${subject || '(no message change)'}`);
 if (stagedFiles.length > 0) {
   out.setData('files', stagedFiles);
   out.add(`Files (${stagedFiles.length}): ${stagedFiles.join(', ')}`);
