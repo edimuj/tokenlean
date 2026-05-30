@@ -450,12 +450,14 @@ async function main() {
   }
 
   if (options.remaining.length > 1) {
-    throw new Error('Usage: tl-tail [log-file] [options]');
+    console.error('Usage: tl-tail [log-file] [options]');
+    process.exit(2);
   }
 
   const inputArg = options.remaining[0];
   if (follow && !inputArg) {
-    throw new Error('--follow requires a log file path');
+    console.error('Error: --follow requires a log file path');
+    process.exit(2);
   }
 
   if (inputArg) {
@@ -474,7 +476,8 @@ async function main() {
   }
 
   if (process.stdin.isTTY) {
-    throw new Error('No input provided. Pass a file path or pipe logs via stdin.');
+    console.error('Error: No input provided. Pass a file path or pipe logs via stdin.');
+    process.exit(2);
   }
 
   const stdinContent = await readStdin();

@@ -10,9 +10,9 @@
  * Token estimation: ~4 chars per token (same as reading content)
  */
 
-import { readdirSync, statSync, lstatSync, existsSync, realpathSync } from 'fs';
-import { join, relative, basename, extname } from 'path';
-import { spawnSync } from 'child_process';
+import { readdirSync, statSync, lstatSync, existsSync, realpathSync } from 'node:fs';
+import { join, relative, basename, extname } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { getSkipDirs, getSkipExtensions, getImportantDirs, getImportantFiles, shouldSkip } from './project.mjs';
 import { rgCommand } from './shell.mjs';
 

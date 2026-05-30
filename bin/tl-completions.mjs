@@ -26,26 +26,33 @@ _tl() {
     fi
 
     # Subcommand-specific positional args
+    # These are per-tool action words (not tl sub-commands), so they cannot be
+    # derived from "tl --list-commands" or "tl --list-flags <cmd>". Update here
+    # when the corresponding tool's action list changes.
     case "\$cmd" in
         completions)
             COMPREPLY=(\$(compgen -W "bash zsh" -- "\$cur"))
             return
             ;;
         cache)
+            # Actions: stats, clear, clear-all (see bin/tl-cache.mjs)
             COMPREPLY=(\$(compgen -W "stats clear clear-all" -- "\$cur"))
             return
             ;;
         hook)
             if [[ \$COMP_CWORD -eq 2 ]]; then
+                # Actions: run, install, uninstall, status (see bin/tl-hook.mjs)
                 COMPREPLY=(\$(compgen -W "run install uninstall status" -- "\$cur"))
                 return
             fi
             ;;
         gh)
             if [[ \$COMP_CWORD -eq 2 ]]; then
+                # Resources: issue, pr, project, release (see bin/tl-gh.mjs)
                 COMPREPLY=(\$(compgen -W "issue pr project release" -- "\$cur"))
                 return
             elif [[ \$COMP_CWORD -eq 3 ]]; then
+                # Actions per resource (see bin/tl-gh.mjs)
                 case "\${COMP_WORDS[2]}" in
                     issue) COMPREPLY=(\$(compgen -W "read view create-batch create-tree add-sub close close-batch label-batch" -- "\$cur")) ;;
                     pr) COMPREPLY=(\$(compgen -W "digest comments land" -- "\$cur")) ;;
@@ -91,26 +98,33 @@ _tl() {
         return
     fi
 
+    # These are per-tool action words (not tl sub-commands), so they cannot be
+    # derived from "tl --list-commands" or "tl --list-flags <cmd>". Update here
+    # when the corresponding tool's action list changes.
     case "\$cmd" in
         completions)
             _describe 'shell' '(bash:"Bash completion script" zsh:"Zsh completion script")'
             return
             ;;
         cache)
+            # Actions: stats, clear, clear-all (see bin/tl-cache.mjs)
             _describe 'action' '(stats:"Show cache statistics" clear:"Clear project cache" clear-all:"Clear entire cache")'
             return
             ;;
         hook)
             if (( CURRENT == 3 )); then
+                # Actions: run, install, uninstall, status (see bin/tl-hook.mjs)
                 _describe 'action' '(run:"Run hook" install:"Install hooks" uninstall:"Remove hooks" status:"Show hook status")'
                 return
             fi
             ;;
         gh)
             if (( CURRENT == 3 )); then
+                # Resources: issue, pr, project, release (see bin/tl-gh.mjs)
                 _describe 'resource' '(issue:"Issue operations" pr:"Pull request operations" project:"Project board" release:"Release operations")'
                 return
             elif (( CURRENT == 4 )); then
+                # Actions per resource (see bin/tl-gh.mjs)
                 case "\$words[3]" in
                     issue) _describe 'action' '(read view create-batch create-tree add-sub close close-batch label-batch)' ;;
                     pr) _describe 'action' '(digest comments land)' ;;

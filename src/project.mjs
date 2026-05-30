@@ -10,8 +10,8 @@
  *   importantFiles: ["ARCHITECTURE.md"]
  */
 
-import { existsSync, readFileSync, readdirSync } from 'fs';
-import { dirname, join, relative, extname } from 'path';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { dirname, join, relative, extname } from 'node:path';
 import { getConfig } from './config.mjs';
 
 // ─────────────────────────────────────────────────────────────

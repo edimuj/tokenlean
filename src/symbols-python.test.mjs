@@ -106,4 +106,43 @@ def standalone():
     assert.equal(symbols.functions.length, 1);
     assert.ok(symbols.functions[0].includes('-> int'));
   });
+
+  it('captures multi-line function signature', () => {
+    const code = `def f(
+  x,
+  y,
+):
+    pass`;
+    const symbols = extractPythonSymbols(code);
+    assert.equal(symbols.functions.length, 1);
+    assert.ok(symbols.functions[0].includes('def f'), 'name captured');
+    assert.ok(symbols.functions[0].includes('x'), 'param x captured');
+    assert.ok(symbols.functions[0].includes('y'), 'param y captured');
+  });
+
+  it('captures multi-line function signature with return type', () => {
+    const code = `def compute(
+  x: int,
+  y: int,
+) -> int:
+    return x + y`;
+    const symbols = extractPythonSymbols(code);
+    assert.equal(symbols.functions.length, 1);
+    assert.ok(symbols.functions[0].includes('compute'));
+    assert.ok(symbols.functions[0].includes('-> int'));
+  });
+
+  it('captures multi-line method signature inside a class', () => {
+    const code = `class Foo:
+    def bar(
+        self,
+        x: str
+    ) -> None:
+        pass`;
+    const symbols = extractPythonSymbols(code);
+    assert.equal(symbols.classes.length, 1);
+    assert.equal(symbols.classes[0].methods.length, 1);
+    assert.ok(symbols.classes[0].methods[0].includes('bar'));
+    assert.ok(symbols.classes[0].methods[0].includes('x: str'));
+  });
 });

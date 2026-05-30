@@ -21,7 +21,7 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { spawn, execSync, spawnSync } from 'child_process';
+import { spawn, execSync, spawnSync } from 'node:child_process';
 import {
   createOutput,
   parseCommonArgs,
@@ -31,7 +31,7 @@ import { loadConfig, CONFIG_FILENAME } from '../src/config.mjs';
 import { withCache } from '../src/cache.mjs';
 import { ensureRipgrep } from '../src/traverse.mjs';
 
-try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); }
+if (!process.argv.slice(2).some(a => a === '-h' || a === '--help')) { try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); } }
 
 const HELP = `
 tl-search - Run pre-defined search patterns

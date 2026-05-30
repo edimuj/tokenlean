@@ -66,11 +66,11 @@ function ghGraphQL(query, variables = {}) {
 
 function getIssueNodeId(repo, number) {
   const [owner, name] = repo.split('/');
-  const result = ghGraphQL(`{
-    repository(owner: "${owner}", name: "${name}") {
-      issue(number: ${number}) { id }
+  const result = ghGraphQL(`query($owner: String!, $name: String!, $number: Int!) {
+    repository(owner: $owner, name: $name) {
+      issue(number: $number) { id }
     }
-  }`);
+  }`, { owner, name, number: parseInt(number, 10) });
   const issueId = result?.data?.repository?.issue?.id;
   if (!issueId) {
     throw new Error(`Issue not found: ${repo}#${number}`);
@@ -171,11 +171,11 @@ async function withRetryAsync(fn, { retries = 2, backoff = 1000 } = {}) {
 
 async function getIssueNodeIdAsync(repo, number) {
   const [owner, name] = repo.split('/');
-  const result = await ghGraphQLAsync(`{
-    repository(owner: "${owner}", name: "${name}") {
-      issue(number: ${number}) { id }
+  const result = await ghGraphQLAsync(`query($owner: String!, $name: String!, $number: Int!) {
+    repository(owner: $owner, name: $name) {
+      issue(number: $number) { id }
     }
-  }`);
+  }`, { owner, name, number: parseInt(number, 10) });
   const issueId = result?.data?.repository?.issue?.id;
   if (!issueId) throw new Error(`Issue not found: ${repo}#${number}`);
   return issueId;
@@ -367,6 +367,7 @@ async function closeIssuesBatchViaGraphQL(repo, issueNums, reason, comment) {
         results.push({ number: num, status: 'failed', error: `Issue not found: ${repo}#${num}` });
         continue;
       }
+
       if (chunkError) {
         results.push({ number: num, status: 'failed', error: chunkError });
         continue;
@@ -396,6 +397,10 @@ async function closeIssuesBatchViaGraphQL(repo, issueNums, reason, comment) {
 }
 
 function readStdinJSON(inputArg) {
+  if (!inputArg && process.stdin.isTTY) {
+    console.error('Error: No input provided. Pipe JSON/JSONL on stdin or use --input <file>');
+    process.exit(2);
+  }
   const raw = (inputArg || readFileSync('/dev/stdin', 'utf-8')).trim();
   if (!raw) {
     console.error('Error: No input on stdin or --input');
@@ -448,9 +453,9 @@ async function issueView(args) {
   const [owner, name] = repo.split('/');
   let result;
   try {
-    result = ghGraphQL(`{
-      repository(owner: "${owner}", name: "${name}") {
-        issue(number: ${issueNum}) {
+    result = ghGraphQL(`query($owner: String!, $name: String!, $number: Int!) {
+      repository(owner: $owner, name: $name) {
+        issue(number: $number) {
           number title state body url createdAt closedAt
           author { login }
           assignees(first: 5) { nodes { login } }
@@ -467,9 +472,14 @@ async function issueView(args) {
           }
         }
       }
-    }`);
-  } catch {
-    console.error(`Error: Issue not found: ${repo}#${issueNum}`);
+    }`, { owner, name, number: parseInt(issueNum, 10) });
+  } catch (e) {
+    const msg = e.message || '';
+    if (/auth|not logged in|gh auth login/i.test(msg)) {
+      console.error('Error: Not authenticated — run gh auth login');
+    } else {
+      console.error(`Error: Issue not found: ${repo}#${issueNum}`);
+    }
     process.exit(1);
   }
 
@@ -654,9 +664,16 @@ async function issueAddSub(args) {
     process.exit(1);
   }
 
+  let childIds;
+  try {
+    childIds = await getIssueIdsBatch(repo, childNums);
+  } catch (e) {
+    childIds = new Map();
+  }
+
   const results = await parallelMap(childNums, async (childNum) => {
     try {
-      const childId = await getIssueNodeIdAsync(repo, childNum);
+      const childId = childIds.get(childNum) || await getIssueNodeIdAsync(repo, childNum);
       await withRetryAsync(() => ghGraphQLAsync(`mutation($parentId: ID!, $childId: ID!) {
         addSubIssue(input: {issueId: $parentId, subIssueId: $childId}) {
           issue { id }
@@ -923,15 +940,15 @@ async function prDigest(args) {
     let gqlThreads;
     let resolvedCount = 0;
     try {
-      const threadData = ghGraphQL(`{
-        repository(owner: "${gqlOwner}", name: "${gqlName}") {
-          pullRequest(number: ${prNum}) {
+      const threadData = ghGraphQL(`query($owner: String!, $name: String!, $number: Int!) {
+        repository(owner: $owner, name: $name) {
+          pullRequest(number: $number) {
             reviewThreads(first: 100) {
               nodes { isResolved path line }
             }
           }
         }
-      }`);
+      }`, { owner: gqlOwner, name: gqlName, number: parseInt(prNum, 10) });
       gqlThreads = threadData.data.repository.pullRequest.reviewThreads.nodes || [];
       resolvedCount = gqlThreads.filter(t => t.isResolved).length;
     } catch { /* fall back to count only */ }
@@ -997,9 +1014,9 @@ async function prComments(args) {
   const [owner, name] = repo.split('/');
 
   // Get review threads via GraphQL (includes resolution status)
-  const result = ghGraphQL(`{
-    repository(owner: "${owner}", name: "${name}") {
-      pullRequest(number: ${prNum}) {
+  const result = ghGraphQL(`query($owner: String!, $name: String!, $number: Int!) {
+    repository(owner: $owner, name: $name) {
+      pullRequest(number: $number) {
         title
         reviewThreads(first: 100) {
           nodes {
@@ -1018,7 +1035,7 @@ async function prComments(args) {
         }
       }
     }
-  }`);
+  }`, { owner, name, number: parseInt(prNum, 10) });
 
   const pr = result.data.repository.pullRequest;
   let threads = pr.reviewThreads.nodes;
@@ -1319,6 +1336,9 @@ async function releaseNotes(args) {
 
   // Get commits since last tag
   let commits = [];
+  // oldestFirstCommits: true when commits[] is ordered oldest-first (compare path),
+  // false when newest-first (fallback /commits path).
+  let oldestFirstCommits = false;
   if (prevTag) {
     try {
       const compare = gh(['api', `repos/${owner}/${name}/compare/${prevTag}...HEAD`], { json: true });
@@ -1328,10 +1348,11 @@ async function releaseNotes(args) {
         message: c.commit.message.split('\n')[0],
         author: c.author?.login || c.commit.author?.name || 'unknown'
       }));
+      oldestFirstCommits = true; // compare API returns oldest-first
     } catch { /* comparison failed */ }
   }
   if (!commits.length) {
-    // Fallback: recent commits from default branch
+    // Fallback: recent commits from default branch (newest-first)
     try {
       const recent = gh(['api', `repos/${owner}/${name}/commits?per_page=30`], { json: true });
       commits = recent.map(c => ({
@@ -1340,6 +1361,7 @@ async function releaseNotes(args) {
         message: c.commit.message.split('\n')[0],
         author: c.author?.login || c.commit.author?.name || 'unknown'
       }));
+      oldestFirstCommits = false; // /commits returns newest-first
     } catch { /* no commits */ }
   }
 
@@ -1350,8 +1372,11 @@ async function releaseNotes(args) {
       'number,title,author,labels,mergedAt'], { json: true });
 
     if (prevTag && commits.length) {
-      // Use the oldest commit's date as cutoff — anything merged after that belongs to this release
-      const oldestCommitSha = commits[0].fullSha || commits[0].sha;
+      // Use the oldest commit's date as cutoff — anything merged after that belongs to this release.
+      // Pick the oldest element: last if oldest-first (compare path), last if newest-first (fallback).
+      // Compare path → oldest is commits[0]; fallback path → oldest is commits[commits.length - 1].
+      const oldestCommit = oldestFirstCommits ? commits[0] : commits[commits.length - 1];
+      const oldestCommitSha = oldestCommit.fullSha || oldestCommit.sha;
       try {
         const commitData = gh(['api', `repos/${owner}/${name}/commits/${oldestCommitSha}`], { json: true });
         const cutoff = new Date(commitData.commit.committer?.date || commitData.commit.author?.date);
@@ -1461,9 +1486,22 @@ async function projectAddBatch(args) {
 
   const projectId = await resolveProjectIdAsync(project.owner, project.number);
 
+  let batchIds;
+  try {
+    batchIds = await getIssueIdsBatch(repo, issueNums);
+  } catch (e) {
+    batchIds = new Map();
+  }
+
   const results = await parallelMap(issueNums, async (num) => {
     try {
-      await withRetryAsync(() => addIssueToProjectAsync(projectId, repo, num), { retries: 3, backoff: 2000 });
+      const contentId = batchIds.get(num) || await getIssueNodeIdAsync(repo, num);
+      if (!contentId) throw new Error(`Issue not found: ${repo}#${num}`);
+      await withRetryAsync(() => ghGraphQLAsync(`mutation($projectId: ID!, $contentId: ID!) {
+        addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
+          item { id }
+        }
+      }`, { projectId, contentId }), { retries: 3, backoff: 2000 });
       return { number: num, status: 'added' };
     } catch (e) {
       return { number: num, status: 'failed', error: e.message };

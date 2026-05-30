@@ -22,8 +22,8 @@ if (process.argv.includes('--prompt')) {
 import { createOutput, parseCommonArgs, COMMON_OPTIONS_HELP, formatTable } from '../src/output.mjs';
 import { loadConfig } from '../src/config.mjs';
 import { getCached, setCached } from '../src/cache.mjs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 
 const HELP = `
 tl-context7 - Look up library documentation via Context7 API

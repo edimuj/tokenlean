@@ -13,10 +13,10 @@
  *   tl-prompt --list          # Simple name: desc list
  */
 
-import { execSync } from 'child_process';
-import { readdirSync } from 'fs';
-import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
+import { execSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

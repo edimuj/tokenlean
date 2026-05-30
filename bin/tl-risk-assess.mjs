@@ -20,10 +20,10 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { existsSync } from 'fs';
-import { spawnSync } from 'child_process';
-import { join, dirname, relative } from 'path';
-import { fileURLToPath } from 'url';
+import { existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { join, dirname, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   createOutput,
   parseCommonArgs,

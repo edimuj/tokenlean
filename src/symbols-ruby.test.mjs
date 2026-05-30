@@ -129,4 +129,35 @@ end`;
     assert.equal(symbols.classes.length, 0);
     assert.equal(symbols.functions.length, 0);
   });
+
+  it('captures multi-line def signature (top-level)', () => {
+    const code = `def foo(
+  x,
+  y
+)
+  x + y
+end`;
+    const symbols = extractRubySymbols(code);
+    assert.equal(symbols.functions.length, 1);
+    assert.ok(symbols.functions[0].includes('foo'), 'name captured');
+    assert.ok(symbols.functions[0].includes('x'), 'param x captured');
+    assert.ok(symbols.functions[0].includes('y'), 'param y captured');
+  });
+
+  it('captures multi-line def signature inside a class', () => {
+    const code = `class Calc
+  def add(
+    a,
+    b
+  )
+    a + b
+  end
+end`;
+    const symbols = extractRubySymbols(code);
+    assert.equal(symbols.classes.length, 1);
+    const method = symbols.classes[0].methods[0];
+    assert.ok(method.name.includes('add'), 'name captured');
+    assert.ok(method.name.includes('a'), 'param a captured');
+    assert.ok(method.name.includes('b'), 'param b captured');
+  });
 });

@@ -59,4 +59,36 @@ func (r *Response) String() string {
     assert.equal(symbols.types.length, 0);
     assert.equal(symbols.functions.length, 0);
   });
+
+  it('extracts func-typed type declarations', () => {
+    const code = 'type Handler func(w http.ResponseWriter, r *http.Request)';
+    const symbols = extractGoSymbols(code);
+    assert.equal(symbols.types.length, 1);
+    assert.equal(symbols.types[0], 'type Handler func(w http.ResponseWriter, r *http.Request)');
+  });
+
+  it('extracts type aliases', () => {
+    const code = 'type MyInt = int';
+    const symbols = extractGoSymbols(code);
+    assert.equal(symbols.types.length, 1);
+    assert.equal(symbols.types[0], 'type MyInt = int');
+  });
+
+  it('extracts map types', () => {
+    const code = 'type StringMap map[string]string';
+    const symbols = extractGoSymbols(code);
+    assert.equal(symbols.types.length, 1);
+    assert.equal(symbols.types[0], 'type StringMap map[string]string');
+  });
+
+  it('extracts all extended type forms together', () => {
+    const code = `type Config struct {
+\tHost string
+}
+type Handler func(w http.ResponseWriter)
+type MyInt = int
+type StringMap map[string]string`;
+    const symbols = extractGoSymbols(code);
+    assert.equal(symbols.types.length, 4);
+  });
 });

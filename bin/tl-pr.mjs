@@ -20,9 +20,9 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { execSync, spawnSync } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
-import { basename, extname } from 'path';
+import { execSync, spawnSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { basename, extname } from 'node:path';
 import {
   createOutput,
   parseCommonArgs,

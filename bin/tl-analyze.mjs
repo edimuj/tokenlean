@@ -20,10 +20,13 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { spawnSync } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
-import { basename, dirname, extname, join, relative, resolve } from 'path';
-import { fileURLToPath } from 'url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { existsSync, readFileSync } from 'node:fs';
+
+const execFileAsync = promisify(execFile);
+import { basename, dirname, extname, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   createOutput,
   parseCommonArgs,
@@ -64,17 +67,15 @@ Examples:
 // Sub-tool Runner
 // ─────────────────────────────────────────────────────────────
 
-function runSubTool(toolName, filePath) {
+async function runSubToolAsync(toolName, filePath) {
   try {
     const toolPath = join(__dirname, `tl-${toolName}.mjs`);
-    const proc = spawnSync(process.execPath, [toolPath, filePath, '--json'], {
+    const { stdout } = await execFileAsync(process.execPath, [toolPath, filePath, '--json'], {
       encoding: 'utf-8',
       maxBuffer: 5 * 1024 * 1024,
-      timeout: 15000,
-      stdio: ['pipe', 'pipe', 'pipe']
+      timeout: 15000
     });
-    if (proc.error || proc.status !== 0) return null;
-    return JSON.parse(proc.stdout);
+    return JSON.parse(stdout);
   } catch {
     return null;
   }
@@ -340,12 +341,15 @@ const content = readFileSync(resolvedPath, 'utf-8');
 const tokens = estimateTokens(content);
 const out = createOutput(options);
 
-// Run sub-tools and extract highlights
-const symbolsData = !skipSymbols ? runSubTool('symbols', filePath) : null;
-const depsData = !skipDeps ? runSubTool('deps', filePath) : null;
-const impactData = !skipImpact ? runSubTool('impact', filePath) : null;
-const complexityData = !skipComplexity ? runSubTool('complexity', filePath) : null;
-const relatedData = !skipRelated ? runSubTool('related', filePath) : null;
+// Run sub-tools concurrently and extract highlights.
+// Promise.all preserves index order so destructuring is deterministic.
+const [symbolsData, depsData, impactData, complexityData, relatedData] = await Promise.all([
+  !skipSymbols   ? runSubToolAsync('symbols',    filePath) : null,
+  !skipDeps      ? runSubToolAsync('deps',       filePath) : null,
+  !skipImpact    ? runSubToolAsync('impact',     filePath) : null,
+  !skipComplexity ? runSubToolAsync('complexity', filePath) : null,
+  !skipRelated   ? runSubToolAsync('related',    filePath) : null,
+]);
 
 const symbols = extractSymbols(symbolsData, full);
 const deps = extractDeps(depsData, full);

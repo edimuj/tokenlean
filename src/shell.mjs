@@ -5,7 +5,7 @@
  * shell-injection risks entirely.
  */
 
-import { spawnSync } from 'child_process';
+import { spawnSync } from 'node:child_process';
 
 /**
  * Run a git command safely with array args (no shell interpolation).

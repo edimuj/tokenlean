@@ -4,6 +4,94 @@
  * Pure function: content string → symbols object.
  */
 
+/**
+ * Count net paren depth contributed by a Ruby source line, ignoring parens
+ * inside string literals and comments.
+ */
+function rubyLineParenDelta(text) {
+  let delta = 0;
+  let i = 0;
+
+  while (i < text.length) {
+    const ch = text[i];
+
+    // Line comment
+    if (ch === '#') break;
+
+    // Heredoc detection is complex — skip for now (rare in signatures)
+
+    // Double-quoted string
+    if (ch === '"') {
+      i++;
+      while (i < text.length && text[i] !== '"') {
+        if (text[i] === '\\') i++;
+        i++;
+      }
+      i++;
+      continue;
+    }
+
+    // Single-quoted string
+    if (ch === "'") {
+      i++;
+      while (i < text.length && text[i] !== "'") {
+        if (text[i] === '\\') i++;
+        i++;
+      }
+      i++;
+      continue;
+    }
+
+    if (ch === '(') delta++;
+    else if (ch === ')') delta--;
+    i++;
+  }
+
+  return delta;
+}
+
+/**
+ * Join multi-line Ruby def signatures into single lines.
+ * E.g. `def foo(\n  x,\n  y\n)` becomes `def foo( x, y )`.
+ */
+function joinRubyMultiLineSignatures(lines) {
+  const result = [];
+  let accumulator = null;
+  let parenDepth = 0;
+  const MAX_ACCUM = 15;
+  let accumLines = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (accumulator === null) {
+      // Only start joining on def / def self. lines
+      if (!trimmed.startsWith('def ')) {
+        result.push(line);
+        continue;
+      }
+      accumulator = line;
+      parenDepth = rubyLineParenDelta(trimmed);
+      accumLines = 1;
+    } else {
+      accumulator += ' ' + trimmed;
+      parenDepth += rubyLineParenDelta(trimmed);
+      accumLines++;
+    }
+
+    // Flush when parens are balanced (or no parens were opened at all)
+    if (parenDepth <= 0 || accumLines >= MAX_ACCUM) {
+      result.push(accumulator);
+      accumulator = null;
+      parenDepth = 0;
+      accumLines = 0;
+    }
+  }
+
+  if (accumulator !== null) result.push(accumulator);
+  return result;
+}
+
 function isRubyBlockOpener(trimmed) {
   // Block openers that require a matching 'end'
   // Skip if it's a one-liner (has end on same line)
@@ -26,7 +114,7 @@ export function extractRubySymbols(content) {
     constants: []
   };
 
-  const lines = content.split('\n');
+  const lines = joinRubyMultiLineSignatures(content.split('\n'));
 
   // Scope stack: each entry = { kind: 'class'|'module'|'def'|'block', name, ... }
   const scopeStack = [];
@@ -85,7 +173,7 @@ export function extractRubySymbols(content) {
     // def self.method (class method)
     const classMethodMatch = trimmed.match(/^def\s+self\.(\w+[?!=]?)(?:\s*\(([^)]*)\))?/);
     if (classMethodMatch) {
-      const params = classMethodMatch[2] || '';
+      const params = (classMethodMatch[2] || '').replace(/\s{2,}/g, ' ').trim();
       const methodName = params ? `self.${classMethodMatch[1]}(${params})` : 'self.' + classMethodMatch[1];
       if (currentClass) {
         const vis = currentClass.visibility;
@@ -104,7 +192,7 @@ export function extractRubySymbols(content) {
     const defMatch = trimmed.match(/^def\s+(\w+[?!=]?)(?:\s*\(([^)]*)\))?/);
     if (defMatch) {
       const methodName = defMatch[1];
-      const params = defMatch[2] || '';
+      const params = (defMatch[2] || '').replace(/\s{2,}/g, ' ').trim();
       if (currentClass) {
         const vis = currentClass.visibility;
         const sig = params ? `${methodName}(${params})` : methodName;

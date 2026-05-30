@@ -6,13 +6,13 @@
  * definition ranges for tl-snippet.
  */
 
-import { createHash } from 'crypto';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs';
-import { dirname, extname, join, resolve, relative } from 'path';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, extname, join, relative } from 'node:path';
 import ts from 'typescript';
 import { getCacheConfig, getCacheDir } from './cache.mjs';
-import { findProjectRoot } from './project.mjs';
 import { listFiles } from './traverse.mjs';
+import { normalisePath, getScriptKind, getLineNumber, getProjectRootForPath } from './semantic-js-util.mjs';
 
 const CACHE_NAMESPACE = 'semantic-js-v1';
 const PARSER_VERSION = `typescript-${ts.version}`;
@@ -22,42 +22,9 @@ function hash(value) {
   return createHash('sha256').update(value).digest('hex').slice(0, 16);
 }
 
-function normalisePath(filePath) {
-  return resolve(filePath);
-}
-
-function getProjectRootForPath(filePath, projectRoot) {
-  if (projectRoot) return projectRoot;
-  const absPath = normalisePath(filePath);
-  try {
-    const stat = statSync(absPath);
-    return findProjectRoot(stat.isDirectory() ? absPath : dirname(absPath));
-  } catch {
-    return findProjectRoot(dirname(absPath));
-  }
-}
-
 function getLanguage(filePath) {
   const ext = extname(filePath).toLowerCase();
   return ['.ts', '.tsx', '.mts', '.cts'].includes(ext) ? 'ts' : 'js';
-}
-
-function getScriptKind(filePath) {
-  switch (extname(filePath).toLowerCase()) {
-    case '.js': return ts.ScriptKind.JS;
-    case '.jsx': return ts.ScriptKind.JSX;
-    case '.mjs': return ts.ScriptKind.JS;
-    case '.cjs': return ts.ScriptKind.JS;
-    case '.ts': return ts.ScriptKind.TS;
-    case '.tsx': return ts.ScriptKind.TSX;
-    case '.mts': return ts.ScriptKind.TS;
-    case '.cts': return ts.ScriptKind.TS;
-    default: return ts.ScriptKind.Unknown;
-  }
-}
-
-function getLineNumber(sourceFile, pos) {
-  return ts.getLineAndCharacterOfPosition(sourceFile, pos).line + 1;
 }
 
 function trimSignature(text) {

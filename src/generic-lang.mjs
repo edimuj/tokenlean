@@ -86,6 +86,15 @@ const TYPE_KW = '(?:type|typedef|using|newtype|typealias)';
 const CONST_KW = '(?:const|static|val|let)';
 const MOD_KW = '(?:mod|module|namespace|package)';
 
+// Pre-compiled RegExps — built once at module load, reused per line
+const IMPL_RE   = new RegExp(`^${VISIBILITY}impl(?:<[^{]*?>)?\\s+(.+?)\\s*\\{?$`);
+const CLASS_RE  = new RegExp(`^${VISIBILITY}${MODIFIERS}${CLASS_KW}\\s+(\\w+)`);
+const FUNC_RE   = new RegExp(`^${VISIBILITY}${MODIFIERS}${FUNC_KW}\\s+(\\w+)`);
+const METHOD_RE = new RegExp(`^${VISIBILITY}${MODIFIERS}(\\w+)\\s*\\(`);
+const TYPE_RE   = new RegExp(`^${VISIBILITY}${TYPE_KW}\\s+(\\w+)`);
+const CONST_RE  = new RegExp(`^${VISIBILITY}${CONST_KW}\\s+(\\w+)`);
+const MOD_RE    = new RegExp(`^${VISIBILITY}${MOD_KW}\\s+(\\w+)`);
+
 /**
  * Extract symbols generically from source code.
  *
@@ -131,7 +140,7 @@ export function extractGenericSymbols(content) {
     }
 
     // Impl blocks: impl Foo / impl Trait for Foo
-    const implMatch = trimmed.match(new RegExp(`^${VISIBILITY}impl(?:<[^{]*?>)?\\s+(.+?)\\s*\\{?$`));
+    const implMatch = trimmed.match(IMPL_RE);
     if (implMatch && !inBlock) {
       const sig = sigLine(rawLines[i]);
       inBlock = { signature: sig, methods: [], fields: [], kind: 'impl', depth: braceDepth > prevDepth ? prevDepth : braceDepth };
@@ -139,8 +148,7 @@ export function extractGenericSymbols(content) {
     }
 
     // Class/struct/interface/trait/enum/union
-    const classRe = new RegExp(`^${VISIBILITY}${MODIFIERS}${CLASS_KW}\\s+(\\w+)`);
-    const classMatch = trimmed.match(classRe);
+    const classMatch = trimmed.match(CLASS_RE);
     if (classMatch && !inBlock) {
       const sig = sigLine(rawLines[i]);
       const kindMatch = trimmed.match(/\b(class|struct|interface|trait|enum|protocol|record|union)\b/);
@@ -155,8 +163,7 @@ export function extractGenericSymbols(content) {
     }
 
     // Functions / methods
-    const funcRe = new RegExp(`^${VISIBILITY}${MODIFIERS}${FUNC_KW}\\s+(\\w+)`);
-    const funcMatch = trimmed.match(funcRe);
+    const funcMatch = trimmed.match(FUNC_RE);
     if (funcMatch) {
       const sig = sigLine(rawLines[i]);
       if (inBlock && braceDepth > inBlock.depth) {
@@ -191,8 +198,7 @@ export function extractGenericSymbols(content) {
       }
 
       // Check for method-like patterns that weren't caught above
-      const methodRe = new RegExp(`^${VISIBILITY}${MODIFIERS}(\\w+)\\s*\\(`);
-      const methodMatch = trimmed.match(methodRe);
+      const methodMatch = trimmed.match(METHOD_RE);
       if (methodMatch) {
         const name = methodMatch[1];
         // Skip control flow keywords
@@ -205,16 +211,14 @@ export function extractGenericSymbols(content) {
     }
 
     // Type aliases
-    const typeRe = new RegExp(`^${VISIBILITY}${TYPE_KW}\\s+(\\w+)`);
-    if (trimmed.match(typeRe)) {
+    if (trimmed.match(TYPE_RE)) {
       symbols.types.push(sigLine(rawLines[i]));
       continue;
     }
 
     // Constants / statics (module-level only)
     if (braceDepth === 0 || (inBlock && braceDepth === inBlock.depth)) {
-      const constRe = new RegExp(`^${VISIBILITY}${CONST_KW}\\s+(\\w+)`);
-      const constMatch = trimmed.match(constRe);
+      const constMatch = trimmed.match(CONST_RE);
       if (constMatch) {
         // Skip if it looks like a local variable inside a function
         if (braceDepth === 0) {
@@ -225,8 +229,7 @@ export function extractGenericSymbols(content) {
     }
 
     // Modules / namespaces
-    const modRe = new RegExp(`^${VISIBILITY}${MOD_KW}\\s+(\\w+)`);
-    if (trimmed.match(modRe) && prevDepth === 0) {
+    if (trimmed.match(MOD_RE) && prevDepth === 0) {
       symbols.modules.push(sigLine(rawLines[i]));
       continue;
     }

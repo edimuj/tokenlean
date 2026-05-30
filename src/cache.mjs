@@ -22,10 +22,10 @@
  *   }
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, unlinkSync, rmSync } from 'fs';
-import { join, dirname } from 'path';
-import { homedir } from 'os';
-import { createHash } from 'crypto';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, unlinkSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { createHash } from 'node:crypto';
 import { loadConfig } from './config.mjs';
 import { gitCommand } from './shell.mjs';
 
@@ -109,6 +109,53 @@ function getCacheKeyHash(key) {
 // Git State Detection
 // ─────────────────────────────────────────────────────────────
 
+// In-process memo: keyed by resolved cwd.
+// Each entry is { headSnapshot: string, state: object|null }
+// headSnapshot is the resolved HEAD commit SHA read directly from git internals
+// (cheap file reads, no spawn). If the snapshot changes between calls, the state
+// is recomputed. This lets us avoid git spawns on every call in the common case
+// while still detecting commits made mid-process (e.g. in test suites).
+const _gitStateMemo = new Map();
+
+/**
+ * Resolve the HEAD commit SHA by reading git's internal files directly.
+ * Returns null if not a git repo or cannot determine HEAD.
+ * Cost: 1–2 synchronous file reads (no git spawn).
+ */
+function readHeadSnapshot(dir) {
+  // Find git dir by walking up (simplified: check .git in given dir only,
+  // which matches how gitCommand is called with cwd=projectRoot)
+  const gitDir = join(dir, '.git');
+  if (!existsSync(gitDir)) return null;
+
+  try {
+    const headContent = readFileSync(join(gitDir, 'HEAD'), 'utf8').trim();
+    if (headContent.startsWith('ref: ')) {
+      // Symbolic ref — follow to the actual ref file
+      const refPath = headContent.slice(5); // e.g. "refs/heads/main"
+      const refFile = join(gitDir, refPath);
+      if (existsSync(refFile)) {
+        return readFileSync(refFile, 'utf8').trim();
+      }
+      // Try packed-refs fallback
+      const packedRefs = join(gitDir, 'packed-refs');
+      if (existsSync(packedRefs)) {
+        const packed = readFileSync(packedRefs, 'utf8');
+        for (const line of packed.split('\n')) {
+          if (line.endsWith(` ${refPath}`)) {
+            return line.slice(0, 40);
+          }
+        }
+      }
+      return null;
+    }
+    // Detached HEAD — content is the SHA directly
+    return headContent.length >= 40 ? headContent : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Check if directory is a git repository
  */
@@ -118,17 +165,40 @@ function isGitRepo(dir) {
 
 /**
  * Get current git state (HEAD commit + dirty files)
- * Returns null if not in a git repo
+ * Returns null if not in a git repo.
+ * Memoized per cwd using a cheap HEAD-file snapshot as a staleness key —
+ * avoids all git spawns on hits, recomputes only when HEAD actually changes.
  */
 export function getGitState(projectRoot) {
-  if (!isGitRepo(projectRoot)) {
-    return null;
+  const headSnapshot = readHeadSnapshot(projectRoot);
+
+  // Not a git repo (no .git dir resolvable via file reads)
+  if (headSnapshot === null) {
+    // Still verify via git spawn in case we're in a worktree / nested repo
+    const entry = _gitStateMemo.get(projectRoot);
+    if (entry && entry.headSnapshot === null) return null;
+
+    if (!isGitRepo(projectRoot)) {
+      _gitStateMemo.set(projectRoot, { headSnapshot: null, state: null });
+      return null;
+    }
+    // Is a git repo but we couldn't read HEAD files — fall through to full compute
   }
 
+  // Check memo: if snapshot matches, return cached state
+  const entry = _gitStateMemo.get(projectRoot);
+  if (entry && entry.headSnapshot === headSnapshot) {
+    return entry.state;
+  }
+
+  // Snapshot changed or cold start — recompute via git spawns
   try {
-    // Get HEAD commit
-    const head = gitCommand(['rev-parse', 'HEAD'], { cwd: projectRoot });
-    if (!head) return null;
+    // If readHeadSnapshot succeeded we already have the HEAD commit
+    const head = headSnapshot ?? gitCommand(['rev-parse', 'HEAD'], { cwd: projectRoot });
+    if (!head) {
+      _gitStateMemo.set(projectRoot, { headSnapshot, state: null });
+      return null;
+    }
 
     // Get list of modified/untracked files (sorted for consistency)
     const status = gitCommand(['status', '--porcelain'], { cwd: projectRoot }) || '';
@@ -139,11 +209,11 @@ export function getGitState(projectRoot) {
       .map(line => line.slice(3)) // Remove status prefix
       .sort();
 
-    return {
-      head,
-      dirtyFiles
-    };
+    const state = { head, dirtyFiles };
+    _gitStateMemo.set(projectRoot, { headSnapshot, state });
+    return state;
   } catch {
+    _gitStateMemo.set(projectRoot, { headSnapshot, state: null });
     return null;
   }
 }
@@ -195,8 +265,13 @@ function getCacheFilePath(key, projectRoot) {
 // Cache Size Management
 // ─────────────────────────────────────────────────────────────
 
+// In-process size index: cacheDir → total bytes written in this process.
+// Acts as a fast "is the cache definitely under the limit?" gate.
+// On a miss (cold start) we fall back to a full stat sweep to populate it.
+const _cacheSizeIndex = new Map();
+
 /**
- * Get total size of cache directory in bytes
+ * Get total size of cache directory in bytes, populating the size index.
  */
 function getCacheDirSize(cacheDir) {
   if (!existsSync(cacheDir)) return 0;
@@ -243,16 +318,35 @@ function getCacheEntries(cacheDir) {
 }
 
 /**
- * Remove oldest cache entries until under maxSize
+ * Remove oldest cache entries until under maxSize.
+ * Uses an in-process size counter to skip the full stat sweep when the cache
+ * is comfortably under the limit — making the common case O(1) instead of O(N).
  */
-function enforceMaxSize(projectRoot) {
+function enforceMaxSize(projectRoot, writtenBytes) {
   const config = getCacheConfig();
   const cacheDir = getCacheDir(projectRoot);
 
+  // Update the incremental counter with the bytes just written.
+  const prev = _cacheSizeIndex.get(cacheDir);
+  if (prev === undefined) {
+    // Cold start: seed from disk so the counter is accurate.
+    _cacheSizeIndex.set(cacheDir, getCacheDirSize(cacheDir));
+  } else {
+    _cacheSizeIndex.set(cacheDir, prev + writtenBytes);
+  }
+
+  // Fast path: counter says we're under the limit — skip the full sweep.
+  if (_cacheSizeIndex.get(cacheDir) <= config.maxSize) return;
+
+  // Slow path: do a precise stat sweep and evict oldest entries.
   const entries = getCacheEntries(cacheDir);
   let totalSize = entries.reduce((sum, e) => sum + e.size, 0);
 
-  if (totalSize <= config.maxSize) return;
+  if (totalSize <= config.maxSize) {
+    // Counter was stale (e.g. another process deleted files); resync and bail.
+    _cacheSizeIndex.set(cacheDir, totalSize);
+    return;
+  }
 
   // Sort by modification time (oldest first)
   entries.sort((a, b) => a.mtime - b.mtime);
@@ -266,6 +360,9 @@ function enforceMaxSize(projectRoot) {
       totalSize -= entry.size;
     } catch { /* skip if can't delete */ }
   }
+
+  // Resync counter after eviction
+  _cacheSizeIndex.set(cacheDir, totalSize);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -332,10 +429,11 @@ export function setCached(key, data, projectRoot) {
   try {
     mkdirSync(dirname(filePath), { recursive: true, mode: 0o700 });
 
-    writeFileSync(filePath, JSON.stringify(cacheEntry));
+    const serialized = JSON.stringify(cacheEntry);
+    writeFileSync(filePath, serialized);
 
-    // Enforce size limit
-    enforceMaxSize(projectRoot);
+    // Enforce size limit — pass the bytes just written for O(1) common path
+    enforceMaxSize(projectRoot, Buffer.byteLength(serialized));
   } catch {
     // Silently fail - caching is best-effort
   }
@@ -389,6 +487,9 @@ export function clearCache(projectRoot = null) {
         rmSync(cacheDir, { recursive: true });
       } catch { /* ignore errors */ }
     }
+    // Evict in-process git state memo so callers see fresh state
+    _gitStateMemo.delete(projectRoot);
+    _cacheSizeIndex.delete(projectRoot);
   } else {
     // Clear all caches
     if (existsSync(config.location)) {
@@ -396,6 +497,8 @@ export function clearCache(projectRoot = null) {
         rmSync(config.location, { recursive: true });
       } catch { /* ignore errors */ }
     }
+    _gitStateMemo.clear();
+    _cacheSizeIndex.clear();
   }
 }
 

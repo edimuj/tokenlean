@@ -21,10 +21,10 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { spawnSync } from 'child_process';
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { join } from 'path';
-import { createHash } from 'crypto';
+import { spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import {
   createOutput,
   parseCommonArgs,

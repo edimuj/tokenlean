@@ -4,9 +4,98 @@
  * Pure functions: content string → symbols object.
  */
 
+// Hoisted static regexes used in extractJsSymbols per-line loop (issue #4)
+const OPEN_BRACES_RE = /\{/g;
+const CLOSE_BRACES_RE = /\}/g;
+
+/**
+ * Count net paren depth contributed by a source line, ignoring parens that
+ * appear inside string literals, template literals, regex literals, or
+ * line comments. Also counts angle brackets for generics.
+ *
+ * Returns { parenDelta, angleDelta }.
+ */
+function lineParenDelta(text) {
+  let parenDelta = 0;
+  let angleDelta = 0;
+  let i = 0;
+
+  while (i < text.length) {
+    const ch = text[i];
+
+    // Line comment — rest of line is ignored
+    if (ch === '/' && text[i + 1] === '/') break;
+
+    // Single-quoted string
+    if (ch === "'") {
+      i++;
+      while (i < text.length && text[i] !== "'") {
+        if (text[i] === '\\') i++; // skip escape
+        i++;
+      }
+      i++;
+      continue;
+    }
+
+    // Double-quoted string
+    if (ch === '"') {
+      i++;
+      while (i < text.length && text[i] !== '"') {
+        if (text[i] === '\\') i++;
+        i++;
+      }
+      i++;
+      continue;
+    }
+
+    // Template literal (simple single-level; good enough for signature lines)
+    if (ch === '`') {
+      i++;
+      while (i < text.length && text[i] !== '`') {
+        if (text[i] === '\\') i++;
+        i++;
+      }
+      i++;
+      continue;
+    }
+
+    // Regex literal: only treat `/` as regex start when it can't be division.
+    // Heuristic: preceded (ignoring whitespace) by an operator-like character.
+    if (ch === '/' && text[i + 1] !== '/' && text[i + 1] !== '*') {
+      // Look back to decide if this is a regex
+      let j = i - 1;
+      while (j >= 0 && (text[j] === ' ' || text[j] === '\t')) j--;
+      const prev = j >= 0 ? text[j] : '';
+      const isRegex = prev === '' || '=([{!&|?:,;~^%<>'.includes(prev);
+      if (isRegex) {
+        i++;
+        while (i < text.length && text[i] !== '/') {
+          if (text[i] === '\\') i++; // skip escape
+          i++;
+        }
+        i++; // skip closing /
+        // skip flags
+        while (i < text.length && /[gimsuy]/.test(text[i])) i++;
+        continue;
+      }
+    }
+
+    if (ch === '(') parenDelta++;
+    else if (ch === ')') parenDelta--;
+    else if (ch === '<') angleDelta++;
+    else if (ch === '>') angleDelta--;
+
+    i++;
+  }
+
+  return { parenDelta, angleDelta };
+}
+
 /**
  * Join multi-line signatures into single logical lines.
  * When a line has unbalanced parens, accumulate subsequent lines until balanced.
+ * Paren counting ignores parens inside strings, template literals, regex
+ * literals, and line comments.
  */
 export function joinMultiLineSignatures(lines) {
   const result = [];
@@ -34,14 +123,11 @@ export function joinMultiLineSignatures(lines) {
       accumLines = 1;
     }
 
-    // Count parens and angle brackets (for generics) in this line
-    for (let i = 0; i < trimmed.length; i++) {
-      const ch = trimmed[i];
-      if (ch === '(') parenDepth++;
-      else if (ch === ')') parenDepth--;
-      else if (ch === '<') angleDepth++;
-      else if (ch === '>') angleDepth--;
-    }
+    // Count parens and angle brackets (for generics) in this line,
+    // ignoring characters inside string/regex/template/comment contexts.
+    const { parenDelta, angleDelta } = lineParenDelta(trimmed);
+    parenDepth += parenDelta;
+    angleDepth += angleDelta;
 
     // Flush when both parens and generic angle brackets are balanced,
     // or when we've accumulated too many lines.
@@ -171,9 +257,9 @@ export function extractJsSymbols(content, exportsOnly = false) {
       continue;
     }
 
-    // Track brace depth for scope
-    const openBraces = (line.match(/\{/g) || []).length;
-    const closeBraces = (line.match(/\}/g) || []).length;
+    // Track brace depth for scope (hoisted static regexes)
+    const openBraces = (line.match(OPEN_BRACES_RE) || []).length;
+    const closeBraces = (line.match(CLOSE_BRACES_RE) || []).length;
 
     // Check if we're exiting a container
     if (container && braceDepth === 1 && closeBraces > openBraces) {

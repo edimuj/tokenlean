@@ -41,9 +41,11 @@ export function parseCommonArgs(args) {
     const arg = args[i];
 
     if (arg === '--max-lines' || arg === '-l') {
-      options.maxLines = parseInt(args[++i], 10) || Infinity;
+      const n = parseInt(args[++i], 10);
+      options.maxLines = Number.isInteger(n) ? n : Infinity;
     } else if (arg === '--max-tokens' || arg === '-t') {
-      options.maxTokens = parseInt(args[++i], 10) || Infinity;
+      const n = parseInt(args[++i], 10);
+      options.maxTokens = Number.isInteger(n) ? n : Infinity;
     } else if (arg === '--json' || arg === '-j') {
       options.json = true;
     } else if (arg === '--quiet' || arg === '-q') {

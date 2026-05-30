@@ -20,8 +20,8 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { readFileSync, existsSync, readdirSync } from 'fs';
-import { join, resolve } from 'path';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import {
   createOutput,
   parseCommonArgs,

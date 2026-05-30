@@ -5,14 +5,14 @@
  * import/export edges that power tools such as tl-deps and tl-impact.
  */
 
-import { builtinModules } from 'module';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs';
-import { dirname, extname, join, relative, resolve, sep } from 'path';
+import { builtinModules } from 'node:module';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import ts from 'typescript';
 import { getCacheConfig, getCacheDir, getGitState, withCache } from './cache.mjs';
-import { findProjectRoot } from './project.mjs';
 import { isJsTsFile } from './semantic-js.mjs';
 import { listFiles } from './traverse.mjs';
+import { normalisePath, getScriptKind, getLineNumber, getProjectRootForPath } from './semantic-js-util.mjs';
 
 const CACHE_NAMESPACE = 'semantic-js-graph-v1';
 const GRAPH_PARSER_VERSION = `typescript-graph-${ts.version}`;
@@ -32,45 +32,12 @@ const DEFAULT_COMPILER_OPTIONS = {
 
 const compilerOptionsCache = new Map();
 
-function normalisePath(filePath) {
-  return resolve(filePath);
-}
-
 function trimText(text) {
   return text
     .replace(/\r\n/g, '\n')
     .replace(/\s*\n\s*/g, ' ')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
-}
-
-function getProjectRootForPath(targetPath, projectRoot) {
-  if (projectRoot) return projectRoot;
-  const absPath = normalisePath(targetPath);
-  try {
-    const stat = statSync(absPath);
-    return findProjectRoot(stat.isDirectory() ? absPath : dirname(absPath));
-  } catch {
-    return findProjectRoot(dirname(absPath));
-  }
-}
-
-function getLineNumber(sourceFile, pos) {
-  return ts.getLineAndCharacterOfPosition(sourceFile, pos).line + 1;
-}
-
-function getScriptKind(filePath) {
-  switch (extname(filePath).toLowerCase()) {
-    case '.js': return ts.ScriptKind.JS;
-    case '.jsx': return ts.ScriptKind.JSX;
-    case '.mjs': return ts.ScriptKind.JS;
-    case '.cjs': return ts.ScriptKind.JS;
-    case '.ts': return ts.ScriptKind.TS;
-    case '.tsx': return ts.ScriptKind.TSX;
-    case '.mts': return ts.ScriptKind.TS;
-    case '.cts': return ts.ScriptKind.TS;
-    default: return ts.ScriptKind.Unknown;
-  }
 }
 
 function getStatementText(node, sourceFile, content, maxLength = 200) {

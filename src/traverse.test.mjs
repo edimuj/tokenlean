@@ -13,6 +13,8 @@ import {
   batchRipgrep
 } from './traverse.mjs';
 
+const RG_SKIP = !isRipgrepAvailable() && 'requires ripgrep binary';
+
 // ─────────────────────────────────────────────────────────────
 // Fixture: create a temp directory with known structure
 // ─────────────────────────────────────────────────────────────
@@ -76,7 +78,7 @@ describe('isRipgrepAvailable', () => {
     assert.equal(typeof result, 'boolean');
   });
 
-  it('returns true on this system (rg is installed)', () => {
+  it('returns true on this system (rg is installed)', { skip: RG_SKIP }, () => {
     assert.equal(isRipgrepAvailable(), true);
   });
 });
@@ -221,7 +223,7 @@ describe('getDirectoryStats', () => {
 // ─────────────────────────────────────────────────────────────
 
 describe('batchRipgrep', () => {
-  it('returns results keyed by pattern', () => {
+  it('returns results keyed by pattern', { skip: RG_SKIP }, () => {
     const result = batchRipgrep(['function', 'export'], 'src/shell.mjs');
     assert.ok('function' in result);
     assert.ok('export' in result);
@@ -239,7 +241,7 @@ describe('batchRipgrep', () => {
     assert.deepEqual(Object.keys(result), []);
   });
 
-  it('includes file, line, content in matches', () => {
+  it('includes file, line, content in matches', { skip: RG_SKIP }, () => {
     const result = batchRipgrep(['gitCommand'], 'src/shell.mjs');
     const matches = result['gitCommand'];
     assert.ok(matches.length > 0);
@@ -248,7 +250,7 @@ describe('batchRipgrep', () => {
     assert.ok(matches[0].content);
   });
 
-  it('supports filesOnly mode', () => {
+  it('supports filesOnly mode', { skip: RG_SKIP }, () => {
     const result = batchRipgrep(['function'], 'src/shell.mjs', { filesOnly: true });
     const matches = result['function'];
     assert.ok(matches.length > 0);
@@ -262,13 +264,13 @@ describe('batchRipgrep', () => {
     assert.deepEqual(files, [...new Set(files)], 'no duplicate files');
   });
 
-  it('supports word boundary mode', () => {
+  it('supports word boundary mode', { skip: RG_SKIP }, () => {
     // "git" as a word boundary should match, "gi" should not
     const result = batchRipgrep(['git'], 'src/shell.mjs', { wordBoundary: true });
     assert.ok(result['git'].length > 0, 'should find "git" as whole word');
   });
 
-  it('supports glob filters', () => {
+  it('supports glob filters', { skip: RG_SKIP }, () => {
     const result = batchRipgrep(['export'], 'src/', { globs: ['*.mjs'] });
     assert.ok(result['export'].length > 0);
     for (const m of result['export']) {

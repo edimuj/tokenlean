@@ -20,8 +20,8 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { existsSync, readFileSync } from 'fs';
-import { basename, dirname, relative, resolve, extname } from 'path';
+import { existsSync, readFileSync } from 'node:fs';
+import { basename, dirname, relative, resolve, extname } from 'node:path';
 import {
   createOutput,
   parseCommonArgs,
@@ -31,7 +31,7 @@ import { findProjectRoot } from '../src/project.mjs';
 import { ensureRipgrep } from '../src/traverse.mjs';
 import { rgCommand } from '../src/shell.mjs';
 
-try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); }
+if (!process.argv.slice(2).some(a => a === '-h' || a === '--help')) { try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); } }
 
 const HELP = `
 tl-flow - Show call graph for a function

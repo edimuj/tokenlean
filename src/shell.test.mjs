@@ -1,6 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { gitCommand, rgCommand } from './shell.mjs';
+import { isRipgrepAvailable } from './traverse.mjs';
+
+const RG_SKIP = !isRipgrepAvailable() && 'requires ripgrep binary';
 
 describe('gitCommand', () => {
   it('returns stdout for valid commands', () => {
@@ -40,7 +43,7 @@ describe('gitCommand', () => {
   });
 });
 
-describe('rgCommand', () => {
+describe('rgCommand', { skip: RG_SKIP }, () => {
   it('returns stdout for matching searches', () => {
     // Search for "export" in this test file — guaranteed to match
     const result = rgCommand(['-c', 'export', 'src/shell.mjs']);

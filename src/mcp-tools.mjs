@@ -6,7 +6,7 @@
  * v2: hot-path tools move to in-process for speed.
  */
 
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,10 +47,57 @@ function textResult(text, isError = false) {
   };
 }
 
+async function runCliWithStdin(tool, args = [], stdinData = '', { timeout = 60000, maxBuffer = 50 * 1024 * 1024, cwd } = {}) {
+  const toolPath = join(binDir, `tl-${tool}.mjs`);
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [toolPath, ...args], {
+      timeout,
+      cwd: cwd || process.cwd(),
+      env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let truncated = false;
+
+    child.stdout.on('data', chunk => {
+      if (stdout.length < maxBuffer) {
+        stdout += chunk;
+      } else {
+        truncated = true;
+      }
+    });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+
+    child.stdin.write(stdinData, 'utf-8');
+    child.stdin.end();
+
+    child.on('close', (code, signal) => {
+      resolve({
+        stdout: (truncated ? stdout.slice(0, maxBuffer) : stdout).trim(),
+        stderr: stderr.trim(),
+        ok: code === 0 && !signal,
+      });
+    });
+
+    child.on('error', (err) => {
+      resolve({ stdout: '', stderr: err.message, ok: false });
+    });
+  });
+}
+
 async function dispatchTool(tool, args, opts) {
   const { stdout, stderr, ok } = await runCli(tool, args, opts);
   if (!ok && !stdout) return textResult(stderr || 'Tool failed with no output', true);
   // Return stdout; append stderr as note if present and tool succeeded
+  const text = ok && stderr ? `${stdout}\n\n[stderr: ${stderr}]` : stdout;
+  return textResult(text || '(no output)', !ok);
+}
+
+async function dispatchToolWithStdin(tool, args, stdinData, opts) {
+  const { stdout, stderr, ok } = await runCliWithStdin(tool, args, stdinData, opts);
+  if (!ok && !stdout) return textResult(stderr || 'Tool failed with no output', true);
   const text = ok && stderr ? `${stdout}\n\n[stderr: ${stderr}]` : stdout;
   return textResult(text || '(no output)', !ok);
 }
@@ -420,10 +467,10 @@ export const TOOLS = [
       project: z.string().optional().describe('Add created issues to project (owner/number, e.g. "edimuj/1")'),
     }),
     handler: async ({ repo, issues, project, cwd }) => {
-      const args = ['issue', 'create-batch', '-R', repo, '--input', JSON.stringify(issues)];
+      const args = ['issue', 'create-batch', '-R', repo];
       if (project) args.push('--project', project);
       args.push('-j');
-      return dispatchTool('gh', args, { timeout: 120000, cwd });
+      return dispatchToolWithStdin('gh', args, JSON.stringify(issues), { timeout: 120000, cwd });
     },
   },
 ];

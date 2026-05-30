@@ -14,8 +14,8 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);  // No output - utility command
 }
 
-import { writeFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { writeFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   loadConfig,
   getConfigPaths,

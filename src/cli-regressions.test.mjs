@@ -5,9 +5,12 @@ import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isRipgrepAvailable } from './traverse.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
+
+const RG_SKIP = !isRipgrepAvailable() && 'requires ripgrep binary';
 
 function runCli(args, cwd = repoRoot) {
   return spawnSync(process.execPath, args, {
@@ -54,7 +57,7 @@ function waitForExit(child, timeoutMs = 5000) {
 }
 
 describe('CLI regressions', () => {
-  it('TLT-001: tl-snippet escapes regex metacharacters in symbol names', () => {
+  it('TLT-001: tl-snippet escapes regex metacharacters in symbol names', { skip: RG_SKIP }, () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-snippet-'));
     const filePath = join(tempDir, 'sample.rb');
     writeFileSync(filePath, [
@@ -799,7 +802,7 @@ describe('CLI regressions', () => {
     assert.strictEqual(parsed.sections[0].command, 'tl analyze src/cache.mjs');
   });
 
-  it('TLT-039: tl-pack review does not route directories into file-only review tools', () => {
+  it('TLT-039: tl-pack review does not route directories into file-only review tools', { skip: RG_SKIP }, () => {
     const result = runCli(['bin/tl-pack.mjs', 'review', 'src', '--budget', '900', '-j']);
     assert.strictEqual(result.status, 0, result.stdout || result.stderr);
     const parsed = JSON.parse(result.stdout);
@@ -813,7 +816,7 @@ describe('CLI regressions', () => {
     assert.doesNotMatch(result.stdout, /tl analyze src/);
   });
 
-  it('TLT-042: tl-pack refactor treats directory targets as area context', () => {
+  it('TLT-042: tl-pack refactor treats directory targets as area context', { skip: RG_SKIP }, () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-pack-refactor-dir-'));
     const srcDir = join(tempDir, 'src');
     mkdirSync(srcDir, { recursive: true });
@@ -1168,7 +1171,7 @@ describe('CLI regressions', () => {
     }
   });
 
-  it('TLT-036: tl-guard detects cycles through side-effect imports', () => {
+  it('TLT-036: tl-guard detects cycles through side-effect imports', { skip: RG_SKIP }, () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-guard-cycle-'));
     writeFileSync(join(tempDir, 'a.js'), "import './b.js';\nexport const a = 1;\n", 'utf-8');
     writeFileSync(join(tempDir, 'b.js'), "import './a.js';\nexport const b = 1;\n", 'utf-8');
@@ -1190,7 +1193,7 @@ describe('CLI regressions', () => {
     }
   });
 
-  it('TLT-040: tl-guard detects cycles through commented dynamic imports', () => {
+  it('TLT-040: tl-guard detects cycles through commented dynamic imports', { skip: RG_SKIP }, () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-guard-dynamic-cycle-'));
     writeFileSync(join(tempDir, 'a.js'), "import(/* webpackChunkName: 'b' */ './b.js');\n", 'utf-8');
     writeFileSync(join(tempDir, 'b.js'), "import './a.js';\n", 'utf-8');
@@ -1236,7 +1239,7 @@ describe('CLI regressions', () => {
     }
   });
 
-  it('TLT-047: tl-guard caps noisy unused details by default', () => {
+  it('TLT-047: tl-guard caps noisy unused details by default', { skip: RG_SKIP }, () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-guard-unused-limit-'));
     for (let i = 1; i <= 25; i++) {
       writeFileSync(join(tempDir, `f${i}.js`), `export const unused${i} = ${i};\n`, 'utf-8');
@@ -1261,7 +1264,7 @@ describe('CLI regressions', () => {
     }
   });
 
-  it('TLT-048: tl-guard --full returns all noisy details', () => {
+  it('TLT-048: tl-guard --full returns all noisy details', { skip: RG_SKIP }, () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-guard-full-details-'));
     for (let i = 1; i <= 25; i++) {
       writeFileSync(join(tempDir, `a${i}.js`), `import './b${i}.js';\n`, 'utf-8');
@@ -1323,7 +1326,7 @@ describe('CLI regressions', () => {
     }
   });
 
-  it('TLT-029: tl doctor --agents includes agent integration checks', () => {
+  it('TLT-029: tl doctor --agents includes agent integration checks', { skip: RG_SKIP }, () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-doctor-agents-'));
     try {
       const result = spawnSync(process.execPath, ['bin/tl.mjs', 'doctor', '--agents'], {
@@ -1456,7 +1459,7 @@ describe('CLI regressions', () => {
     }
   });
 
-  it('TLT-033: tl doctor --agents does not warn for missing project MCP when user config exists', () => {
+  it('TLT-033: tl doctor --agents does not warn for missing project MCP when user config exists', { skip: RG_SKIP }, () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-doctor-user-mcp-'));
     try {
       mkdirSync(join(tempDir, '.codex'), { recursive: true });

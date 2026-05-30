@@ -20,9 +20,8 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { spawnSync } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
-import { relative, resolve } from 'path';
+import { existsSync, readFileSync } from 'node:fs';
+import { basename, relative, resolve } from 'node:path';
 import {
   createOutput,
   parseCommonArgs,
@@ -30,9 +29,9 @@ import {
 } from '../src/output.mjs';
 import { findProjectRoot } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
-import { ensureRipgrep, batchRipgrep } from '../src/traverse.mjs';
+import { ensureRipgrep, batchRipgrep, listFilesWithRipgrep } from '../src/traverse.mjs';
 
-try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); }
+if (!process.argv.slice(2).some(a => a === '-h' || a === '--help')) { try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); } }
 
 const HELP = `
 tl-entry - Find entry points in a codebase
@@ -167,31 +166,31 @@ function findEntryPoints(searchPath, projectRoot, filterType) {
     }
   }
 
-  // Search for special files (unchanged — uses find)
-  for (const type of types) {
-    const config = PATTERNS[type];
-    if (!config || !config.files) continue;
-
-    for (const fileName of config.files) {
-      try {
-        const result = spawnSync('find', [
-          searchPath, '-name', fileName, '-not', '-path', '*/node_modules/*'
-        ], { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
-        const output = result.stdout || '';
-
-        for (const file of output.trim().split('\n')) {
-          if (!file) continue;
-          results[type].entries.push({
-            file: relative(projectRoot, file),
-            line: 1,
-            desc: 'Entry file',
-            content: fileName
-          });
-        }
-      } catch (e) {
-        // find error
+  // Search for special files using ripgrep file listing (portable, respects project skip dirs)
+  const allEntryFiles = new Set(
+    types.flatMap(t => PATTERNS[t]?.files ?? [])
+  );
+  if (allEntryFiles.size > 0) {
+    const allPaths = listFilesWithRipgrep(searchPath) ?? [];
+    for (const relPath of allPaths) {
+      const name = basename(relPath);
+      if (!allEntryFiles.has(name)) continue;
+      const fullPath = resolve(searchPath, relPath);
+      for (const type of types) {
+        if (!(PATTERNS[type]?.files ?? []).includes(name)) continue;
+        results[type].entries.push({
+          file: relative(projectRoot, fullPath),
+          line: 1,
+          desc: 'Entry file',
+          content: name
+        });
       }
     }
+  }
+
+  for (const type of types) {
+    const config = PATTERNS[type];
+    if (!config) continue;
 
     // Dedupe entries by file+line
     const seen = new Set();

@@ -20,8 +20,8 @@ if (process.argv.includes('--prompt')) {
 }
 
 import { createOutput, parseCommonArgs, COMMON_OPTIONS_HELP } from '../src/output.mjs';
-import dns from 'dns';
-import { promisify } from 'util';
+import dns from 'node:dns';
+import { promisify } from 'node:util';
 
 const dnsResolve = promisify(dns.resolve);
 

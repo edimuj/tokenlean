@@ -21,10 +21,10 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { readFileSync, existsSync } from 'fs';
-import { spawnSync } from 'child_process';
-import { basename, dirname, extname, join, relative, resolve } from 'path';
-import { fileURLToPath } from 'url';
+import { readFileSync, existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { basename, dirname, extname, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   createOutput,
   parseCommonArgs,
@@ -38,7 +38,7 @@ import { withCache } from '../src/cache.mjs';
 import { ensureRipgrep } from '../src/traverse.mjs';
 import { rgCommand } from '../src/shell.mjs';
 
-try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); }
+if (!process.argv.slice(2).some(a => a === '-h' || a === '--help')) { try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); } }
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

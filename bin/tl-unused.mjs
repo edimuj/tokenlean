@@ -20,8 +20,8 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { readFileSync, existsSync, statSync } from 'fs';
-import { join, relative, dirname, basename, extname, resolve } from 'path';
+import { readFileSync, existsSync, statSync } from 'node:fs';
+import { join, relative, dirname, basename, extname, resolve } from 'node:path';
 import {
   createOutput,
   parseCommonArgs,
@@ -31,7 +31,7 @@ import { findProjectRoot, findCodeFiles, CODE_EXTENSIONS } from '../src/project.
 import { withCache } from '../src/cache.mjs';
 import { ensureRipgrep, batchRipgrep } from '../src/traverse.mjs';
 
-try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); }
+if (!process.argv.slice(2).some(a => a === '-h' || a === '--help')) { try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); } }
 
 const HELP = `
 tl-unused - Find potentially unused exports and unreferenced files

@@ -21,8 +21,8 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { existsSync } from 'fs';
-import { basename, relative, resolve } from 'path';
+import { existsSync } from 'node:fs';
+import { basename, relative, resolve } from 'node:path';
 import {
   createOutput,
   parseCommonArgs,
@@ -33,7 +33,7 @@ import { findProjectRoot } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
 import { ensureRipgrep, batchRipgrep } from '../src/traverse.mjs';
 
-try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); }
+if (!process.argv.slice(2).some(a => a === '-h' || a === '--help')) { try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); } }
 
 const HELP = `
 tl-errors - Map error types and throw points

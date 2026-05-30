@@ -20,7 +20,7 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import https from 'https';
+import https from 'node:https';
 import {
   createOutput,
   parseCommonArgs,

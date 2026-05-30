@@ -20,8 +20,8 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
-import { join, dirname, basename, relative, extname, resolve } from 'path';
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { join, dirname, basename, relative, extname, resolve } from 'node:path';
 import {
   createOutput,
   parseCommonArgs,
@@ -254,11 +254,18 @@ const importers = importerResult.files;
 const siblings = findSiblings(fullPath);
 const importerBackend = importerResult.backend;
 
+// Cache file info (read once per path, reused across JSON build, addSection, and summary)
+const fileInfoCache = new Map();
+function cachedFileInfo(f) {
+  if (!fileInfoCache.has(f)) fileInfoCache.set(f, getFileInfo(f));
+  return fileInfoCache.get(f);
+}
+
 // Collect file info for JSON
-const testsInfo = tests.map(f => ({ path: relative(projectRoot, f), ...getFileInfo(f) }));
-const typesInfo = types.map(f => ({ path: relative(projectRoot, f), ...getFileInfo(f) }));
-const importersInfo = importers.slice(0, 10).map(f => ({ path: relative(projectRoot, f), ...getFileInfo(f) }));
-const siblingsInfo = siblings.map(f => ({ path: relative(projectRoot, f), ...getFileInfo(f) }));
+const testsInfo = tests.map(f => ({ path: relative(projectRoot, f), ...cachedFileInfo(f) }));
+const typesInfo = types.map(f => ({ path: relative(projectRoot, f), ...cachedFileInfo(f) }));
+const importersInfo = importers.slice(0, 10).map(f => ({ path: relative(projectRoot, f), ...cachedFileInfo(f) }));
+const siblingsInfo = siblings.map(f => ({ path: relative(projectRoot, f), ...cachedFileInfo(f) }));
 
 // Set JSON data
 out.setData('file', relPath);
@@ -279,7 +286,7 @@ function addSection(title, files) {
   out.add(title);
   for (const f of files) {
     const rel = relative(projectRoot, f);
-    const info = getFileInfo(f);
+    const info = cachedFileInfo(f);
     out.add(`  ${rel} (~${formatTokens(info.tokens)})`);
   }
   out.blank();
@@ -298,7 +305,7 @@ if (totalFiles === 0) {
 
 // Summary
 const allFiles = [...tests, ...types, ...importers.slice(0, 10), ...siblings];
-const totalTokens = allFiles.reduce((sum, f) => sum + getFileInfo(f).tokens, 0);
+const totalTokens = allFiles.reduce((sum, f) => sum + cachedFileInfo(f).tokens, 0);
 
 out.setData('totalFiles', totalFiles);
 out.setData('totalTokens', totalTokens);

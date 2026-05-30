@@ -15,9 +15,9 @@
  * }
  */
 
-import { existsSync, readFileSync } from 'fs';
-import { dirname, join } from 'path';
-import { homedir } from 'os';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
 
 // ─────────────────────────────────────────────────────────────
 // Constants
@@ -132,7 +132,9 @@ function loadConfigFile(path) {
     const content = readFileSync(path, 'utf-8');
     return JSON.parse(content);
   } catch (e) {
-    // Silently ignore invalid JSON - tools can warn if needed
+    if (e instanceof SyntaxError) {
+      console.warn(`tokenlean: invalid JSON in config file ${path}: ${e.message}`);
+    }
     return null;
   }
 }

@@ -20,7 +20,10 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -209,6 +212,38 @@ function runTool(name, args, opts = {}) {
   };
 }
 
+async function runToolAsync(name, args, opts = {}) {
+  const commandArgs = [toolPath(name), ...args];
+  const command = formatToolCommand(name, args);
+  const timeout = opts.timeout || 30000;
+  const env = { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0', TERM: 'dumb' };
+
+  try {
+    const { stdout, stderr } = await execFileAsync(process.execPath, commandArgs, {
+      cwd: process.cwd(),
+      encoding: 'utf-8',
+      maxBuffer: 8 * 1024 * 1024,
+      timeout,
+      env
+    });
+    const output = [stdout || '', stderr || ''].filter(Boolean).join('\n').trim();
+    return { title: opts.title || command, command, exitCode: 0, output, optional: Boolean(opts.optional) };
+  } catch (err) {
+    const timedOut = err.killed && err.signal === 'SIGTERM';
+    const errorText = timedOut
+      ? `Timed out after ${timeout}ms`
+      : (err.message || '');
+    const output = [err.stdout || '', err.stderr || '', errorText].filter(Boolean).join('\n').trim();
+    return {
+      title: opts.title || command,
+      command,
+      exitCode: typeof err.code === 'number' ? err.code : 1,
+      output,
+      optional: Boolean(opts.optional)
+    };
+  }
+}
+
 function section(title, name, args, opts = {}) {
   return {
     title,
@@ -220,9 +255,9 @@ function section(title, name, args, opts = {}) {
   };
 }
 
-function executeSection(item) {
+async function executeSection(item) {
   if (!item.name) return item;
-  return runTool(item.name, item.args, {
+  return runToolAsync(item.name, item.args, {
     title: item.title,
     optional: item.optional,
     timeout: item.timeout,
@@ -474,10 +509,11 @@ function printList(out) {
   out.print();
 }
 
-function renderPack(pack, target, sections, options) {
+async function renderPack(pack, target, sections, options) {
   const out = createOutput(options);
   const budgeted = applyBudget(sections, options);
-  const includedSections = budgeted.included.map(executeSection);
+  // Execute all included sections concurrently; Promise.all preserves order.
+  const includedSections = await Promise.all(budgeted.included.map(executeSection));
   const failures = includedSections.filter(s => s.exitCode !== 0 && !s.optional);
   const optionalFailures = includedSections.filter(s => s.exitCode !== 0 && s.optional);
   const compactSections = includedSections.map(item => ({
@@ -545,4 +581,4 @@ if (!PACKS[options.pack]) {
 }
 
 const sections = buildPack(options.pack, options.target, options);
-renderPack(options.pack, options.target, sections, options);
+await renderPack(options.pack, options.target, sections, options);

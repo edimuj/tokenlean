@@ -12,6 +12,16 @@ export function extractGoSymbols(content) {
     const trimmed = line.trim();
 
     if (trimmed.match(/^type\s+\w+\s+(?:struct|interface)/)) {
+      // struct / interface (may have a body)
+      symbols.types.push(trimmed.replace(/\s*\{.*$/, ''));
+    } else if (trimmed.match(/^type\s+\w+\s+func\s*\(/)) {
+      // func-typed type decl: type Handler func(...)
+      symbols.types.push(trimmed.replace(/\s*\{.*$/, ''));
+    } else if (trimmed.match(/^type\s+\w+\s*=\s*/)) {
+      // type alias: type MyInt = int
+      symbols.types.push(trimmed.replace(/\s*\{.*$/, ''));
+    } else if (trimmed.match(/^type\s+\w+\s+map\[/)) {
+      // map type: type StringMap map[K]V
       symbols.types.push(trimmed.replace(/\s*\{.*$/, ''));
     }
 

@@ -20,10 +20,10 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { spawnSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
-import { dirname, join, resolve, relative, extname } from 'path';
-import { fileURLToPath } from 'url';
+import { spawnSync } from 'node:child_process';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve, relative, extname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   createOutput,
   parseCommonArgs,
@@ -323,32 +323,45 @@ function detectCycles(graph) {
     }
   }
 
-  function dfs(u) {
-    color.set(u, GRAY);
-    const neighbors = graph.get(u) || new Set();
-    for (const v of neighbors) {
-      if (color.get(v) === GRAY) {
-        // Found cycle — reconstruct
-        const cycle = [v, u];
+  // Iterative DFS — avoids stack overflow on deep graphs
+  for (const startNode of graph.keys()) {
+    if (color.get(startNode) !== WHITE) continue;
+
+    // Stack holds [node, neighborIterator]
+    const stack = [];
+    color.set(startNode, GRAY);
+    stack.push([startNode, (graph.get(startNode) || new Set())[Symbol.iterator]()]);
+
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1];
+      const [u, iter] = frame;
+      const next = iter.next();
+
+      if (next.done) {
+        color.set(u, BLACK);
+        stack.pop();
+        continue;
+      }
+
+      const v = next.value;
+      const vColor = color.get(v) ?? WHITE;
+
+      if (vColor === GRAY) {
+        // Back-edge u→v: reconstruct cycle by walking parent chain from u back to v
+        const cycle = [u];
         let cur = u;
         while (cur !== v && parent.has(cur)) {
           cur = parent.get(cur);
-          if (cur === v) break;
           cycle.push(cur);
         }
+        // cycle is [u, ..., v] — reverse so it reads v → ... → u (forward order)
         cycle.reverse();
         cycles.push(cycle);
-      } else if (color.get(v) === WHITE) {
+      } else if (vColor === WHITE) {
         parent.set(v, u);
-        dfs(v);
+        color.set(v, GRAY);
+        stack.push([v, (graph.get(v) || new Set())[Symbol.iterator]()]);
       }
-    }
-    color.set(u, BLACK);
-  }
-
-  for (const node of graph.keys()) {
-    if (color.get(node) === WHITE) {
-      dfs(node);
     }
   }
 
@@ -403,14 +416,14 @@ function autoFix(projectRoot, stagedFiles) {
     let content;
     try { content = readFileSync(absPath, 'utf-8'); } catch { continue; }
 
-    // Remove console.log/warn/error/debug/info statements (full lines)
+    // Remove console.log statements (full lines) — only log, not warn/info/error/debug
     // Only remove standalone console.log calls, not ones inside expressions
     const lines = content.split('\n');
     const filtered = [];
     let removed = 0;
 
     for (const line of lines) {
-      if (/^\s*console\.(log|warn|debug|info)\s*\(/.test(line) && !line.includes('eslint-disable')) {
+      if (/^\s*console\.log\s*\(/.test(line) && !line.includes('eslint-disable')) {
         removed++;
       } else {
         filtered.push(line);

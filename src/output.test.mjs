@@ -99,9 +99,9 @@ describe('parseCommonArgs', () => {
     assert.deepStrictEqual(opts.remaining, []);
   });
 
-  it('-l 0 becomes Infinity (parseInt quirk)', () => {
+  it('-l 0 is preserved as 0 (not coerced to Infinity)', () => {
     const opts = parseCommonArgs(['-l', '0']);
-    assert.strictEqual(opts.maxLines, Infinity);
+    assert.strictEqual(opts.maxLines, 0);
   });
 });
 

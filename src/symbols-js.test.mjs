@@ -89,6 +89,59 @@ describe('joinMultiLineSignatures', () => {
     const result = joinMultiLineSignatures(lines);
     assert.equal(result[0], '// comment');
   });
+
+  it('does not count parens inside regex literals', () => {
+    // The /\(/ regex literal has an unmatched `(` — must not throw off counter
+    const lines = [
+      'const re = /\\(/.test(s);',
+      'export function afterRegex(x) {'
+    ];
+    const result = joinMultiLineSignatures(lines);
+    assert.equal(result.length, 2, 'lines must stay separate');
+    assert.ok(result[1].includes('afterRegex'));
+  });
+
+  it('does not count parens inside string literals', () => {
+    const lines = [
+      "const msg = 'hello (world';",
+      'function safe(x) {'
+    ];
+    const result = joinMultiLineSignatures(lines);
+    assert.equal(result.length, 2);
+    assert.ok(result[1].includes('safe'));
+  });
+
+  it('does not count parens after line comment', () => {
+    const lines = [
+      'const x = 1; // note: see foo(bar',
+      'function safe(x) {'
+    ];
+    const result = joinMultiLineSignatures(lines);
+    assert.equal(result.length, 2);
+    assert.ok(result[1].includes('safe'));
+  });
+});
+
+describe('extractJsSymbols — regex/string paren safety', () => {
+  it('captures function after a regex-literal line', () => {
+    const code = [
+      'const re = /\\(/.test(s);',
+      'export function afterRegex(x) { return x; }'
+    ].join('\n');
+    const symbols = extractJsSymbols(code);
+    assert.equal(symbols.functions.length, 1, 'afterRegex must be captured');
+    assert.ok(symbols.functions[0].includes('afterRegex'));
+  });
+
+  it('captures function after a string-with-paren line', () => {
+    const code = [
+      "const msg = 'open (paren';",
+      'export function afterString(y) { return y; }'
+    ].join('\n');
+    const symbols = extractJsSymbols(code);
+    assert.equal(symbols.functions.length, 1);
+    assert.ok(symbols.functions[0].includes('afterString'));
+  });
 });
 
 describe('extractJsSymbols', () => {

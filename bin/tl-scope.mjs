@@ -21,8 +21,8 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { readFileSync, existsSync } from 'fs';
-import { resolve, relative, extname } from 'path';
+import { readFileSync, existsSync } from 'node:fs';
+import { resolve, relative, extname } from 'node:path';
 import {
   createOutput,
   parseCommonArgs,
