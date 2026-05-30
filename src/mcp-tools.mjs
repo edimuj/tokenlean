@@ -424,17 +424,31 @@ export const TOOLS = [
   },
   {
     name: 'tl_gh_issue_label_batch',
-    description: 'Add and/or remove labels across multiple issues at once.',
+    description: 'Add and/or remove the SAME labels across multiple issues at once. '
+      + 'For different labels per issue, call this once per label set. '
+      + 'Labels may be a comma-separated string ("P2,bug") or an array (["P2","bug"]).',
     schema: withCwd({
       repo: z.string().describe('Target repository (owner/repo)'),
-      issues: z.array(z.number()).describe('Issue numbers to update'),
-      add: z.string().optional().describe('Comma-separated labels to add'),
-      remove: z.string().optional().describe('Comma-separated labels to remove'),
+      issues: z.array(z.number()).describe('Issue numbers to update (same labels applied to all)'),
+      add: z.union([z.string(), z.array(z.string())]).optional()
+        .describe('Labels to add — comma-separated string or array. Alias: addLabels'),
+      remove: z.union([z.string(), z.array(z.string())]).optional()
+        .describe('Labels to remove — comma-separated string or array. Alias: removeLabels'),
+      addLabels: z.union([z.string(), z.array(z.string())]).optional()
+        .describe('Alias for "add" (accepted so either name works)'),
+      removeLabels: z.union([z.string(), z.array(z.string())]).optional()
+        .describe('Alias for "remove" (accepted so either name works)'),
     }),
-    handler: async ({ repo, issues, add, remove, cwd }) => {
+    handler: async ({ repo, issues, add, remove, addLabels, removeLabels, cwd }) => {
+      const toCsv = (v) => (Array.isArray(v) ? v.join(',') : v) || '';
+      const addCsv = toCsv(add ?? addLabels);
+      const removeCsv = toCsv(remove ?? removeLabels);
+      if (!addCsv && !removeCsv) {
+        throw new Error('tl_gh_issue_label_batch: provide at least one of "add" / "remove" (comma-separated string or array of labels).');
+      }
       const args = ['issue', 'label-batch', '-R', repo, ...issues.map(String)];
-      if (add) args.push('--add', add);
-      if (remove) args.push('--remove', remove);
+      if (addCsv) args.push('--add', addCsv);
+      if (removeCsv) args.push('--remove', removeCsv);
       args.push('-j');
       return dispatchTool('gh', args, { timeout: 120000, cwd });
     },

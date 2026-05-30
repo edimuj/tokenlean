@@ -20,7 +20,7 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, statSync } from 'node:fs';
 import {
   createOutput,
   parseCommonArgs,
@@ -247,13 +247,52 @@ const stat = run(diffArgs);
 
 const out = createOutput(options);
 
-if (!stat.trim()) {
+const files = parseDiffStat(stat);
+
+// Count lines in a brand-new file (git diff never shows untracked files, so we
+// surface them ourselves). Returns 0 for binary or oversized files.
+function countNewFileLines(path) {
+  try {
+    const st = statSync(path);
+    if (!st.isFile() || st.size > 2 * 1024 * 1024) return 0;
+    const buf = readFileSync(path);
+    if (buf.subarray(0, 8192).includes(0)) return 0; // binary heuristic (NUL byte)
+    if (buf.length === 0) return 0;
+    let lines = 0;
+    for (const b of buf) if (b === 0x0a) lines++;
+    if (buf[buf.length - 1] !== 0x0a) lines++; // last line w/o trailing newline
+    return lines;
+  } catch {
+    return 0;
+  }
+}
+
+// A plain working-directory diff (no --staged, no ref) silently omits untracked
+// files — git diff only knows tracked paths. Surface them as new files so they
+// aren't dropped from the summary (and from commits that rely on it).
+if (!staged && !ref) {
+  const untracked = run(['ls-files', '--others', '--exclude-standard'])
+    .split('\n').map(s => s.trim()).filter(Boolean);
+  const known = new Set(files.map(f => f.path));
+  let counted = 0;
+  for (const path of untracked) {
+    if (known.has(path)) continue;
+    if (counted >= 200) { // safety cap for pathological untracked piles
+      out.setData('untrackedTruncated', untracked.length - counted);
+      break;
+    }
+    const additions = countNewFileLines(path);
+    files.push({ path, changes: additions, additions, deletions: 0, isNew: true });
+    counted++;
+  }
+}
+
+if (files.length === 0) {
   out.header('No changes detected');
   out.print();
   process.exit(0);
 }
 
-const files = parseDiffStat(stat);
 const categories = categorizeChanges(files);
 
 const totalChanges = files.reduce((sum, f) => sum + f.changes, 0);
@@ -297,7 +336,7 @@ if (!statOnly) {
 
     for (const f of catFiles.slice(0, 10)) {
       const bar = '+'.repeat(Math.min(f.additions, 20)) + '-'.repeat(Math.min(f.deletions, 20));
-      out.add(`  ${f.path}`);
+      out.add(`  ${f.path}${f.isNew ? ' (new, untracked)' : ''}`);
       out.add(`    ${f.changes} changes ${bar}`);
     }
 

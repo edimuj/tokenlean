@@ -118,4 +118,19 @@ describe('MCP tool definitions', () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('tl_gh_issue_label_batch exposes add/remove plus addLabels/removeLabels aliases', () => {
+    const tool = TOOLS.find(t => t.name === 'tl_gh_issue_label_batch');
+    for (const key of ['add', 'remove', 'addLabels', 'removeLabels']) {
+      assert.ok(tool.schema[key], `schema should accept "${key}"`);
+    }
+  });
+
+  it('tl_gh_issue_label_batch errors clearly when neither add nor remove is given', async () => {
+    const tool = TOOLS.find(t => t.name === 'tl_gh_issue_label_batch');
+    await assert.rejects(
+      () => tool.handler({ repo: 'edimuj/app', issues: [1] }),
+      /at least one of/i
+    );
+  });
 });

@@ -1574,4 +1574,66 @@ describe('CLI regressions', () => {
       rmSync(repo, { recursive: true, force: true });
     }
   });
+
+  it('TLT-063: tl run surfaces node:test failure names and counts (not an empty failures array)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tokenlean-run-nodetest-'));
+    try {
+      const testFile = join(dir, 'sample.test.mjs');
+      writeFileSync(testFile, [
+        "import { test } from 'node:test';",
+        "import assert from 'node:assert/strict';",
+        "test('passing one', () => { assert.equal(1, 1); });",
+        "test('a failing case', () => { assert.equal(2, 3, 'two should equal three'); });"
+      ].join('\n') + '\n', 'utf-8');
+
+      // Strip the parent test-runner context so the inner `node --test` emits
+      // its normal standalone output (otherwise it switches to child-reporter mode).
+      const childEnv = { ...process.env };
+      delete childEnv.NODE_TEST_CONTEXT;
+
+      const result = spawnSync(process.execPath, [
+        join(repoRoot, 'bin/tl-run.mjs'), `node --test ${testFile}`, '-j'
+      ], { cwd: repoRoot, encoding: 'utf-8', env: childEnv });
+
+      const parsed = JSON.parse(result.stdout);
+      assert.match(parsed.summary, /1 passed/);
+      assert.match(parsed.summary, /1 failed/);
+      assert.ok(parsed.failures.length >= 1, 'failures array should not be empty');
+      const failing = parsed.failures.find(f => /a failing case/.test(f.name));
+      assert.ok(failing, `expected the failing test name to be surfaced, got ${JSON.stringify(parsed.failures)}`);
+      assert.match(failing.message, /two should equal three|AssertionError/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-064: tl diff surfaces untracked (new) files that git diff omits', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'tokenlean-diff-untracked-'));
+    const gitIn = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf-8' });
+    try {
+      gitIn('init', '-q');
+      gitIn('config', 'user.email', 't@t.t');
+      gitIn('config', 'user.name', 't');
+      writeFileSync(join(repo, 'tracked.txt'), 'a\n');
+      gitIn('add', '-A');
+      gitIn('commit', '-qm', 'init');
+      writeFileSync(join(repo, 'tracked.txt'), 'a\nb\n');     // tracked modification
+      writeFileSync(join(repo, 'brand-new.txt'), 'x\ny\nz\n'); // untracked new file
+
+      const result = spawnSync(process.execPath, [
+        join(repoRoot, 'bin/tl-diff.mjs'), '-j'
+      ], { cwd: repo, encoding: 'utf-8' });
+
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      const newFile = parsed.files.find(f => f.path === 'brand-new.txt');
+      assert.ok(newFile, `untracked file should be surfaced, got ${JSON.stringify(parsed.files.map(f => f.path))}`);
+      assert.strictEqual(newFile.isNew, true);
+      assert.strictEqual(newFile.additions, 3);
+      // Tracked modification still present too.
+      assert.ok(parsed.files.some(f => f.path === 'tracked.txt'));
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
 });

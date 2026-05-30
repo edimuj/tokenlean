@@ -269,6 +269,16 @@ function summarizeTest(stdout, stderr, exitCode) {
         failed = parseInt(m[2], 10);
         foundCounts = true;
       }
+
+      // node:test — spec reporter ("ℹ pass 12") and TAP reporter ("# pass 12").
+      m = line.match(/^\s*(?:ℹ|#)\s+(tests|pass|fail|skipped)\s+(\d+)\s*$/);
+      if (m) {
+        const n = parseInt(m[2], 10);
+        if (m[1] === 'pass') { passed = n; foundCounts = true; }
+        else if (m[1] === 'fail') { failed = n; foundCounts = true; }
+        else if (m[1] === 'skipped') { skipped = n; }
+        else if (m[1] === 'tests') { total = n; }
+      }
     }
 
     // Go fallback: use per-package counts if no other runner was detected.
@@ -328,7 +338,7 @@ function summarizeTest(stdout, stderr, exitCode) {
     const hasJestBullets = lines.some(l => /^\s*●\s+/.test(l) && !/●\s+Console\s*$/i.test(l));
 
     for (const line of lines) {
-      if (failureCount >= 10) break;
+      if (failureCount >= 30) break;
 
       // Detect failure start patterns
       let failStart;
@@ -337,16 +347,20 @@ function summarizeTest(stdout, stderr, exitCode) {
           ? line.match(/^(\s*)?●\s+(.+)/) : null;
       } else {
         failStart =
-          line.match(/^(\s*)?(FAIL|✕|✗|×|✘)\s+(.+)/i) ||
+          line.match(/^(\s*)?(FAIL|✕|✖|✗|×|✘)\s+(.+)/i) ||
           line.match(/^(\s*)?(FAILED):\s*(.+)/i) ||
           line.match(/^\s*\d+\)\s+(.+)/);
       }
 
       if (failStart) {
+        let name = (failStart[3] || failStart[2] || failStart[1] || '').trim();
+        // node:test prints a "✖ failing tests:" section header — not a test.
+        if (/^(failing|passing) tests:?$/i.test(name)) continue;
+        // Strip node:test's trailing "(123.45ms)" timing from the name.
+        name = name.replace(/\s*\(\d+(?:\.\d+)?ms\)\s*$/, '');
         if (currentFailure) {
           result.failures.push(currentFailure);
         }
-        const name = (failStart[3] || failStart[2] || failStart[1] || '').trim();
         currentFailure = { name, message: '', location: '' };
         inFailure = true;
         failureCount++;
@@ -377,6 +391,20 @@ function summarizeTest(stdout, stderr, exitCode) {
     if (currentFailure) {
       result.failures.push(currentFailure);
     }
+
+    // node:test reports each failing test twice (inline during the run, then in
+    // the "✖ failing tests:" summary). Collapse by name, keeping the richest.
+    if (result.failures.length > 1) {
+      const byName = new Map();
+      for (const f of result.failures) {
+        const prev = byName.get(f.name);
+        if (!prev || (f.message.length + f.location.length) > (prev.message.length + prev.location.length)) {
+          byName.set(f.name, f);
+        }
+      }
+      result.failures = [...byName.values()];
+    }
+    result.failures = result.failures.slice(0, 10);
   }
 
   return result;
