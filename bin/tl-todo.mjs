@@ -29,12 +29,12 @@ import {
   formatTokens,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
-import { findProjectRoot, shouldSkip, SKIP_DIRS } from '../src/project.mjs';
+import { findProjectRoot, shouldSkip, getSkipDirs } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
 import { ensureRipgrep } from '../src/traverse.mjs';
 import { rgCommand } from '../src/shell.mjs';
 
-ensureRipgrep();
+try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); }
 
 const HELP = `
 tl-todo - Extract TODOs, FIXMEs, and other markers from codebase
@@ -98,7 +98,7 @@ function findTodos(searchPath, projectRoot) {
 
   try {
     // Build exclude patterns for ripgrep
-    const excludeArgs = [...SKIP_DIRS].flatMap(d => ['--glob', `!${d}`]);
+    const excludeArgs = [...getSkipDirs()].flatMap(d => ['--glob', `!${d}`]);
 
     // Search for markers that look like they're in comments
     // Pattern: comment prefix followed by optional whitespace, then marker with colon/parens

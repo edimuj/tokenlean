@@ -32,7 +32,7 @@ import { findProjectRoot } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
 import { ensureRipgrep, batchRipgrep } from '../src/traverse.mjs';
 
-ensureRipgrep();
+try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); }
 
 const HELP = `
 tl-entry - Find entry points in a codebase
@@ -40,7 +40,7 @@ tl-entry - Find entry points in a codebase
 Usage: tl-entry [path] [options]
 
 Options:
-  --type T, -t T        Filter by type: main, routes, handlers, exports, cli
+  --type T, -T T        Filter by type: main, routes, handlers, exports, cli
 ${COMMON_OPTIONS_HELP}
 
 Entry point types:
@@ -224,7 +224,7 @@ let searchPath = '.';
 
 for (let i = 0; i < options.remaining.length; i++) {
   const arg = options.remaining[i];
-  if ((arg === '--type' || arg === '-t') && options.remaining[i + 1]) {
+  if ((arg === '--type' || arg === '-T') && options.remaining[i + 1]) {
     filterType = options.remaining[++i];
   } else if (!arg.startsWith('-')) {
     searchPath = arg;

@@ -31,7 +31,7 @@ import { findProjectRoot } from '../src/project.mjs';
 import { ensureRipgrep } from '../src/traverse.mjs';
 import { rgCommand } from '../src/shell.mjs';
 
-ensureRipgrep();
+try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); }
 
 const HELP = `
 tl-flow - Show call graph for a function

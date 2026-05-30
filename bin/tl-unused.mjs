@@ -31,7 +31,7 @@ import { findProjectRoot, findCodeFiles, CODE_EXTENSIONS } from '../src/project.
 import { withCache } from '../src/cache.mjs';
 import { ensureRipgrep, batchRipgrep } from '../src/traverse.mjs';
 
-ensureRipgrep();
+try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); }
 
 const HELP = `
 tl-unused - Find potentially unused exports and unreferenced files

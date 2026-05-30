@@ -76,10 +76,6 @@ export function getSkipExtensions() { return getCombinedSets().skipExtensions; }
 export function getImportantFiles() { return getCombinedSets().importantFiles; }
 export function getImportantDirs() { return getCombinedSets().importantDirs; }
 
-// Legacy exports for backwards compatibility (return combined sets)
-export const SKIP_DIRS = new Set(DEFAULT_SKIP_DIRS);
-export const SKIP_EXTENSIONS = new Set(DEFAULT_SKIP_EXTENSIONS);
-
 // Clear cache (useful when config changes)
 export function clearProjectCache() { _cachedSets = null; }
 

@@ -38,7 +38,7 @@ import { withCache } from '../src/cache.mjs';
 import { ensureRipgrep } from '../src/traverse.mjs';
 import { rgCommand } from '../src/shell.mjs';
 
-ensureRipgrep();
+try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); }
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

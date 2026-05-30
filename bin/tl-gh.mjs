@@ -64,17 +64,6 @@ function ghGraphQL(query, variables = {}) {
   return result;
 }
 
-function withRetry(fn, { retries = 2, backoff = 1000 } = {}) {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return fn();
-    } catch (e) {
-      if (attempt >= retries) throw e;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, backoff * (attempt + 1));
-    }
-  }
-}
-
 function getIssueNodeId(repo, number) {
   const [owner, name] = repo.split('/');
   const result = ghGraphQL(`{

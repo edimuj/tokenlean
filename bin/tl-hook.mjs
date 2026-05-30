@@ -100,10 +100,11 @@ function readStdin() {
   return new Promise((resolve) => {
     let data = '';
     process.stdin.setEncoding('utf8');
+    // Timeout after 1s in case stdin is empty; unref'd so it never keeps the loop alive
+    const timer = setTimeout(() => resolve(data), 1000);
+    timer.unref();
     process.stdin.on('data', chunk => data += chunk);
-    process.stdin.on('end', () => resolve(data));
-    // Timeout after 1s in case stdin is empty
-    setTimeout(() => resolve(data), 1000);
+    process.stdin.on('end', () => { clearTimeout(timer); resolve(data); });
   });
 }
 

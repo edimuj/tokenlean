@@ -41,14 +41,14 @@ Usage: tl-deps <file> [options]
 
 Options:
   --resolve, -r         Show resolved paths for local imports
-  --tree, -t            Show as dependency tree (follows local imports)
+  --tree, -T            Show as dependency tree (follows local imports)
   --depth N             Max depth for tree mode (default: 2)
 ${COMMON_OPTIONS_HELP}
 
 Examples:
   tl-deps src/app.ts              # List all imports
   tl-deps src/app.ts -r           # Show resolved paths
-  tl-deps src/app.ts -t           # Dependency tree
+  tl-deps src/app.ts -T           # Dependency tree
   tl-deps src/app.ts -j           # JSON output
 
 Categories:
@@ -488,7 +488,7 @@ const options = parseCommonArgs(args);
 
 // Parse tool-specific options
 const showResolved = options.remaining.includes('--resolve') || options.remaining.includes('-r');
-const treeMode = options.remaining.includes('--tree') || options.remaining.includes('-t');
+const treeMode = options.remaining.includes('--tree') || options.remaining.includes('-T');
 let maxDepth = 2;
 
 for (let i = 0; i < options.remaining.length; i++) {

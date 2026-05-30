@@ -153,7 +153,7 @@ function findImportersByRipgrep(filePath, projectRoot) {
   const name = basename(filePath, extname(filePath));
   const importers = new Set();
 
-  ensureRipgrep();
+  try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); }
 
   // Search for files that might import this module (with caching)
   try {

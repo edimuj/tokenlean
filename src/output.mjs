@@ -83,12 +83,19 @@ export class Output {
     this.data = {};        // For JSON output
     this.truncated = false;
     this.totalLines = 0;
+    this._charLen = 0;     // Running length of lines.join('\n') — avoids O(n²) re-join on every add
+  }
+
+  // Push a line and keep the running char-length in sync (incl. the '\n' separator)
+  _pushLine(text) {
+    this._charLen += (this.lines.length ? 1 : 0) + text.length;
+    this.lines.push(text);
   }
 
   // Add a header line (skipped in quiet mode)
   header(text) {
     if (!this.options.quiet) {
-      this.lines.push(text);
+      this._pushLine(text);
     }
     return this;
   }
@@ -96,7 +103,7 @@ export class Output {
   // Add a blank line (skipped in quiet mode)
   blank() {
     if (!this.options.quiet) {
-      this.lines.push('');
+      this._pushLine('');
     }
     return this;
   }
@@ -107,8 +114,8 @@ export class Output {
 
     if (this.truncated) return this;
 
-    // Check token limit
-    const currentTokens = estimateTokens(this.lines.join('\n'));
+    // Check token limit (running counter, not a full re-join)
+    const currentTokens = Math.ceil(this._charLen / 4);
     const newTokens = estimateTokens(text);
 
     if (currentTokens + newTokens > this.options.maxTokens) {
@@ -122,7 +129,7 @@ export class Output {
       return this;
     }
 
-    this.lines.push(text);
+    this._pushLine(text);
     return this;
   }
 
@@ -157,7 +164,7 @@ export class Output {
   // Add stats footer (skipped in quiet mode)
   stats(text) {
     if (!this.options.quiet && !this.truncated) {
-      this.lines.push(text);
+      this._pushLine(text);
     }
     return this;
   }

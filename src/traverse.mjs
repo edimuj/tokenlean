@@ -43,13 +43,17 @@ export function isRipgrepAvailable() {
 }
 
 /**
- * Ensure ripgrep is available, exit with a friendly error if not.
+ * Ensure ripgrep is available. Throws a tagged Error if not — callers (CLI entry
+ * points) decide how to surface it. Library code must not call process.exit().
  */
 export function ensureRipgrep() {
   if (!isRipgrepAvailable()) {
-    console.error('Error: ripgrep (rg) is required but not found.');
-    console.error('Install: brew install ripgrep  (or see https://github.com/BurntSushi/ripgrep#installation)');
-    process.exit(1);
+    const err = new Error(
+      'ripgrep (rg) is required but not found.\n' +
+      'Install: brew install ripgrep  (or see https://github.com/BurntSushi/ripgrep#installation)'
+    );
+    err.code = 'NO_RIPGREP';
+    throw err;
   }
 }
 

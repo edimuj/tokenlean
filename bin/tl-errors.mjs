@@ -33,7 +33,7 @@ import { findProjectRoot } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
 import { ensureRipgrep, batchRipgrep } from '../src/traverse.mjs';
 
-ensureRipgrep();
+try { ensureRipgrep(); } catch (e) { console.error('Error: ' + e.message); process.exit(1); }
 
 const HELP = `
 tl-errors - Map error types and throw points
