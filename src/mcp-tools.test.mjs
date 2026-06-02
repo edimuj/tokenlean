@@ -56,6 +56,22 @@ describe('MCP tool definitions', () => {
     }
   });
 
+  it('tl_run treats small MCP timeout values as seconds', async () => {
+    const runTool = TOOLS.find(tool => tool.name === 'tl_run');
+    const result = await runTool.handler({
+      command: 'node -e "setTimeout(() => process.stdout.write(\'ok\'), 50)"',
+      raw: true,
+      timeout: 1,
+      cwd: process.cwd(),
+    });
+
+    assert.strictEqual(result.isError, undefined, result.content?.[0]?.text);
+    const parsed = JSON.parse(result.content[0].text);
+    assert.strictEqual(parsed.exitCode, 0);
+    assert.strictEqual(parsed.stdout, 'ok');
+    assert.notStrictEqual(parsed.type, 'timeout');
+  });
+
   it('tl_pack debug does not execute prose targets from MCP calls', async () => {
     const packTool = TOOLS.find(tool => tool.name === 'tl_pack');
     const result = await packTool.handler({

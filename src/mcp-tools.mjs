@@ -108,6 +108,11 @@ function withCwd(schema) {
   return { ...schema, cwd: cwdSchema };
 }
 
+function normalizeMcpTimeoutMs(timeout) {
+  if (!Number.isFinite(timeout) || timeout <= 0) return null;
+  return Math.round(timeout < 1000 ? timeout * 1000 : timeout);
+}
+
 // ─────────────────────────────────────────────────────────────
 // Tool definitions
 // ─────────────────────────────────────────────────────────────
@@ -157,17 +162,18 @@ export const TOOLS = [
       command: z.string().describe('Shell command to run'),
       type: z.enum(['test', 'build', 'lint', 'generic']).optional().describe('Force output type (default: auto-detect)'),
       raw: z.boolean().optional().describe('Show full output, no summarization'),
-      timeout: z.number().optional().describe('Command timeout in ms (default: 300000)'),
+      timeout: z.number().optional().describe('Command timeout. Values under 1000 are treated as seconds; larger values are treated as ms. Default: 300000ms.'),
       diff: z.boolean().optional().describe('Compare against previous run of same command'),
     }),
     handler: async ({ command, type, raw, timeout, diff, cwd }) => {
+      const timeoutMs = normalizeMcpTimeoutMs(timeout);
       const args = [command];
       if (type) args.push('--type', type);
       if (raw) args.push('--raw');
-      if (timeout) args.push('--timeout', String(timeout));
+      if (timeoutMs) args.push('--timeout', String(timeoutMs));
       if (diff) args.push('--diff');
       args.push('-j');
-      return dispatchTool('run', args, { timeout: (timeout || 300000) + 5000, cwd });
+      return dispatchTool('run', args, { timeout: (timeoutMs || 300000) + 5000, cwd });
     },
   },
   {
