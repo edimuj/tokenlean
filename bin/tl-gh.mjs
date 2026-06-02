@@ -392,7 +392,7 @@ function readStdinJSON(inputArg) {
     console.error('Error: No input provided. Pipe JSON/JSONL on stdin or use --input <file>');
     process.exit(2);
   }
-  const raw = (inputArg || readFileSync('/dev/stdin', 'utf-8')).trim();
+  const raw = (inputArg || readFileSync(0, 'utf-8')).trim();
   if (!raw) {
     console.error('Error: No input on stdin or --input');
     process.exit(1);
