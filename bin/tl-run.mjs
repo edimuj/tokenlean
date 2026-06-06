@@ -21,7 +21,7 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -44,7 +44,7 @@ only what matters.
 Options:
   --type <type>         Force output type: test, build, lint, generic (default: auto)
   --raw                 Show full output, no summarization
-  --timeout <ms>        Command timeout in ms (default: 300000 / 5min)
+  --timeout <ms>        Command timeout in ms (default: 120000 / 2min)
   --diff                Compare output against previous run of same command
 ${COMMON_OPTIONS_HELP}
 
@@ -59,6 +59,13 @@ Examples:
 const VALID_TYPES = ['test', 'build', 'lint', 'generic'];
 const ANALYSIS_CHAR_LIMIT = 300000;
 const GENERIC_FAST_PATH_CHAR_LIMIT = 120000;
+// Default command timeout. Kept modest because output is buffered (no live
+// feedback), so a hung command should surface as a timeout quickly rather than
+// tying up an interactive agent. Override with --timeout or run.timeout config.
+const DEFAULT_TIMEOUT = 120000;
+const MAX_BUFFER = 50 * 1024 * 1024;
+// Grace period between SIGTERM and SIGKILL when terminating the process group.
+const KILL_GRACE_MS = 2000;
 
 function sampleTextForAnalysis(text, maxChars = ANALYSIS_CHAR_LIMIT) {
   if (!text || text.length <= maxChars) return text;
@@ -104,50 +111,93 @@ function stripAnsi(str) {
 // Command Execution
 // ─────────────────────────────────────────────────────────────
 
+// Run a shell command, capturing stdout/stderr. Uses an async, detached spawn
+// so that on timeout we can kill the entire process group (SIGTERM then
+// SIGKILL) rather than just the shell. spawnSync only signals the direct child,
+// leaving grandchildren (e.g. tsc/bun/jest workers) orphaned and, when they
+// keep the stdout pipe open, can hang the parent past its own timeout.
 function runCommand(command, timeout) {
-  const start = Date.now();
-
-  const result = spawnSync(command, {
-    shell: true,
-    encoding: 'utf-8',
-    timeout,
-    maxBuffer: 50 * 1024 * 1024,
-    env: {
-      ...process.env,
-      NO_COLOR: '1',
-      FORCE_COLOR: '0',
-      TERM: 'dumb'
+  return new Promise((resolve) => {
+    const start = Date.now();
+    let child;
+    try {
+      child = spawn(command, {
+        shell: true,
+        detached: true, // own process group so we can kill the whole tree
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          NO_COLOR: '1',
+          FORCE_COLOR: '0',
+          TERM: 'dumb'
+        }
+      });
+    } catch (err) {
+      resolve({ stdout: '', stderr: err.message, exitCode: 127, elapsed: Date.now() - start, timedOut: false });
+      return;
     }
-  });
 
-  const elapsed = Date.now() - start;
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let settled = false;
+    let killTimer = null;
 
-  if (result.error) {
-    if (result.error.code === 'ETIMEDOUT') {
-      return {
-        stdout: result.stdout || '',
-        stderr: result.stderr || '',
-        exitCode: 124,  // Standard timeout exit code
-        elapsed,
-        timedOut: true
-      };
-    }
-    return {
-      stdout: '',
-      stderr: result.error.message,
-      exitCode: 127,
-      elapsed,
-      timedOut: false
+    // Kill the child's whole process group; fall back to the bare child if the
+    // group signal fails (e.g. the leader already exited).
+    const killGroup = (signal) => {
+      if (!child.pid) return;
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        try { child.kill(signal); } catch { /* already gone */ }
+      }
     };
-  }
 
-  return {
-    stdout: stripAnsi(result.stdout || ''),
-    stderr: stripAnsi(result.stderr || ''),
-    exitCode: result.status ?? 1,
-    elapsed,
-    timedOut: false
-  };
+    const timer = timeout
+      ? setTimeout(() => {
+          timedOut = true;
+          killGroup('SIGTERM');
+          killTimer = setTimeout(() => killGroup('SIGKILL'), KILL_GRACE_MS);
+          killTimer.unref();
+        }, timeout)
+      : null;
+
+    child.stdout.setEncoding('utf-8');
+    child.stderr.setEncoding('utf-8');
+    child.stdout.on('data', (chunk) => {
+      if (stdout.length < MAX_BUFFER) stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      if (stderr.length < MAX_BUFFER) stderr += chunk;
+    });
+
+    const finish = (exitCode) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      resolve({
+        stdout: stripAnsi(stdout),
+        stderr: stripAnsi(stderr),
+        exitCode,
+        elapsed: Date.now() - start,
+        timedOut
+      });
+    };
+
+    child.on('error', (err) => {
+      // Spawn-level failure (e.g. shell missing). No process to wait on.
+      stderr = stderr || err.message;
+      finish(127);
+    });
+
+    child.on('close', (code, signal) => {
+      if (timedOut) return finish(124); // standard timeout exit code
+      if (code === null) return finish(signal ? 1 : 0);
+      finish(code);
+    });
+  });
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -798,7 +848,7 @@ function diffResults(prev, curr, type) {
 // Main
 // ─────────────────────────────────────────────────────────────
 
-function main() {
+async function main() {
   const args = process.argv.slice(2);
 
   // Parse common args, but we need to handle our custom args first
@@ -838,13 +888,13 @@ function main() {
 
   // Load config
   const runConfig = getConfig('run') || {};
-  const effectiveTimeout = timeout || runConfig.timeout || 300000;
+  const effectiveTimeout = timeout || runConfig.timeout || DEFAULT_TIMEOUT;
 
   // The command is the first remaining arg (may be quoted)
   const command = opts.remaining.join(' ');
 
   // Execute
-  const result = runCommand(command, effectiveTimeout);
+  const result = await runCommand(command, effectiveTimeout);
 
   // Handle timeout
   if (result.timedOut) {
@@ -1053,4 +1103,7 @@ function main() {
   process.exit(result.exitCode);
 }
 
-main();
+main().catch((err) => {
+  console.error(err?.stack || err?.message || String(err));
+  process.exit(1);
+});

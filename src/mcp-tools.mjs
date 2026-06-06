@@ -108,6 +108,9 @@ function withCwd(schema) {
   return { ...schema, cwd: cwdSchema };
 }
 
+// Keep in sync with DEFAULT_TIMEOUT in bin/tl-run.mjs.
+const DEFAULT_RUN_TIMEOUT = 120000;
+
 function normalizeMcpTimeoutMs(timeout) {
   if (!Number.isFinite(timeout) || timeout <= 0) return null;
   return Math.round(timeout < 1000 ? timeout * 1000 : timeout);
@@ -162,7 +165,7 @@ export const TOOLS = [
       command: z.string().describe('Shell command to run'),
       type: z.enum(['test', 'build', 'lint', 'generic']).optional().describe('Force output type (default: auto-detect)'),
       raw: z.boolean().optional().describe('Show full output, no summarization'),
-      timeout: z.number().optional().describe('Command timeout. Values under 1000 are treated as seconds; larger values are treated as ms. Default: 300000ms.'),
+      timeout: z.number().optional().describe('Command timeout. Values under 1000 are treated as seconds; larger values are treated as ms. Default: 120000ms.'),
       diff: z.boolean().optional().describe('Compare against previous run of same command'),
     }),
     handler: async ({ command, type, raw, timeout, diff, cwd }) => {
@@ -173,7 +176,9 @@ export const TOOLS = [
       if (timeoutMs) args.push('--timeout', String(timeoutMs));
       if (diff) args.push('--diff');
       args.push('-j');
-      return dispatchTool('run', args, { timeout: (timeoutMs || 300000) + 5000, cwd });
+      // Outer (execFile) timeout is the inner command timeout plus a margin so
+      // tl-run can emit its own timeout result before we hard-kill the wrapper.
+      return dispatchTool('run', args, { timeout: (timeoutMs || DEFAULT_RUN_TIMEOUT) + 10000, cwd });
     },
   },
   {

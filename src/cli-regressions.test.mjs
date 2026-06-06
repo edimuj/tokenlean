@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1634,6 +1634,33 @@ describe('CLI regressions', () => {
       assert.ok(parsed.files.some(f => f.path === 'tracked.txt'));
     } finally {
       rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-065: tl run kills the whole process group on timeout (no orphaned grandchildren)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tokenlean-run-timeout-'));
+    const marker = join(dir, 'orphan-marker.txt');
+    try {
+      // Shell backgrounds a grandchild that writes a marker after 2s, then the
+      // foreground sleeps. With a 700ms timeout the command must be killed
+      // *including* the backgrounded grandchild — so the marker is never written.
+      const cmd = `node -e "setTimeout(()=>require('fs').writeFileSync(${JSON.stringify(marker)},'alive'),2000)" & echo started; sleep 10`;
+      const started = Date.now();
+      const result = runCli([join(repoRoot, 'bin/tl-run.mjs'), cmd, '--timeout', '700', '-j'], dir);
+      const elapsed = Date.now() - started;
+
+      assert.strictEqual(result.status, 124, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      assert.strictEqual(parsed.timedOut, true);
+      // Returns at the timeout, not after the full 10s sleep.
+      assert.ok(elapsed < 5000, `expected prompt return, took ${elapsed}ms`);
+
+      // Give the grandchild's would-be write window time to elapse, then confirm
+      // it was killed along with its parent.
+      await new Promise(r => setTimeout(r, 2500));
+      assert.ok(!existsSync(marker), 'grandchild survived timeout — process group was not killed');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
