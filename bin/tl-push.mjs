@@ -21,7 +21,7 @@ if (process.argv.includes('--prompt')) {
 }
 
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import {
   createOutput,
   parseCommonArgs,
@@ -75,6 +75,25 @@ const DANGEROUS_PATTERNS = [
 
 function isSensitive(file) {
   return DANGEROUS_PATTERNS.some(p => p.test(file));
+}
+
+// In-progress git operations that make committing on top dangerous. Checked
+// relative to the git dir via `git rev-parse --git-path` so it works correctly
+// inside linked worktrees (where the per-worktree git dir is .git/worktrees/<n>).
+const IN_PROGRESS_OPS = [
+  { path: 'rebase-merge', verb: 'mid-rebase', resolve: 'git rebase --continue / --abort' },
+  { path: 'rebase-apply', verb: 'mid-rebase', resolve: 'git rebase --continue / --abort' },
+  { path: 'MERGE_HEAD', verb: 'mid-merge', resolve: 'git merge --continue / --abort' },
+  { path: 'CHERRY_PICK_HEAD', verb: 'mid-cherry-pick', resolve: 'git cherry-pick --continue / --abort' },
+  { path: 'REVERT_HEAD', verb: 'mid-revert', resolve: 'git revert --continue / --abort' }
+];
+
+function detectInProgressOp() {
+  for (const op of IN_PROGRESS_OPS) {
+    const res = git(['rev-parse', '--git-path', op.path]);
+    if (res.ok && res.stdout && existsSync(res.stdout)) return op;
+  }
+  return null;
 }
 
 function git(args) {
@@ -154,6 +173,19 @@ if (!message && !amend) {
 
 const out = createOutput(options);
 const subject = message ? message.split('\n')[0] : null;
+
+// Preflight: refuse to commit on top of a half-finished git operation. This
+// covers the --amend and --no-push paths too (a mid-rebase amend is just as
+// unsafe). Pure safety guard — tl-push has no rebase/merge logic of its own.
+const inProgress = detectInProgressOp();
+if (inProgress) {
+  console.error(
+    `tl push: repository is ${inProgress.verb} — resolve and continue, or abort, ` +
+    `before committing (${inProgress.resolve}). ` +
+    `Refusing to commit on top of an unfinished operation.`
+  );
+  process.exit(2);
+}
 
 const branch = gitCommand(['branch', '--show-current']);
 if (!branch) {
