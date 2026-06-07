@@ -61,6 +61,7 @@
     "tl-parallel": "bin/tl-parallel.mjs",
     "tl-pack": "bin/tl-pack.mjs",
     "tl-push": "bin/tl-push.mjs",
+    "tl-publish": "bin/tl-publish.mjs",
     "tl-pr": "bin/tl-pr.mjs",
     "tl-reddit": "bin/tl-reddit.mjs",
     "tl-prompt": "bin/tl-prompt.mjs",

@@ -18,6 +18,7 @@ The tools agents use 90% of the time.
 | `tl guard`     | Pre-commit check (secrets, TODOs, unused, circular; noisy details capped by default) | `tl guard` |
 | `tl commit-prep` | Pre-commit context: status + diff stat + log     | `tl commit-prep`            |
 | `tl push`      | Stage, commit, push in one call                    | `tl push "feat: caching"`  |
+| `tl publish`   | npm publish + wait until installable + optional global reinstall | `tl publish patch -g` |
 | `tl structure` | Project overview with token estimates          | `tl structure src/`              |
 | `tl browse`    | Fetch any URL as clean markdown                | `tl browse https://docs.example.com` |
 | `tl context7`  | Look up library docs via Context7 API          | `tl context7 react "hooks"`      |

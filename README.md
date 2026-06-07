@@ -145,6 +145,8 @@ npm link
 # Workflow-ready briefing        tl pack refactor src/auth.ts
 # Area refactor briefing          tl pack refactor src/
 # What should I run next?       tl advise "debug npm test"
+# Commit + push in one call      tl push "fix: race condition" src/worker.mjs
+# Publish, wait, reinstall       tl publish patch --install-globally
 ```
 
 Every tool supports `-l N` (limit lines), `-t N` (limit tokens), `-j` (JSON output), `-q` (quiet), and `-h` (help).
