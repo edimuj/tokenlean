@@ -33,6 +33,7 @@ import {
   parseCommonArgs,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
+import { stripAnsi } from '../src/text-util.mjs';
 
 const HELP = `
 tl-tail - Token-efficient log tailing and summarization
@@ -96,14 +97,6 @@ function parseTailArgs(args) {
   }
 
   return { follow, tailLines, filteredArgs };
-}
-
-function stripAnsi(str) {
-  return str.replace(
-    // eslint-disable-next-line no-control-regex
-    /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b\].*?\x1b\\|\x1b[^[\]]/g,
-    ''
-  );
 }
 
 function classifySeverity(line) {

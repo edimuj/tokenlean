@@ -29,6 +29,7 @@ import {
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { findProjectRoot } from '../src/project.mjs';
+import { countBraces } from '../src/text-util.mjs';
 
 const HELP = `
 tl-scope - Show what's in scope at a given line
@@ -49,50 +50,6 @@ Examples:
 `;
 
 const JS_TS_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.mts']);
-
-// ─────────────────────────────────────────────────────────────
-// Brace Counting (adapted from tl-snippet.mjs)
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Count net braces in a line, ignoring those inside strings, template
- * literals, regex, and comments.
- */
-function countBraces(line) {
-  let open = 0;
-  let close = 0;
-  let inSingle = false;
-  let inDouble = false;
-  let inTemplate = false;
-  let inLineComment = false;
-
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    const prev = i > 0 ? line[i - 1] : '';
-
-    // Skip escaped characters
-    if (prev === '\\') continue;
-
-    if (inLineComment) break;
-
-    if (!inSingle && !inDouble && !inTemplate) {
-      if (ch === '/' && line[i + 1] === '/') { inLineComment = true; continue; }
-      if (ch === "'") { inSingle = true; continue; }
-      if (ch === '"') { inDouble = true; continue; }
-      if (ch === '`') { inTemplate = true; continue; }
-      if (ch === '{') open++;
-      if (ch === '}') close++;
-    } else if (inSingle && ch === "'") {
-      inSingle = false;
-    } else if (inDouble && ch === '"') {
-      inDouble = false;
-    } else if (inTemplate && ch === '`') {
-      inTemplate = false;
-    }
-  }
-
-  return { open, close };
-}
 
 // ─────────────────────────────────────────────────────────────
 // Import Extraction

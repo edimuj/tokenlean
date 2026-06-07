@@ -28,7 +28,7 @@ import {
   formatTable,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
-import { findProjectRoot, shouldSkip, isCodeFile, detectLanguage } from '../src/project.mjs';
+import { findProjectRoot, shouldSkip, isCodeFile, detectLanguage, collectSourceFiles } from '../src/project.mjs';
 
 const HELP = `
 tl-env - Find environment variables and config used in the codebase
@@ -98,26 +98,6 @@ const ENV_PATTERNS = {
 // ─────────────────────────────────────────────────────────────
 // File Discovery
 // ─────────────────────────────────────────────────────────────
-
-function findSourceFiles(dir, files = []) {
-  const entries = readdirSync(dir, { withFileTypes: true });
-
-  for (const entry of entries) {
-    const fullPath = join(dir, entry.name);
-
-    if (entry.isDirectory()) {
-      if (!shouldSkip(entry.name, true)) {
-        findSourceFiles(fullPath, files);
-      }
-    } else if (entry.isFile()) {
-      if (!shouldSkip(entry.name, false) && isCodeFile(fullPath)) {
-        files.push(fullPath);
-      }
-    }
-  }
-
-  return files;
-}
 
 function findEnvFiles(dir, files = []) {
   const entries = readdirSync(dir, { withFileTypes: true });
@@ -240,7 +220,7 @@ const out = createOutput(options);
 const envVars = new Map(); // varName -> { files: Set, values: Map, required: bool }
 
 // 1. Scan source files
-const sourceFiles = findSourceFiles(targetDir);
+const sourceFiles = collectSourceFiles(targetDir, isCodeFile);
 
 for (const filePath of sourceFiles) {
   const content = readFileSync(filePath, 'utf-8');

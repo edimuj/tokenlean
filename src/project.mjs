@@ -253,6 +253,34 @@ export function isCodeFile(filePath) {
   return codeLanguages.has(lang);
 }
 
+/**
+ * Recursively collect files passing `predicate`, applying the standard
+ * skip-list to directories and files. `predicate(fullPath)` decides whether
+ * a file is kept — callers supply their own notion of "source file".
+ * @param {string} dir - Directory to search
+ * @param {(filePath: string) => boolean} predicate - File filter
+ * @param {string[]} [files=[]] - Accumulator (for recursion)
+ */
+export function collectSourceFiles(dir, predicate, files = []) {
+  const entries = readdirSync(dir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name);
+
+    if (entry.isDirectory()) {
+      if (!shouldSkip(entry.name, true)) {
+        collectSourceFiles(fullPath, predicate, files);
+      }
+    } else if (entry.isFile()) {
+      if (!shouldSkip(entry.name, false) && predicate(fullPath)) {
+        files.push(fullPath);
+      }
+    }
+  }
+
+  return files;
+}
+
 // ─────────────────────────────────────────────────────────────
 // JS/TS Code File Discovery
 // ─────────────────────────────────────────────────────────────

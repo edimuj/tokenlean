@@ -20,7 +20,7 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, statSync } from 'node:fs';
 import { basename, extname, join, relative, dirname } from 'node:path';
 import {
   createOutput,
@@ -29,7 +29,7 @@ import {
   formatTokens,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
-import { findProjectRoot, shouldSkip } from '../src/project.mjs';
+import { findProjectRoot, collectSourceFiles } from '../src/project.mjs';
 import { extractGenericSymbols } from '../src/generic-lang.mjs';
 
 const HELP = `
@@ -373,26 +373,6 @@ function extractGenericExports(symbols) {
 // File Discovery
 // ─────────────────────────────────────────────────────────────
 
-function findSourceFiles(dir, files = []) {
-  const entries = readdirSync(dir, { withFileTypes: true });
-
-  for (const entry of entries) {
-    const fullPath = join(dir, entry.name);
-
-    if (entry.isDirectory()) {
-      if (!shouldSkip(entry.name, true)) {
-        findSourceFiles(fullPath, files);
-      }
-    } else if (entry.isFile()) {
-      if (!shouldSkip(entry.name, false) && isSourceFile(fullPath)) {
-        files.push(fullPath);
-      }
-    }
-  }
-
-  return files;
-}
-
 function findIndexFile(dir) {
   const indexNames = ['index.ts', 'index.tsx', 'index.js', 'index.mjs', 'mod.ts', '__init__.py'];
 
@@ -557,7 +537,7 @@ if (stat.isDirectory()) {
   if (indexFile && !treeMode) {
     files = [indexFile];
   } else {
-    files = findSourceFiles(targetPath);
+    files = collectSourceFiles(targetPath, isSourceFile);
   }
 } else {
   files = [targetPath];

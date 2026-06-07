@@ -38,6 +38,7 @@ import {
   isJsTsFile
 } from '../src/semantic-js.mjs';
 import { rgCommand } from '../src/shell.mjs';
+import { countBraces } from '../src/text-util.mjs';
 
 const HELP = `
 tl-snippet - Extract a function/class body by name
@@ -139,46 +140,6 @@ function findDefinitions(name, searchPath) {
 // ─────────────────────────────────────────────────────────────
 // Body Extraction
 // ─────────────────────────────────────────────────────────────
-
-/**
- * Count net braces in a line, ignoring those inside strings, template
- * literals, regex, and comments.
- */
-function countBraces(line) {
-  let open = 0;
-  let close = 0;
-  let inSingle = false;
-  let inDouble = false;
-  let inTemplate = false;
-  let inLineComment = false;
-
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    const prev = i > 0 ? line[i - 1] : '';
-
-    // Skip escaped characters
-    if (prev === '\\') continue;
-
-    if (inLineComment) break; // Rest of line is comment
-
-    if (!inSingle && !inDouble && !inTemplate) {
-      if (ch === '/' && line[i + 1] === '/') { inLineComment = true; continue; }
-      if (ch === "'") { inSingle = true; continue; }
-      if (ch === '"') { inDouble = true; continue; }
-      if (ch === '`') { inTemplate = true; continue; }
-      if (ch === '{') open++;
-      if (ch === '}') close++;
-    } else if (inSingle && ch === "'") {
-      inSingle = false;
-    } else if (inDouble && ch === '"') {
-      inDouble = false;
-    } else if (inTemplate && ch === '`') {
-      inTemplate = false;
-    }
-  }
-
-  return { open, close };
-}
 
 function getFileLines(filePath, fileLinesCache = null) {
   if (fileLinesCache && fileLinesCache.has(filePath)) {

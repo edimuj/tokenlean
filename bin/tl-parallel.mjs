@@ -27,6 +27,7 @@ import {
   parseCommonArgs,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
+import { stripAnsi, formatElapsed } from '../src/text-util.mjs';
 
 const HELP = `
 tl-parallel - Run commands in parallel with structured results
@@ -55,30 +56,6 @@ Examples:
 const DEFAULT_TIMEOUT = 60000;
 const DEFAULT_MAX_CONCURRENT = 20;
 const DEFAULT_LINES_PER_CMD = 60;
-
-// ─────────────────────────────────────────────────────────────
-// ANSI Stripping
-// ─────────────────────────────────────────────────────────────
-
-function stripAnsi(str) {
-  return str.replace(
-    // eslint-disable-next-line no-control-regex
-    /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b\].*?\x1b\\|\x1b[^[\]]/g,
-    ''
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// Elapsed time formatting
-// ─────────────────────────────────────────────────────────────
-
-function formatElapsed(ms) {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  const mins = Math.floor(ms / 60000);
-  const secs = ((ms % 60000) / 1000).toFixed(0);
-  return `${mins}m${secs}s`;
-}
 
 // ─────────────────────────────────────────────────────────────
 // Command parsing

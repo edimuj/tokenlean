@@ -11,6 +11,7 @@ import { join, resolve, relative, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { providerLabel } from './audit-analyze.mjs';
+import { parseJson } from './text-util.mjs';
 
 // ─────────────────────────────────────────────────────────────
 // Provider normalization
@@ -113,14 +114,6 @@ async function findClaudeSessionsForProject(projectPath) {
 
   const files = await Promise.all(matches.map(name => listFlatJsonlFiles(join(root, name), 'claude')));
   return files.flat();
-}
-
-function parseJson(line) {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
 }
 
 async function readFirstNonEmptyLine(filePath) {

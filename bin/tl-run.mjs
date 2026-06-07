@@ -31,6 +31,7 @@ import {
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { getConfig } from '../src/config.mjs';
+import { stripAnsi, formatElapsed } from '../src/text-util.mjs';
 
 const HELP = `
 tl-run - Smart command runner with token-efficient output
@@ -90,21 +91,6 @@ function headLines(text, maxLines, maxChars = 60000) {
 
 function tailLines(text, maxLines, maxChars = 60000) {
   return text.slice(-maxChars).split('\n').slice(-maxLines);
-}
-
-// ─────────────────────────────────────────────────────────────
-// ANSI Stripping
-// ─────────────────────────────────────────────────────────────
-
-function stripAnsi(str) {
-  // CSI sequences: ESC [ ... final_byte
-  // OSC sequences: ESC ] ... ST
-  // Single-char escapes: ESC followed by single char
-  return str.replace(
-    // eslint-disable-next-line no-control-regex
-    /\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07|\x1b\].*?\x1b\\|\x1b[^[\]]/g,
-    ''
-  );
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -771,18 +757,6 @@ function computeLineBudget(opts) {
     budget = Math.min(budget, Math.floor((opts.maxTokens * 4) / 60) - 5);
   }
   return budget < Infinity ? Math.max(15, budget) : Infinity;
-}
-
-// ─────────────────────────────────────────────────────────────
-// Format Elapsed Time
-// ─────────────────────────────────────────────────────────────
-
-function formatElapsed(ms) {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  const mins = Math.floor(ms / 60000);
-  const secs = ((ms % 60000) / 1000).toFixed(0);
-  return `${mins}m${secs}s`;
 }
 
 // ─────────────────────────────────────────────────────────────

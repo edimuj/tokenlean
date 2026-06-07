@@ -5,6 +5,13 @@
  * per-tool analysis, and session JSONL parsing (Claude + Codex).
  */
 
+import { parseJson } from './text-util.mjs';
+import {
+  extractHttpUrl,
+  isApiLikeUrl,
+  hasApiCurlOptions,
+} from './url-policy.mjs';
+
 // ─────────────────────────────────────────────────────────────
 // Provider labels (shared across modules)
 // ─────────────────────────────────────────────────────────────
@@ -95,48 +102,6 @@ const SIGNIFICANT_RESULT = 500;
 function countLines(text) {
   if (!text) return 0;
   return text.split('\n').length;
-}
-
-function parseJson(line) {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
-}
-
-function extractHttpUrl(command) {
-  return String(command || '').match(/https?:\/\/[^\s"'<>|)]+/)?.[0] || null;
-}
-
-function isLocalOrPrivateHost(hostname) {
-  const host = String(hostname || '').toLowerCase();
-  if (host === 'localhost' || host === '0.0.0.0' || host === '::1') return true;
-  if (/^127\./.test(host)) return true;
-  if (/^10\./.test(host)) return true;
-  if (/^192\.168\./.test(host)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
-  return false;
-}
-
-function isApiLikeUrl(url) {
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname.toLowerCase();
-    const path = parsed.pathname.toLowerCase();
-    return isLocalOrPrivateHost(host)
-      || host.startsWith('api.')
-      || path === '/api'
-      || path.startsWith('/api/')
-      || path === '/graphql'
-      || path.startsWith('/graphql/');
-  } catch {
-    return true;
-  }
-}
-
-function hasApiCurlOptions(command) {
-  return /(?:^|\s)(?:-[XHI]|--request|--header|--data(?:-[\w-]+)?|-d|--include|--head)\b/i.test(command);
 }
 
 function shouldSuggestBrowseForCurl(command) {

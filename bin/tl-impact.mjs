@@ -185,7 +185,12 @@ function findDirectImporters(filePath, reverseMap) {
   return importers;
 }
 
-function findTransitiveImporters(directImporters, targetPath, reverseMap, maxDepth = 2) {
+/**
+ * Breadth-first transitive importer walk. `findDirect(path)` returns the direct
+ * importers of a given file as a Map; the lookup source (reverse map vs JS/TS
+ * graph) is supplied by the caller so this works for both resolution modes.
+ */
+function findTransitiveImporters(directImporters, targetPath, findDirect, maxDepth = 2) {
   const allImporters = new Map(directImporters);
   const processed = new Set([targetPath]);
   let currentLevel = [...directImporters.keys()];
@@ -197,7 +202,7 @@ function findTransitiveImporters(directImporters, targetPath, reverseMap, maxDep
       if (processed.has(filePath)) continue;
       processed.add(filePath);
 
-      const importers = findDirectImporters(filePath, reverseMap);
+      const importers = findDirect(filePath);
 
       for (const [path, info] of importers) {
         if (!allImporters.has(path) && !processed.has(path)) {
@@ -242,34 +247,6 @@ function findDirectJsTsImporters(relPath, graph) {
   }
 
   return importers;
-}
-
-function findTransitiveJsTsImporters(directImporters, targetRelPath, graph, maxDepth = 2) {
-  const allImporters = new Map(directImporters);
-  const processed = new Set([targetRelPath]);
-  let currentLevel = [...directImporters.keys()];
-
-  for (let depth = 1; depth < maxDepth && currentLevel.length > 0; depth++) {
-    const nextLevel = [];
-
-    for (const relPath of currentLevel) {
-      if (processed.has(relPath)) continue;
-      processed.add(relPath);
-
-      const importers = findDirectJsTsImporters(relPath, graph);
-
-      for (const [path, info] of importers) {
-        if (!allImporters.has(path) && !processed.has(path)) {
-          allImporters.set(path, { ...info, depth, via: basename(relPath) });
-          nextLevel.push(path);
-        }
-      }
-    }
-
-    currentLevel = nextLevel;
-  }
-
-  return allImporters;
 }
 
 function materializeGraphImporters(importers, projectRoot) {
@@ -446,7 +423,7 @@ if (useJsTsGraph) {
   const targetRelPath = relative(projectRoot, resolvedPath);
   const directImporters = findDirectJsTsImporters(targetRelPath, graph);
   const graphImporters = maxDepth > 1
-    ? findTransitiveJsTsImporters(directImporters, targetRelPath, graph, maxDepth)
+    ? findTransitiveImporters(directImporters, targetRelPath, relPath => findDirectJsTsImporters(relPath, graph), maxDepth)
     : directImporters;
   importers = materializeGraphImporters(graphImporters, projectRoot);
 } else {
@@ -458,7 +435,7 @@ if (useJsTsGraph) {
 
   const directImporters = findDirectImporters(resolvedPath, reverseMap);
   importers = maxDepth > 1
-    ? findTransitiveImporters(directImporters, resolvedPath, reverseMap, maxDepth)
+    ? findTransitiveImporters(directImporters, resolvedPath, filePath => findDirectImporters(filePath, reverseMap), maxDepth)
     : directImporters;
 }
 

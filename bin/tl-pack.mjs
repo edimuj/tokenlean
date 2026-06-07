@@ -32,6 +32,7 @@ import {
   parseCommonArgs,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
+import { shellQuote } from '../src/text-util.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -92,12 +93,6 @@ const PACKS = {
 
 function toolPath(name) {
   return join(__dirname, `tl-${name}.mjs`);
-}
-
-function shellQuote(value) {
-  if (!value) return '""';
-  if (/^[\w@./:=+-]+$/.test(value)) return value;
-  return JSON.stringify(value);
 }
 
 function formatToolCommand(name, args = []) {

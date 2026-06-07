@@ -25,6 +25,7 @@ import {
   parseCommonArgs,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
+import { shellQuote } from '../src/text-util.mjs';
 
 const HELP = `
 tl-advise - Recommend the next tokenlean commands for a task
@@ -147,12 +148,6 @@ function parseArgs(rawArgs) {
     list,
     goal: goalParts.join(' ').trim()
   };
-}
-
-function shellQuote(value) {
-  if (!value) return '""';
-  if (/^[\w@./:=+-]+$/.test(value)) return value;
-  return JSON.stringify(value);
 }
 
 function extractPrNumber(goal) {
