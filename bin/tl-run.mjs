@@ -329,6 +329,15 @@ function summarizeTest(stdout, stderr, exitCode) {
         else if (m[1] === 'skipped') { skipped = n; }
         else if (m[1] === 'tests') { total = n; }
       }
+
+      // Bun: counts print on their own line as " N pass" / " N fail" / " N skip"
+      // (anchored to the whole line so log noise like "1 failure detected" is ignored).
+      m = line.match(/^\s*(\d+)\s+pass(?:ed)?\s*$/i);
+      if (m) { passed = parseInt(m[1], 10); foundCounts = true; }
+      m = line.match(/^\s*(\d+)\s+fail(?:ed)?\s*$/i);
+      if (m) { failed = parseInt(m[1], 10); foundCounts = true; }
+      m = line.match(/^\s*(\d+)\s+skip(?:ped)?\s*$/i);
+      if (m) { skipped = parseInt(m[1], 10); }
     }
 
     // Go fallback: use per-package counts if no other runner was detected.
@@ -366,13 +375,18 @@ function summarizeTest(stdout, stderr, exitCode) {
   if (passed > 0) parts.push(`${passed} passed`);
   if (failed > 0) parts.push(`${failed} failed`);
   if (skipped > 0) parts.push(`${skipped} skipped`);
-  result.summary = parts.length > 0 ? parts.join(', ') : (exitCode === 0 ? 'all passed' : 'tests failed');
   result.parsed = foundCounts;
 
-  // When exit is non-zero but runner reports 0 failures, note it
-  // (common with Jest console warnings, unhandled promise warnings, etc.)
-  if (exitCode !== 0 && failed === 0 && foundCounts) {
-    result.summary += ` (exit ${exitCode})`;
+  if (exitCode !== 0 && failed === 0) {
+    // Fail closed: the command exited non-zero but no test failures were
+    // parsed — either an unparsed runner, or a non-test step in the command
+    // (a coverage/duplication guard, a post-test lint) failed. NEVER lead with
+    // a green "N passed"; surface the failure first so the result can't read
+    // as a pass at a glance. The parsed counts are kept as trailing context.
+    const detail = parts.length > 0 ? ` (${parts.join(', ')})` : '';
+    result.summary = `tests failed: exit ${exitCode}${detail}`;
+  } else {
+    result.summary = parts.length > 0 ? parts.join(', ') : (exitCode === 0 ? 'all passed' : 'tests failed');
   }
 
   // Extract failure details — only when the runner actually reports failures,
@@ -399,6 +413,7 @@ function summarizeTest(stdout, stderr, exitCode) {
         failStart =
           line.match(/^(\s*)?(FAIL|✕|✖|✗|×|✘)\s+(.+)/i) ||
           line.match(/^(\s*)?(FAILED):\s*(.+)/i) ||
+          line.match(/^\s*\(fail\)\s+(.+)/i) ||
           line.match(/^\s*\d+\)\s+(.+)/);
       }
 

@@ -250,6 +250,48 @@ describe('CLI regressions', () => {
     assert.deepStrictEqual(parsed.failures, []);
   });
 
+  it('TLT-065: tl-run fails closed when tests pass but the command exits non-zero', () => {
+    // Tests pass, but a trailing guard (coverage/duplication ratchet, post-test
+    // lint) fails the command. The summary must never read as a green pass.
+    const nodePath = JSON.stringify(process.execPath);
+    const script = "console.log('Tests: 10 passed, 10 total'); console.log('duplication ratchet: 0.42 exceeds baseline 0.40'); process.exit(1)";
+    const command = `${nodePath} -e ${JSON.stringify(script)}`;
+
+    const result = runCli(['bin/tl-run.mjs', command, '--type', 'test', '-j']);
+    assert.strictEqual(result.status, 1);
+    const parsed = JSON.parse(result.stdout);
+    assert.strictEqual(parsed.exitCode, 1);
+    assert.match(parsed.summary, /tests failed/);
+    assert.match(parsed.summary, /exit 1/);
+    // The pass count is preserved as context, but never leads the summary.
+    assert.doesNotMatch(parsed.summary, /^\s*10 passed/);
+  });
+
+  it('TLT-066: tl-run parses Bun-style pass/fail counts', () => {
+    // Bun prints counts on their own lines: " N pass" / " N fail" / " N skip".
+    const nodePath = JSON.stringify(process.execPath);
+    const script = "console.log('(fail) c fails'); console.log(' 2 pass'); console.log(' 1 fail'); console.log('Ran 3 tests across 1 file. [12.00ms]'); process.exit(1)";
+    const command = `${nodePath} -e ${JSON.stringify(script)}`;
+
+    const result = runCli(['bin/tl-run.mjs', command, '--type', 'test', '-j']);
+    assert.strictEqual(result.status, 1);
+    const parsed = JSON.parse(result.stdout);
+    assert.strictEqual(parsed.summary, '2 passed, 1 failed');
+    assert.ok(parsed.failures.some(f => /c fails/.test(f.name)), 'extracts the (fail) line');
+  });
+
+  it('TLT-067: tl-run keeps Bun all-pass green on exit 0', () => {
+    const nodePath = JSON.stringify(process.execPath);
+    const script = "console.log(' 5 pass'); console.log(' 0 fail'); console.log('Ran 5 tests across 1 file. [9.00ms]')";
+    const command = `${nodePath} -e ${JSON.stringify(script)}`;
+
+    const result = runCli(['bin/tl-run.mjs', command, '--type', 'test', '-j']);
+    assert.strictEqual(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+    assert.strictEqual(parsed.summary, '5 passed');
+    assert.deepStrictEqual(parsed.failures, []);
+  });
+
   it('TLT-009: tl-symbols function filter preserves fallback extraction for non-fast languages', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-symbols-fallback-'));
     const filePath = join(tempDir, 'main.swift');
