@@ -15,7 +15,7 @@ The tools agents use 90% of the time.
 | `tl impact`    | Blast radius — what depends on this file       | `tl impact src/auth.ts`          |
 | `tl run`       | Token-efficient command output (tests, builds) | `tl run "npm test"`              |
 | `tl tail`      | Token-efficient log tailing and summarization  | `tl tail logs/app.log`           |
-| `tl guard`     | Pre-commit check (secrets, TODOs, unused, circular; noisy details capped by default) | `tl guard` |
+| `tl guard`     | Pre-commit check (secrets, TODOs, unused, circular, raw control bytes; noisy details capped by default) | `tl guard` |
 | `tl commit-prep` | Pre-commit context: status + diff stat + log     | `tl commit-prep`            |
 | `tl push`      | Stage, commit, push in one call                    | `tl push "feat: caching"`  |
 | `tl publish`   | npm publish + wait until installable + optional global reinstall | `tl publish patch -g` |

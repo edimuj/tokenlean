@@ -239,22 +239,24 @@ export const TOOLS = [
   },
   {
     name: 'tl_guard',
-    description: 'Pre-commit quality check — scans for secrets, TODOs, unused exports, and circular dependencies.',
+    description: 'Pre-commit quality check — scans for secrets, TODOs, unused exports, circular dependencies, and raw control bytes (NUL) in tracked files.',
     schema: withCwd({
       noSecrets: z.boolean().optional().describe('Skip secrets check'),
       noTodos: z.boolean().optional().describe('Skip TODO/FIXME check'),
       noUnused: z.boolean().optional().describe('Skip unused exports check'),
       noCircular: z.boolean().optional().describe('Skip circular deps check'),
+      noCtrlbytes: z.boolean().optional().describe('Skip raw control byte (NUL) check'),
       strict: z.boolean().optional().describe('Treat warnings as failures'),
       full: z.boolean().optional().describe('Return all detail rows instead of the default capped summary'),
       detailLimit: z.number().optional().describe('Maximum detail rows per check (default 20)'),
     }),
-    handler: async ({ noSecrets, noTodos, noUnused, noCircular, strict, full, detailLimit, cwd }) => {
+    handler: async ({ noSecrets, noTodos, noUnused, noCircular, noCtrlbytes, strict, full, detailLimit, cwd }) => {
       const args = [];
       if (noSecrets) args.push('--no-secrets');
       if (noTodos) args.push('--no-todos');
       if (noUnused) args.push('--no-unused');
       if (noCircular) args.push('--no-circular');
+      if (noCtrlbytes) args.push('--no-ctrlbytes');
       if (strict) args.push('--strict');
       if (full) args.push('--full');
       if (detailLimit !== undefined) args.push('--detail-limit', String(detailLimit));

@@ -38,11 +38,12 @@ const __dirname = dirname(__filename);
 const HELP = `
 tl-guard - Pre-commit sanity check
 
-Runs 4 checks against your project and staged files:
+Runs 5 checks against your project and staged files:
   1. Secrets    — hardcoded secrets in staged files
   2. TODOs      — new TODO/FIXME/HACK/XXX in staged diff
   3. Unused     — unused exports across the project
   4. Circular   — circular import dependencies
+  5. CtrlBytes  — raw control bytes (NUL etc.) in tracked text files
 
 Usage: tl-guard [options]
 
@@ -51,6 +52,7 @@ Options:
   --no-todos            Skip TODO/FIXME check
   --no-unused           Skip unused exports check
   --no-circular         Skip circular deps check
+  --no-ctrlbytes        Skip raw control byte check
   --strict              Treat warnings as failures (exit 1)
   --fix                 Auto-fix: remove console.log statements from staged files
   --detail-limit N      Max detail rows per check (default: 20)
@@ -82,6 +84,7 @@ const skipChecks = {
   todos: rawArgs.includes('--no-todos'),
   unused: rawArgs.includes('--no-unused'),
   circular: rawArgs.includes('--no-circular'),
+  ctrlbytes: rawArgs.includes('--no-ctrlbytes'),
 };
 const strict = rawArgs.includes('--strict');
 const fix = rawArgs.includes('--fix');
@@ -402,6 +405,90 @@ function checkCircular(projectRoot) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Check 5: Raw control bytes (NUL etc.) in tracked text files
+// ─────────────────────────────────────────────────────────────
+//
+// A single raw NUL (0x00) makes ripgrep treat the whole file as binary, so
+// Grep silently returns "no matches" and agents conclude the code is missing.
+// plain `grep` can't find NULs (it treats them as line separators), so we read
+// bytes directly. Source should use the escape sequence ("\0", "\x1b") instead.
+
+// Bad = C0 controls except the common whitespace ones (\t \n \v \f \r).
+function isControlByte(b) {
+  return (b >= 0x00 && b <= 0x08) || (b >= 0x0e && b <= 0x1f);
+}
+
+function byteName(b) {
+  if (b === 0x00) return 'NUL';
+  if (b === 0x1b) return 'ESC';
+  return `0x${b.toString(16).padStart(2, '0')}`;
+}
+
+// Extensions git/agents treat as binary assets — skip without reading.
+const BINARY_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.avif', '.tiff', '.svgz',
+  '.mp3', '.wav', '.flac', '.ogg', '.m4a', '.aac',
+  '.mp4', '.mov', '.avi', '.mkv', '.webm', '.m4v',
+  '.zip', '.gz', '.tgz', '.bz2', '.xz', '.7z', '.rar', '.tar', '.zst',
+  '.woff', '.woff2', '.ttf', '.otf', '.eot',
+  '.pdf', '.wasm', '.exe', '.dll', '.so', '.dylib', '.bin', '.dat',
+  '.db', '.sqlite', '.sqlite3', '.class', '.o', '.a', '.node', '.pyc',
+  '.heic', '.psd', '.ai', '.sketch', '.keystore', '.jks'
+]);
+
+const MAX_SCAN_BYTES = 5 * 1024 * 1024; // skip files larger than this
+
+function checkControlBytes(projectRoot) {
+  const tracked = gitCommand(['ls-files'], { cwd: projectRoot });
+  if (tracked === null) {
+    return { status: 'pass', count: 0, details: [], note: 'not a git repo or no tracked files' };
+  }
+  const files = tracked.split('\n').filter(Boolean);
+  if (files.length === 0) {
+    return { status: 'pass', count: 0, details: [] };
+  }
+
+  const findings = [];
+  for (const rel of files) {
+    if (BINARY_EXTENSIONS.has(extname(rel).toLowerCase())) continue;
+
+    const absPath = join(projectRoot, rel);
+    let buf;
+    try {
+      buf = readFileSync(absPath);
+    } catch {
+      continue; // deleted/staged-removed or unreadable
+    }
+    if (buf.length === 0 || buf.length > MAX_SCAN_BYTES) continue;
+
+    // Single pass: earliest offending byte + total count (for the binary ratio).
+    let firstOffset = -1;
+    let controlCount = 0;
+    for (let i = 0; i < buf.length; i++) {
+      if (isControlByte(buf[i])) {
+        controlCount++;
+        if (firstOffset === -1) firstOffset = i;
+      }
+    }
+    if (firstOffset === -1) continue;
+
+    // Skip genuine binaries with no recognised extension. A real/compressed
+    // binary has *many* control bytes (~10%+ of its content); a text file with a
+    // stray byte has just one or two. Require both a high ratio AND an absolute
+    // floor so a short source file with a single NUL is never mistaken for binary.
+    if (controlCount >= 5 && controlCount / buf.length > 0.02) continue;
+
+    const firstByte = buf[firstOffset];
+    findings.push({ file: rel, offset: firstOffset, byte: firstByte, name: byteName(firstByte) });
+  }
+
+  if (findings.length === 0) {
+    return { status: 'pass', count: 0, details: [] };
+  }
+  return { status: 'warn', count: findings.length, details: findings };
+}
+
+// ─────────────────────────────────────────────────────────────
 // Auto-fix: remove console.log from staged files
 // ─────────────────────────────────────────────────────────────
 
@@ -471,6 +558,10 @@ if (!skipChecks.circular) {
   checks.circular = limitDetails(checkCircular(projectRoot));
 }
 
+if (!skipChecks.ctrlbytes) {
+  checks.ctrlbytes = limitDetails(checkControlBytes(projectRoot));
+}
+
 // Compute summary
 let passed = 0, warnings = 0, failed = 0;
 for (const result of Object.values(checks)) {
@@ -491,12 +582,14 @@ const CHECK_LABELS = {
   todos: 'TODOs',
   unused: 'Unused',
   circular: 'Circular',
+  ctrlbytes: 'CtrlBytes',
 };
 const CHECK_PASS_MSG = {
   secrets: `No secrets in staged files (${stagedFiles.length} files)`,
   todos: 'No TODO/FIXME introduced',
   unused: 'No unused exports detected',
   circular: 'No circular dependencies',
+  ctrlbytes: 'No raw control bytes in tracked files',
 };
 
 out.header('tl-guard \u2014 Pre-commit sanity check');
@@ -512,7 +605,8 @@ for (const [name, result] of Object.entries(checks)) {
   } else {
     // Fail or warn — show count and details
     const verb = result.status === 'fail' ? 'found' : 'detected';
-    out.add(`  ${icon} ${label} ${result.count} ${name === 'circular' ? 'cycle(s)' : 'issue(s)'} ${verb}`);
+    const noun = name === 'circular' ? 'cycle(s)' : name === 'ctrlbytes' ? 'file(s)' : 'issue(s)';
+    out.add(`  ${icon} ${label} ${result.count} ${noun} ${verb}`);
 
     // Show details indented
     for (const d of result.details) {
@@ -524,10 +618,15 @@ for (const [name, result] of Object.entries(checks)) {
         out.add(`                     ${d.file}: ${d.name}`);
       } else if (name === 'circular') {
         out.add(`                     ${d.cycle}`);
+      } else if (name === 'ctrlbytes') {
+        out.add(`                     ${d.file} (first ${d.name} at byte ${d.offset})`);
       }
     }
     if (result.omittedDetails > 0) {
       out.add(`                     ... ${result.omittedDetails} more; rerun with --full for all details`);
+    }
+    if (name === 'ctrlbytes') {
+      out.add(`                     fix: replace the literal byte with an escape sequence (e.g. "\\0", "\\x1b")`);
     }
   }
 }
