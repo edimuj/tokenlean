@@ -139,6 +139,7 @@ npm link
 
 # What changed recently?         tl diff --staged
 # Is it safe to commit?          tl guard              # Caps noisy details; use --full for all
+# Any duplicate functions?       tl dupes src/ --near  # Copy-paste, renamed clones, repeated names
 # Find real usage examples       tl example useAuth
 # Summarize noisy logs            tl tail logs/app.log
 # What's the tech stack?         tl stack

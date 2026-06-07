@@ -41,6 +41,7 @@
     "tl-component": "bin/tl-component.mjs",
     "tl-deps": "bin/tl-deps.mjs",
     "tl-diff": "bin/tl-diff.mjs",
+    "tl-dupes": "bin/tl-dupes.mjs",
     "tl-docs": "bin/tl-docs.mjs",
     "tl-entry": "bin/tl-entry.mjs",
     "tl-errors": "bin/tl-errors.mjs",

@@ -265,6 +265,33 @@ export const TOOLS = [
     },
   },
   {
+    name: 'tl_dupes',
+    description: 'Find duplicate / near-duplicate functions across a codebase — copy-paste, renamed clones, and repeated names. Run before writing a new helper, or for periodic cleanup.',
+    schema: withCwd({
+      path: z.string().optional().describe('Directory or file to scan (default: project root)'),
+      near: z.number().optional().describe('Also report near-duplicates at this similarity threshold 0-1 (e.g. 0.85)'),
+      minTokens: z.number().optional().describe('Ignore functions smaller than N tokens (default 12)'),
+      exactOnly: z.boolean().optional().describe('Only report identical bodies'),
+      noNames: z.boolean().optional().describe('Skip the repeated-names tier'),
+      noStructural: z.boolean().optional().describe('Skip the structural (renamed-clone) tier'),
+      tests: z.boolean().optional().describe('Include test/spec files (excluded by default)'),
+      full: z.boolean().optional().describe('Show all groups instead of the default cap'),
+    }),
+    handler: async ({ path, near, minTokens, exactOnly, noNames, noStructural, tests, full, cwd }) => {
+      const args = [];
+      if (path) args.push(path);
+      if (near !== undefined) args.push('--near', String(near));
+      if (minTokens !== undefined) args.push('--min-tokens', String(minTokens));
+      if (exactOnly) args.push('--exact-only');
+      if (noNames) args.push('--no-names');
+      if (noStructural) args.push('--no-structural');
+      if (tests) args.push('--tests');
+      if (full) args.push('--full');
+      args.push('-j');
+      return dispatchTool('dupes', args, { cwd });
+    },
+  },
+  {
     name: 'tl_diff',
     description: 'Token-efficient git diff summary — changed files categorized by risk with context.',
     schema: withCwd({
