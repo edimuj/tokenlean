@@ -24,6 +24,9 @@ Create in your project root or `~/.tokenleanrc.json` globally.
   "importantFiles": [
     "ARCHITECTURE.md"
   ],
+  "externalContractFiles": [
+    "src/my-copied-plugin.js"
+  ],
   "searchPatterns": {
     "hooks": {
       "description": "Find React hooks",
@@ -47,6 +50,8 @@ Create in your project root or `~/.tokenleanrc.json` globally.
 ```
 
 Config values extend built-in defaults (they don't replace them).
+
+`externalContractFiles` are project-relative paths copied/generated verbatim into another tool (so they can't import from your source). Their duplicate helpers are by-design, so `tl dupes`, `tl unused`, and `tl lookup` exclude them from their indexes by default. `tl dupes --include-contracts` opts them back in.
 
 ## Caching
 

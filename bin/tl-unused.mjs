@@ -27,7 +27,7 @@ import {
   parseCommonArgs,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
-import { findProjectRoot, findCodeFiles, CODE_EXTENSIONS } from '../src/project.mjs';
+import { findProjectRoot, findCodeFiles, CODE_EXTENSIONS, getExternalContractFiles } from '../src/project.mjs';
 import { withCache } from '../src/cache.mjs';
 import { ensureRipgrep, batchRipgrep } from '../src/traverse.mjs';
 
@@ -183,7 +183,7 @@ function extractImports(content) {
 // ─────────────────────────────────────────────────────────────
 
 function analyzeUnusedExports(files, projectRoot, targetFiles = null) {
-  const externalContractFiles = new Set(['src/opencode-plugin.js']);
+  const externalContractFiles = getExternalContractFiles();
   const checkFiles = (targetFiles || files).filter(file =>
     !externalContractFiles.has(relative(projectRoot, file))
   );

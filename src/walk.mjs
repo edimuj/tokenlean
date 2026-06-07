@@ -7,7 +7,7 @@
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
-import { shouldSkip, isCodeFile, detectLanguage, findProjectRoot } from './project.mjs';
+import { shouldSkip, isCodeFile, detectLanguage, findProjectRoot, getExternalContractFiles } from './project.mjs';
 import { extractFunctions } from './dupes.mjs';
 
 const TEST_MARKERS = ['.test.', '.spec.', '__tests__', '__mocks__'];
@@ -51,22 +51,31 @@ function collectSourceFiles(targetPath, opts = {}) {
 
 /**
  * Build a flat index of all functions under a path.
+ *
+ * External-contract files (e.g. src/opencode-plugin.js — copied verbatim into
+ * another tool's config, so their duplicate helpers are by-design) are excluded
+ * by default; pass `includeContracts: true` to index them anyway.
  * @returns {{functions:object[], fileCount:number, projectRoot:string, exists:boolean}}
  */
 export function buildFunctionIndex(targetPath, opts = {}) {
+  const { includeContracts = false } = opts;
   const abs = resolve(targetPath);
   const { files, isDir, exists } = collectSourceFiles(abs, opts);
   const projectRoot = findProjectRoot(isDir ? abs : resolve(abs, '..'));
+  const contracts = includeContracts ? null : getExternalContractFiles();
 
   const functions = [];
+  let fileCount = 0;
   for (const file of files) {
+    const rel = relative(projectRoot, file) || file;
+    if (contracts && contracts.has(rel)) continue;
+    fileCount++;
     const lang = detectLanguage(file);
     let source;
     try { source = readFileSync(file, 'utf8'); } catch { continue; }
-    const rel = relative(projectRoot, file) || file;
     for (const fn of extractFunctions(source, lang)) {
       functions.push({ ...fn, file: rel, lang });
     }
   }
-  return { functions, fileCount: files.length, projectRoot, exists };
+  return { functions, fileCount, projectRoot, exists };
 }

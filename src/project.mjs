@@ -49,6 +49,12 @@ const DEFAULT_IMPORTANT_DIRS = [
   'test', '__tests__', 'spec', 'cmd', 'pkg', 'internal'
 ];
 
+// Project-relative paths copied verbatim into another tool's config (e.g.
+// tl-hook install opencode → ~/.config/opencode/plugins/). They cannot import
+// from src/, so their duplicate helpers are by-design — excluded from
+// dupe/unused/lookup indexes. Extend via .tokenleanrc.json externalContractFiles.
+const DEFAULT_EXTERNAL_CONTRACT_FILES = ['src/opencode-plugin.js'];
+
 // ─────────────────────────────────────────────────────────────
 // Combined Sets (defaults + user config extensions)
 // ─────────────────────────────────────────────────────────────
@@ -64,7 +70,8 @@ function getCombinedSets() {
     skipDirs: new Set([...DEFAULT_SKIP_DIRS, ...(config.skipDirs || [])]),
     skipExtensions: new Set([...DEFAULT_SKIP_EXTENSIONS, ...(config.skipExtensions || [])]),
     importantFiles: new Set([...DEFAULT_IMPORTANT_FILES, ...(config.importantFiles || [])]),
-    importantDirs: new Set([...DEFAULT_IMPORTANT_DIRS, ...(config.importantDirs || [])])
+    importantDirs: new Set([...DEFAULT_IMPORTANT_DIRS, ...(config.importantDirs || [])]),
+    externalContractFiles: new Set([...DEFAULT_EXTERNAL_CONTRACT_FILES, ...(config.externalContractFiles || [])])
   };
 
   return _cachedSets;
@@ -75,6 +82,7 @@ export function getSkipDirs() { return getCombinedSets().skipDirs; }
 export function getSkipExtensions() { return getCombinedSets().skipExtensions; }
 export function getImportantFiles() { return getCombinedSets().importantFiles; }
 export function getImportantDirs() { return getCombinedSets().importantDirs; }
+export function getExternalContractFiles() { return getCombinedSets().externalContractFiles; }
 
 // Clear cache (useful when config changes)
 export function clearProjectCache() { _cachedSets = null; }

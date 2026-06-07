@@ -38,6 +38,10 @@ const DEFAULT_CONFIG = {
   skipExtensions: [],
   importantDirs: [],
   importantFiles: [],
+  // Files copied/generated verbatim into another project — intentionally
+  // self-contained, so their duplicate helpers are by-design, not cleanup
+  // targets. Excluded from dupe/unused/lookup indexes (extends built-ins).
+  externalContractFiles: [],
   searchPatterns: {
     hooks: {
       description: 'React hooks usage',

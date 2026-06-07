@@ -74,3 +74,27 @@ describe('tl-dupes detection', () => {
     assert.equal(json.structural, undefined);
   });
 });
+
+describe('tl-dupes external-contract exclusion', () => {
+  let dir;
+  const body = 'const out = []; for (const x of input) { if (x.ok) { out.push(x.id); } } return out;';
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'tl-dupes-contract-'));
+    writeFileSync(join(dir, 'a.js'), `function getId() {\n  ${body}\n}\n`);
+    writeFileSync(join(dir, 'contract.js'), `function getId() {\n  ${body}\n}\n`);
+    writeFileSync(join(dir, '.tokenleanrc.json'), JSON.stringify({ externalContractFiles: ['contract.js'] }));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('excludes contract files by default (no dupe across the pair)', () => {
+    const { json, status } = run(['.', '-j'], dir);
+    assert.equal(status, 0);
+    assert.equal(json.exact.length, 0);
+  });
+
+  it('--include-contracts indexes them, surfacing the dupe', () => {
+    const { json } = run(['.', '--include-contracts', '-j'], dir);
+    assert.equal(json.exact.length, 1);
+    assert.equal(json.exact[0].count, 2);
+  });
+});

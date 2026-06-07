@@ -54,6 +54,7 @@ Options:
   --no-structural       Skip the structural (renamed-clone) tier
   --exact-only          Only report identical bodies
   --tests               Include test/spec files (excluded by default)
+  --include-contracts   Include external-contract files (excluded by default)
   --strict              Exit 1 if any duplicates are found (for CI)
   --full                Show all groups (default caps each tier)
 ${COMMON_OPTIONS_HELP}
@@ -82,6 +83,7 @@ let includeNames = true;
 let includeStructural = true;
 let exactOnly = false;
 let includeTests = false;
+let includeContracts = false;
 let strict = false;
 let full = false;
 
@@ -104,6 +106,7 @@ for (let i = 0; i < rem.length; i++) {
   else if (arg === '--no-structural') includeStructural = false;
   else if (arg === '--exact-only') exactOnly = true;
   else if (arg === '--tests') includeTests = true;
+  else if (arg === '--include-contracts') includeContracts = true;
   else if (arg === '--strict') strict = true;
   else if (arg === '--full') full = true;
   else if (!arg.startsWith('-')) targetPath = arg;
@@ -113,7 +116,7 @@ for (let i = 0; i < rem.length; i++) {
 if (exactOnly) { includeNames = false; includeStructural = false; near = 0; }
 
 // ── Gather + index functions ──
-const { functions, fileCount, exists } = buildFunctionIndex(targetPath, { includeTests });
+const { functions, fileCount, exists } = buildFunctionIndex(targetPath, { includeTests, includeContracts });
 if (!exists) { console.error(`Error: path not found: ${targetPath}`); process.exit(1); }
 if (fileCount === 0) { console.error('No source files found to scan.'); process.exit(1); }
 
