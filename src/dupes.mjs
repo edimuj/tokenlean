@@ -120,8 +120,10 @@ function extractBrace(src) {
       if (src[braceIdx] !== '{' || byStart.has(braceIdx)) continue;
       const end = matchBrace(src, braceIdx);
       if (end === -1) continue;
+      const signature = m[0].slice(0, -1).replace(/^[^\w$]+/, '').replace(/\s+/g, ' ').trim();
       byStart.set(braceIdx, {
         name,
+        signature,
         line: lineOf(src, m.index + (m[0].startsWith('\n') ? 1 : 0)),
         endLine: lineOf(src, end),
         body: src.slice(braceIdx + 1, end)
@@ -150,7 +152,7 @@ function extractPython(src) {
       if (ind <= indent) break;
       bodyLines.push(ln);
     }
-    fns.push({ name, line: i + 1, endLine: j, body: bodyLines.join('\n') });
+    fns.push({ name, signature: lines[i].trim(), line: i + 1, endLine: j, body: bodyLines.join('\n') });
   }
   return fns;
 }

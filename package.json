@@ -54,6 +54,7 @@
     "tl-history": "bin/tl-history.mjs",
     "tl-hotspots": "bin/tl-hotspots.mjs",
     "tl-impact": "bin/tl-impact.mjs",
+    "tl-lookup": "bin/tl-lookup.mjs",
     "tl-lint-config": "bin/tl-lint-config.mjs",
     "tl-monorepo": "bin/tl-monorepo.mjs",
     "tl-name": "bin/tl-name.mjs",

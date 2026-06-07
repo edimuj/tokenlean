@@ -17,6 +17,7 @@ The tools agents use 90% of the time.
 | `tl tail`      | Token-efficient log tailing and summarization  | `tl tail logs/app.log`           |
 | `tl guard`     | Pre-commit check (secrets, TODOs, unused, circular, raw control bytes; noisy details capped by default) | `tl guard` |
 | `tl dupes`     | Find duplicate / near-duplicate functions (copy-paste, renamed clones, repeated names) | `tl dupes src/ --near` |
+| `tl lookup`    | Find an existing function by name/intent before writing a new one (dupe prevention) | `tl lookup "strip ansi"` |
 | `tl commit-prep` | Pre-commit context: status + diff stat + log     | `tl commit-prep`            |
 | `tl push`      | Stage, commit, push in one call                    | `tl push "feat: caching"`  |
 | `tl publish`   | npm publish + wait until installable + optional global reinstall | `tl publish patch -g` |

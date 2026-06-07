@@ -292,6 +292,26 @@ export const TOOLS = [
     },
   },
   {
+    name: 'tl_lookup',
+    description: 'Find an existing function by name or intent BEFORE writing a new helper — prevents duplicate utility functions. Search first; reuse what it returns instead of creating a near-identical copy.',
+    schema: withCwd({
+      query: z.string().describe('Function name or intent phrase, e.g. "getUserId" or "format elapsed time"'),
+      path: z.string().optional().describe('Directory or file to search (default: project root)'),
+      limit: z.number().optional().describe('Max results (default 15)'),
+      minScore: z.number().optional().describe('Minimum relevance 0-1 (default 0.3)'),
+      tests: z.boolean().optional().describe('Include test/spec files (excluded by default)'),
+    }),
+    handler: async ({ query, path, limit, minScore, tests, cwd }) => {
+      const args = [query];
+      if (path) args.push(path);
+      if (limit !== undefined) args.push('-l', String(limit));
+      if (minScore !== undefined) args.push('--min-score', String(minScore));
+      if (tests) args.push('--tests');
+      args.push('-j');
+      return dispatchTool('lookup', args, { cwd });
+    },
+  },
+  {
     name: 'tl_diff',
     description: 'Token-efficient git diff summary — changed files categorized by risk with context.',
     schema: withCwd({

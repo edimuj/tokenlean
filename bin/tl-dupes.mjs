@@ -21,15 +21,13 @@ if (process.argv.includes('--prompt')) {
   process.exit(0);
 }
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, extname, relative, resolve } from 'node:path';
 import {
   createOutput,
   parseCommonArgs,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
-import { detectLanguage, isCodeFile, shouldSkip, findProjectRoot } from '../src/project.mjs';
-import { extractFunctions, findDuplicates } from '../src/dupes.mjs';
+import { findDuplicates } from '../src/dupes.mjs';
+import { buildFunctionIndex } from '../src/walk.mjs';
 
 const HELP = `
 tl-dupes - Find duplicate and near-duplicate functions
@@ -114,53 +112,10 @@ for (let i = 0; i < rem.length; i++) {
 
 if (exactOnly) { includeNames = false; includeStructural = false; near = 0; }
 
-// ── Gather files ──
-const root = resolve(targetPath);
-let stat;
-try { stat = statSync(root); } catch { console.error(`Error: path not found: ${targetPath}`); process.exit(1); }
-
-const TEST_MARKERS = ['.test.', '.spec.', '__tests__', '__mocks__'];
-function isTestFile(name) {
-  const lower = name.toLowerCase();
-  return TEST_MARKERS.some(m => lower.includes(m));
-}
-
-function gather(dir, acc) {
-  let entries;
-  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
-  for (const e of entries) {
-    const full = join(dir, e.name);
-    if (e.isDirectory()) {
-      if (!shouldSkip(e.name, true)) gather(full, acc);
-    } else if (e.isFile()) {
-      if (shouldSkip(e.name, false)) continue;
-      if (!includeTests && isTestFile(e.name)) continue;
-      if (isCodeFile(full)) acc.push(full);
-    }
-  }
-}
-
-const files = [];
-if (stat.isDirectory()) gather(root, files);
-else if (isCodeFile(root)) files.push(root);
-
-if (files.length === 0) {
-  console.error('No source files found to scan.');
-  process.exit(1);
-}
-
-// ── Extract functions ──
-const projectRoot = findProjectRoot(stat.isDirectory() ? root : resolve(root, '..'));
-const functions = [];
-for (const file of files) {
-  const lang = detectLanguage(file);
-  let source;
-  try { source = readFileSync(file, 'utf8'); } catch { continue; }
-  const rel = relative(projectRoot, file) || file;
-  for (const fn of extractFunctions(source, lang)) {
-    functions.push({ ...fn, file: rel, lang });
-  }
-}
+// ── Gather + index functions ──
+const { functions, fileCount, exists } = buildFunctionIndex(targetPath, { includeTests });
+if (!exists) { console.error(`Error: path not found: ${targetPath}`); process.exit(1); }
+if (fileCount === 0) { console.error('No source files found to scan.'); process.exit(1); }
 
 const result = findDuplicates(functions, {
   minTokens,
@@ -175,7 +130,7 @@ const CAP = full ? Infinity : 25;
 
 const totalDupes = result.exact.length + result.structural.length + result.near.length;
 
-out.header(`tl-dupes — ${files.length} files, ${result.total} functions (${result.scanned} non-trivial ≥${minTokens} tok)`);
+out.header(`tl-dupes — ${fileCount} files, ${result.total} functions (${result.scanned} non-trivial ≥${minTokens} tok)`);
 out.blank();
 
 function renderGroups(title, groups, lineFor) {
@@ -222,7 +177,7 @@ if (includeNames) parts.push(`${result.names.length} repeated-name`);
 out.stats(parts.join(', '));
 
 // JSON data
-out.setData('files', files.length);
+out.setData('files', fileCount);
 out.setData('functions', result.total);
 out.setData('exact', result.exact);
 if (includeStructural) out.setData('structural', result.structural);
