@@ -7,6 +7,7 @@
  */
 
 import { execFile, spawn } from 'node:child_process';
+import { statSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,12 +17,31 @@ const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const binDir = join(__dirname, '..', 'bin');
 
+// Validate an explicitly-provided working directory before spawning. Node's
+// spawn reports a missing cwd as "spawn <execPath> ENOENT" (pointing at node,
+// not the directory), which masks the real cause — e.g. a worktree removed
+// mid-operation. Fail closed with an actionable message instead.
+function checkCwd(cwd) {
+  if (!cwd) return null;
+  try {
+    if (!statSync(cwd).isDirectory()) {
+      return `Working directory is not a directory: ${cwd}`;
+    }
+  } catch (err) {
+    if (err.code === 'ENOENT') return `Working directory does not exist: ${cwd}`;
+    return `Working directory is not accessible: ${cwd} (${err.code || err.message})`;
+  }
+  return null;
+}
+
 // ─────────────────────────────────────────────────────────────
 // Subprocess dispatch
 // ─────────────────────────────────────────────────────────────
 
 async function runCli(tool, args = [], { timeout = 60000, maxBuffer = 50 * 1024 * 1024, cwd } = {}) {
   const toolPath = join(binDir, `tl-${tool}.mjs`);
+  const cwdError = checkCwd(cwd);
+  if (cwdError) return { stdout: '', stderr: cwdError, ok: false };
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [toolPath, ...args], {
       timeout,
@@ -49,6 +69,8 @@ function textResult(text, isError = false) {
 
 async function runCliWithStdin(tool, args = [], stdinData = '', { timeout = 60000, maxBuffer = 50 * 1024 * 1024, cwd } = {}) {
   const toolPath = join(binDir, `tl-${tool}.mjs`);
+  const cwdError = checkCwd(cwd);
+  if (cwdError) return { stdout: '', stderr: cwdError, ok: false };
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [toolPath, ...args], {
       timeout,

@@ -149,4 +149,29 @@ describe('MCP tool definitions', () => {
       /at least one of/i
     );
   });
+
+  it('tl_run reports a missing cwd clearly instead of "spawn node ENOENT"', async () => {
+    const tool = TOOLS.find(t => t.name === 'tl_run');
+    const missing = join(tmpdir(), 'tokenlean-no-such-worktree-xyz', 'gone');
+    const result = await tool.handler({ command: 'echo hi', cwd: missing });
+    assert.strictEqual(result.isError, true);
+    const text = result.content[0].text;
+    assert.match(text, /Working directory does not exist/);
+    assert.match(text, new RegExp(missing.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.doesNotMatch(text, /ENOENT/);
+  });
+
+  it('tl_run rejects a cwd that exists but is a file', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-cwd-file-'));
+    const filePath = join(tempDir, 'not-a-dir.txt');
+    try {
+      writeFileSync(filePath, 'x', 'utf-8');
+      const tool = TOOLS.find(t => t.name === 'tl_run');
+      const result = await tool.handler({ command: 'echo hi', cwd: filePath });
+      assert.strictEqual(result.isError, true);
+      assert.match(result.content[0].text, /not a directory/i);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
