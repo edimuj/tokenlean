@@ -22,6 +22,10 @@ Scan -> Triage -> Mitigate -> Verify -> Ratchet
 tl dupes --near        # structural + near first; tests excluded by default
 ```
 
+Via the MCP tool, `near` is a **number** (similarity threshold), not a flag:
+`mcp__callmux__tl_dupes { near: 0.85 }`. `near: true` fails schema validation —
+the CLI's bare `--near` defaults that threshold for you.
+
 Files copied verbatim into another tool (a plugin shipped into a user's config
 dir) are **external contracts** — their duplicate helpers are by-design. `tl
 dupes` excludes them by default. Mark your own in `.tokenleanrc.json`:
