@@ -215,6 +215,7 @@ Ready-made workflows following the [Agent Skills](https://agentskills.io) open f
 | Write tests | Adding behavior-focused tests that match project conventions | [`write-tests`](skills/claude/write-tests/SKILL.md) | [`write-tests`](skills/codex/write-tests/SKILL.md) |
 | Upgrade deps | Auditing usage and changelogs before dependency bumps | [`upgrade-deps`](skills/claude/upgrade-deps/SKILL.md) | [`upgrade-deps`](skills/codex/upgrade-deps/SKILL.md) |
 | Migrate framework | Running incremental migrations in dependency-safe batches | [`migrate-framework`](skills/claude/migrate-framework/SKILL.md) | [`migrate-framework`](skills/codex/migrate-framework/SKILL.md) |
+| Dedup | Acting on `tl dupes` — triage, consolidate the second home, ratchet it shut | [`dedup`](skills/claude/dedup/SKILL.md) | [`dedup`](skills/codex/dedup/SKILL.md) |
 
 Install the variant for your agent:
 
