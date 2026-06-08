@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { TOOLS } from './mcp-tools.mjs';
+import { TOOLS, withCwdHint } from './mcp-tools.mjs';
 
 describe('MCP tool definitions', () => {
   it('exposes context-governor tools', () => {
@@ -173,5 +173,36 @@ describe('MCP tool definitions', () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('withCwdHint', () => {
+  it('appends a cwd hint to "Not found" errors when no cwd was passed', () => {
+    const out = withCwdHint('Not found: src/mcp.ts', {});
+    assert.match(out, /Not found: src\/mcp\.ts/);
+    assert.match(out, /MCP server's working dir/);
+    assert.match(out, /pass cwd=<your project root> or use absolute paths/);
+    assert.ok(out.includes(process.cwd()));
+  });
+
+  it('tailors the hint when an explicit cwd was passed', () => {
+    const out = withCwdHint('Not found: src/mcp.ts', { cwd: '/tmp/project' });
+    assert.match(out, /ran with cwd=\/tmp\/project/);
+    assert.match(out, /check the path is correct relative to that dir/);
+  });
+
+  it('covers Go module path errors (matches vent #66)', () => {
+    const out = withCwdHint('directory prefix . does not contain main module', {});
+    assert.match(out, /Hint: ran with cwd=/);
+  });
+
+  it('leaves non-path errors untouched', () => {
+    const msg = 'Invalid filter: "frob". Must be one of: function, class';
+    assert.strictEqual(withCwdHint(msg, {}), msg);
+  });
+
+  it('handles empty/undefined input safely', () => {
+    assert.strictEqual(withCwdHint('', {}), '');
+    assert.strictEqual(withCwdHint(undefined, {}), undefined);
   });
 });

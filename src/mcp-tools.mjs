@@ -109,22 +109,40 @@ async function runCliWithStdin(tool, args = [], stdinData = '', { timeout = 6000
   });
 }
 
+// Path-resolution failures look like "Not found: src/x.ts" (tl tools), ENOENT,
+// or Go's "directory prefix ... does not contain main module". When the MCP
+// server's cwd differs from the caller's session/worktree (a shared/global
+// server defaults to wherever it was launched, often $HOME), relative paths
+// silently miss and the bare error gives no clue why. Append the effective cwd
+// and tell the agent to pass `cwd` or absolute paths — turning a confusing
+// "Not found" into a self-correcting instruction.
+const PATH_ERROR_RE = /\bNot found:|\bENOENT\b|no such file or directory|does not contain main module|cannot find/i;
+
+export function withCwdHint(text, opts) {
+  if (!text || !PATH_ERROR_RE.test(text)) return text;
+  const effectiveCwd = opts?.cwd || process.cwd();
+  if (opts?.cwd) {
+    return `${text}\n\nHint: ran with cwd=${effectiveCwd}. Relative paths resolve against it — check the path is correct relative to that dir, or use an absolute path.`;
+  }
+  return `${text}\n\nHint: ran with cwd=${effectiveCwd} (the MCP server's working dir, which may differ from your session/project/worktree). For relative paths, pass cwd=<your project root> or use absolute paths.`;
+}
+
 async function dispatchTool(tool, args, opts) {
   const { stdout, stderr, ok } = await runCli(tool, args, opts);
-  if (!ok && !stdout) return textResult(stderr || 'Tool failed with no output', true);
+  if (!ok && !stdout) return textResult(withCwdHint(stderr || 'Tool failed with no output', opts), true);
   // Return stdout; append stderr as note if present and tool succeeded
   const text = ok && stderr ? `${stdout}\n\n[stderr: ${stderr}]` : stdout;
-  return textResult(text || '(no output)', !ok);
+  return textResult(ok ? (text || '(no output)') : withCwdHint(text || '(no output)', opts), !ok);
 }
 
 async function dispatchToolWithStdin(tool, args, stdinData, opts) {
   const { stdout, stderr, ok } = await runCliWithStdin(tool, args, stdinData, opts);
-  if (!ok && !stdout) return textResult(stderr || 'Tool failed with no output', true);
+  if (!ok && !stdout) return textResult(withCwdHint(stderr || 'Tool failed with no output', opts), true);
   const text = ok && stderr ? `${stdout}\n\n[stderr: ${stderr}]` : stdout;
-  return textResult(text || '(no output)', !ok);
+  return textResult(ok ? (text || '(no output)') : withCwdHint(text || '(no output)', opts), !ok);
 }
 
-const cwdSchema = z.string().optional().describe('Working directory to run the tool in. Useful for shared MCP servers; defaults to the MCP server cwd.');
+const cwdSchema = z.string().optional().describe("Working directory for the tool. The MCP server's default cwd may NOT match your session/project/worktree (a shared/global server runs from wherever it was launched). If your file paths are relative, set this to your project root — or pass absolute paths — to avoid \"Not found\" errors.");
 
 function withCwd(schema) {
   return { ...schema, cwd: cwdSchema };
