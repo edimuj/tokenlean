@@ -67,6 +67,10 @@ const DEFAULT_TIMEOUT = 120000;
 const MAX_BUFFER = 50 * 1024 * 1024;
 // Grace period between SIGTERM and SIGKILL when terminating the process group.
 const KILL_GRACE_MS = 2000;
+// Grace period after the child process exits to let 'close' flush any buffered
+// pipe output. If 'close' never fires (an escaped grandchild holds the pipe),
+// we finish anyway once this elapses rather than hang forever. See runCommand.
+const CLOSE_GRACE_MS = 1000;
 
 function sampleTextForAnalysis(text, maxChars = ANALYSIS_CHAR_LIMIT) {
   if (!text || text.length <= maxChars) return text;
@@ -128,6 +132,7 @@ function runCommand(command, timeout) {
     let timedOut = false;
     let settled = false;
     let killTimer = null;
+    let graceTimer = null;
 
     // Kill the child's whole process group; fall back to the bare child if the
     // group signal fails (e.g. the leader already exited).
@@ -163,6 +168,7 @@ function runCommand(command, timeout) {
       settled = true;
       if (timer) clearTimeout(timer);
       if (killTimer) clearTimeout(killTimer);
+      if (graceTimer) clearTimeout(graceTimer);
       resolve({
         stdout: stripAnsi(stdout),
         stderr: stripAnsi(stderr),
@@ -172,16 +178,35 @@ function runCommand(command, timeout) {
       });
     };
 
+    // Map an (code, signal) pair to our exit code, identically for 'exit' and
+    // 'close'. Timeout always wins (124).
+    const resolveCode = (code, signal) => {
+      if (timedOut) return 124; // standard timeout exit code
+      if (code === null) return signal ? 1 : 0;
+      return code;
+    };
+
     child.on('error', (err) => {
       // Spawn-level failure (e.g. shell missing). No process to wait on.
       stderr = stderr || err.message;
       finish(127);
     });
 
+    // 'close' fires only after the child AND every inherited stdio pipe reaches
+    // EOF. A grandchild that escaped the process group (a daemonized/setsid
+    // worker — e.g. some test runners' workers) keeps the stdout/stderr pipe
+    // open, so 'close' can NEVER fire even though the command itself finished or
+    // was killed. That left agents hanging indefinitely past the timeout. So we
+    // also resolve on 'exit' (the process is gone) after a short grace for
+    // 'close' to flush buffered output; whichever fires first wins.
+    child.on('exit', (code, signal) => {
+      if (settled || graceTimer) return;
+      graceTimer = setTimeout(() => finish(resolveCode(code, signal)), CLOSE_GRACE_MS);
+      graceTimer.unref();
+    });
+
     child.on('close', (code, signal) => {
-      if (timedOut) return finish(124); // standard timeout exit code
-      if (code === null) return finish(signal ? 1 : 0);
-      finish(code);
+      finish(resolveCode(code, signal));
     });
   });
 }

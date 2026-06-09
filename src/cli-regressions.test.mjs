@@ -292,6 +292,27 @@ describe('CLI regressions', () => {
     assert.deepStrictEqual(parsed.failures, []);
   });
 
+  it('TLT-068: tl-run does not hang when a grandchild escapes the process group and holds the pipe', () => {
+    // A daemonized/setsid worker (e.g. some test runners' workers) outlives the
+    // command and keeps the stdout/stderr pipe open. 'close' then never fires —
+    // tl-run used to wait on it forever, hanging agents past their timeout.
+    // Resolving on 'exit' + a short grace must let the call return promptly.
+    // The command itself exits 0 immediately after backgrounding the escapee.
+    // The escapee inherits (does NOT redirect) stdout, so it holds tl-run's pipe
+    // open — the condition that previously prevented 'close' from ever firing.
+    const command = "setsid bash -c 'sleep 30' & echo done";
+    const started = Date.now();
+    const result = runCli(['bin/tl-run.mjs', command, '--timeout', '8000', '-j']);
+    const elapsed = Date.now() - started;
+    // Must finish via the close-grace (~1s), not the 8s timeout and never hang.
+    assert.ok(elapsed > 500 && elapsed < 5000, `expected close-grace return, took ${elapsed}ms`);
+    assert.strictEqual(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+    assert.strictEqual(parsed.exitCode, 0);
+    assert.notStrictEqual(parsed.type, 'timeout');
+    assert.match(parsed.lines.join('\n'), /done/);
+  });
+
   it('TLT-009: tl-symbols function filter preserves fallback extraction for non-fast languages', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-symbols-fallback-'));
     const filePath = join(tempDir, 'main.swift');
