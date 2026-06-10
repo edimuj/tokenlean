@@ -22,8 +22,9 @@ if (process.argv.includes('--prompt')) {
 }
 
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import {
   createOutput,
@@ -42,9 +43,16 @@ Wraps shell commands and produces token-efficient summaries.
 Auto-detects output type (test/build/lint/generic) and extracts
 only what matters.
 
+Chained commands (cmd1 && cmd2, a || b, x; y) run in ONE shell — so
+cd/export/source state carries across — but each segment is detected
+and summarized independently instead of mangling the combined output.
+Operators and the overall exit code match the shell exactly.
+
 Options:
   --type <type>         Force output type: test, build, lint, generic (default: auto)
+                        (forcing a type disables per-segment splitting)
   --raw                 Show full output, no summarization
+  --no-split            Treat a chained command as one blob (legacy behavior)
   --timeout <ms>        Command timeout in ms (default: 120000 / 2min)
   --diff                Compare output against previous run of same command
 ${COMMON_OPTIONS_HELP}
@@ -55,6 +63,7 @@ Examples:
   tl-run "eslint src/" --raw            # Full output, no summarization
   tl-run "npm test" -j                  # JSON structured output
   tl-run "long-command" --timeout 60000 # Custom timeout
+  tl-run "cd src && npm run build && npm test"  # Per-segment summaries
 `;
 
 const VALID_TYPES = ['test', 'build', 'lint', 'generic'];
@@ -209,6 +218,132 @@ function runCommand(command, timeout) {
       finish(resolveCode(code, signal));
     });
   });
+}
+
+// ─────────────────────────────────────────────────────────────
+// Command Chaining (&& / || / ;)
+// ─────────────────────────────────────────────────────────────
+
+// Split a command on TOP-LEVEL &&, ||, ; — respecting single/double quotes,
+// backslash escapes, backticks, and (...)/$(...) nesting. A single | (pipe)
+// stays inside its segment (a pipeline is one logical command). Returns
+// { segments, ops } where ops connects segments[i] and segments[i+1], or null
+// when the command isn't a chain or contains constructs we won't instrument
+// (heredocs, top-level backgrounding &, brace groups, unbalanced quotes/parens).
+// Falling back to null is always safe: the caller runs the command unsplit.
+function splitTopLevel(command) {
+  const parts = [];
+  const ops = [];
+  let buf = '';
+  let sq = false, dq = false, bt = false;
+  let parenDepth = 0;
+  let escaped = false;
+
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    const next = command[i + 1];
+
+    if (escaped) { buf += c; escaped = false; continue; }
+    if (c === '\\') {
+      if (sq) { buf += c; continue; } // literal inside single quotes
+      buf += c; escaped = true; continue;
+    }
+    if (sq) { buf += c; if (c === "'") sq = false; continue; }
+    if (dq) { buf += c; if (c === '"') dq = false; continue; }
+    if (c === "'") { sq = true; buf += c; continue; }
+    if (c === '"') { dq = true; buf += c; continue; }
+    if (c === '`') { bt = !bt; buf += c; continue; }
+    if (bt) { buf += c; continue; }
+
+    if (c === '$' && next === '(') { parenDepth++; buf += '$('; i++; continue; }
+    if (c === '(') { parenDepth++; buf += c; continue; }
+    if (c === ')') { if (parenDepth > 0) parenDepth--; buf += c; continue; }
+    if (parenDepth > 0) { buf += c; continue; }
+
+    // Top-level, unquoted territory.
+    if (c === '<' && next === '<') return null;            // heredoc / here-string
+    if (c === '{' && (next === undefined || /\s/.test(next))) return null; // brace group / fn body
+    if (c === '&') {
+      if (next === '&') { parts.push(buf); ops.push('&&'); buf = ''; i++; continue; }
+      return null;                                         // top-level background
+    }
+    if (c === '|') {
+      if (next === '|') { parts.push(buf); ops.push('||'); buf = ''; i++; continue; }
+      buf += c; continue;                                  // pipe — part of the segment
+    }
+    if (c === ';') { parts.push(buf); ops.push(';'); buf = ''; continue; }
+    buf += c;
+  }
+
+  if (sq || dq || bt || escaped || parenDepth !== 0) return null; // unbalanced
+  parts.push(buf);
+
+  const segments = parts.map((p) => p.trim());
+  if (segments.some((s) => s === '')) return null;         // empty segment (e.g. ;;, trailing op)
+  if (segments.length < 2) return null;                    // not a chain
+  return { segments, ops };
+}
+
+// Single-quote a string for safe interpolation into a /bin/sh script.
+function shQuote(s) {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+// Build an instrumented script that runs each segment in the SAME shell (so
+// cd/export/source persist) while capturing each segment's stdout/stderr into
+// its own file and recording its exit code on fd 9. Original operators are kept
+// verbatim, so short-circuiting (&&/||) and the overall exit code are identical
+// to running the command directly. Segments that short-circuit never emit a
+// status line, so the caller knows they were skipped.
+function buildSegmentedScript(segments, ops, dir) {
+  const statusFile = join(dir, 'status');
+  const group = (seg, i) => {
+    const outFile = shQuote(join(dir, `${i}.out`));
+    const errFile = shQuote(join(dir, `${i}.err`));
+    // newline (not ;) terminates the segment so a trailing comment can't eat the
+    // bookkeeping; ( exit $st ) makes the group's status == the segment's status.
+    return `{ ${seg}\n__tl_st=$?; printf '%s %s\\n' ${i} "$__tl_st" >&9; ( exit $__tl_st ); } >${outFile} 2>${errFile}`;
+  };
+
+  let script = `exec 9>${shQuote(statusFile)}\n`;
+  script += group(segments[0], 0);
+  for (let i = 1; i < segments.length; i++) {
+    script += ` ${ops[i - 1]} ${group(segments[i], i)}`;
+  }
+  // Capture the chain's status BEFORE closing fd 9 / exiting, so the overall
+  // exit code matches the shell exactly (exec 9>&- would otherwise reset $?).
+  script += `\n__tl_rc=$?\nexec 9>&-\nexit $__tl_rc\n`;
+  return { script, statusFile };
+}
+
+// Run a chained command segment-by-segment. Returns per-segment results plus the
+// overall exit/elapsed/timedOut (taken from the script as a whole).
+async function runSegmented(segments, ops, timeout) {
+  const dir = mkdtempSync(join(tmpdir(), 'tlrun-'));
+  try {
+    const { script, statusFile } = buildSegmentedScript(segments, ops, dir);
+    const result = await runCommand(script, timeout);
+
+    const ran = new Map();
+    try {
+      for (const line of readFileSync(statusFile, 'utf-8').split('\n')) {
+        const m = line.match(/^(\d+) (-?\d+)$/);
+        if (m) ran.set(parseInt(m[1], 10), parseInt(m[2], 10));
+      }
+    } catch { /* no status file — treat all as skipped */ }
+
+    const segResults = segments.map((cmd, i) => {
+      if (!ran.has(i)) return { index: i, cmd, ran: false };
+      let stdout = '', stderr = '';
+      try { stdout = stripAnsi(readFileSync(join(dir, `${i}.out`), 'utf-8')); } catch { /* none */ }
+      try { stderr = stripAnsi(readFileSync(join(dir, `${i}.err`), 'utf-8')); } catch { /* none */ }
+      return { index: i, cmd, ran: true, exitCode: ran.get(i), stdout, stderr };
+    });
+
+    return { segResults, exitCode: result.exitCode, elapsed: result.elapsed, timedOut: result.timedOut };
+  } finally {
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -859,6 +994,210 @@ function diffResults(prev, curr, type) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Summarize + Render (shared by single and segmented paths)
+// ─────────────────────────────────────────────────────────────
+
+// Detect type and summarize one command's output.
+function buildSummary(command, stdout, stderr, exitCode, opts, typeArg) {
+  const type = typeArg || detectType(command, stdout, stderr);
+
+  // For very large successful outputs, summarize from sampled text only.
+  // On failures we keep full output to preserve diagnostics.
+  let summaryStdout = stdout;
+  let summaryStderr = stderr;
+  const totalOutputChars = stdout.length + stderr.length;
+  if (exitCode === 0 && totalOutputChars > ANALYSIS_CHAR_LIMIT && type !== 'generic') {
+    summaryStdout = sampleTextForAnalysis(stdout, Math.floor(ANALYSIS_CHAR_LIMIT * 0.8));
+    summaryStderr = sampleTextForAnalysis(stderr, Math.floor(ANALYSIS_CHAR_LIMIT * 0.2));
+  }
+
+  let summary;
+  switch (type) {
+    case 'test':
+      summary = summarizeTest(summaryStdout, summaryStderr, exitCode);
+      break;
+    case 'build':
+      summary = summarizeBuild(summaryStdout, summaryStderr, exitCode);
+      break;
+    case 'lint':
+      summary = summarizeLint(summaryStdout, summaryStderr, exitCode);
+      break;
+    default: {
+      const lineBudget = computeLineBudget(opts);
+      summary = lineBudget < Infinity
+        ? smartBudgetGeneric(stdout, stderr, exitCode, lineBudget)
+        : summarizeGeneric(stdout, stderr, exitCode);
+      break;
+    }
+  }
+  return { type, summary };
+}
+
+// Turn a summary into renderable lines. Blank entries are preserved so callers
+// can reproduce the original spacing (and indent uniformly when needed).
+function summaryToLines(type, summary, exitCode, stdout, stderr) {
+  const lines = [];
+
+  if (type === 'test') {
+    lines.push(summary.summary);
+    if (summary.failures.length > 0) {
+      lines.push('');
+      for (const f of summary.failures) {
+        lines.push(`FAILED: ${f.name}`);
+        if (f.message) {
+          for (const msgLine of f.message.split('\n')) lines.push(`  ${msgLine}`);
+        }
+        if (f.location) lines.push(`  at ${f.location}`);
+      }
+    }
+  } else if (type === 'build') {
+    lines.push(summary.summary);
+    if (summary.errors.length > 0) {
+      lines.push('');
+      for (const e of summary.errors) lines.push(e);
+    }
+  } else if (type === 'lint') {
+    lines.push(summary.summary);
+    if (summary.violations.length > 0) {
+      lines.push('');
+      lines.push('Top violations:');
+      for (const v of summary.violations) lines.push(`  ${v.count}x ${v.rule}`);
+    }
+  } else {
+    if (summary.summary) {
+      lines.push(summary.summary);
+      lines.push('');
+    }
+    lines.push(...summary.lines);
+  }
+
+  // Fallback: when exit != 0 and the summarizer extracted no details,
+  // show raw stderr/output so the agent can diagnose the actual error.
+  if (exitCode !== 0 && type !== 'generic') {
+    const hasDetails = (type === 'test' && summary.failures.length > 0) ||
+                       (type === 'build' && summary.errors.length > 0) ||
+                       (type === 'lint' && summary.violations.length > 0);
+
+    if (!hasDetails) {
+      const stderrLines = stderr.trim().split('\n').filter((l) => l.trim());
+      const stdoutLines = stdout.trim().split('\n').filter((l) => l.trim());
+
+      lines.push('');
+      if (stderrLines.length > 0) {
+        lines.push('stderr:');
+        lines.push(...stderrLines.slice(-30));
+        if (stderrLines.length > 30) lines.push(`... ${stderrLines.length - 30} earlier lines omitted`);
+      }
+      if (stdoutLines.length > 0 && stderrLines.length < 5) {
+        lines.push('output (last lines):');
+        lines.push(...stdoutLines.slice(-20));
+      }
+    }
+  }
+
+  return lines;
+}
+
+// Emit summary lines, treating '' as a blank line (skipped in quiet mode, like
+// out.blank()) and indenting non-blank lines uniformly when an indent is given.
+function emitLines(out, lines, indent = '') {
+  for (const line of lines) {
+    if (line === '') out.blank();
+    else out.add(indent + line);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Segmented Diff Cache (--diff for chained commands)
+// ─────────────────────────────────────────────────────────────
+
+function saveSegmented(command, exitCode, segResults) {
+  const cacheDir = getCacheDir();
+  mkdirSync(cacheDir, { recursive: true });
+  writeFileSync(join(cacheDir, `${getCacheKey(command)}.json`), JSON.stringify({
+    command,
+    type: 'segmented',
+    exitCode,
+    segments: segResults.filter((s) => s.ran).map((s) => ({ cmd: s.cmd, exitCode: s.exitCode })),
+    timestamp: Date.now()
+  }) + '\n', 'utf-8');
+}
+
+function diffSegmented(prev, exitCode, segResults) {
+  const changes = [];
+  if (prev.exitCode !== exitCode) {
+    changes.push(`${exitCode === 0 ? 'FIXED' : 'REGRESSED'}: exit ${prev.exitCode} -> ${exitCode}`);
+  }
+  const prevMap = new Map((prev.segments || []).map((s) => [s.cmd, s.exitCode]));
+  for (const s of segResults.filter((x) => x.ran)) {
+    if (prevMap.has(s.cmd) && prevMap.get(s.cmd) !== s.exitCode) {
+      changes.push(`  ${s.cmd}: exit ${prevMap.get(s.cmd)} -> ${s.exitCode}`);
+    }
+  }
+  return changes;
+}
+
+// Print the full per-segment report for a chained command, then exit.
+async function runSegmentedFlow(command, parsed, timeout, opts, diffMode) {
+  const { segments, ops } = parsed;
+  const r = await runSegmented(segments, ops, timeout);
+  const out = createOutput(opts);
+  const ranCount = r.segResults.filter((s) => s.ran).length;
+
+  if (!opts.quiet) {
+    out.header(`$ ${command}`);
+    const status = r.timedOut ? `timed out after ${formatElapsed(timeout)}` : `exit ${r.exitCode}`;
+    out.header(`${formatElapsed(r.elapsed)} | ${status} | ${ranCount}/${segments.length} segments`);
+    out.blank();
+  }
+
+  const jsonSegments = [];
+  for (const s of r.segResults) {
+    if (!s.ran) {
+      out.add(`[${s.index + 1}] $ ${s.cmd}  (skipped)`);
+      jsonSegments.push({ index: s.index, command: s.cmd, ran: false });
+      continue;
+    }
+
+    const { type, summary } = buildSummary(s.cmd, s.stdout, s.stderr, s.exitCode, opts, null);
+    out.add(`[${s.index + 1}] $ ${s.cmd}  -> exit ${s.exitCode} | ${type}`);
+    emitLines(out, summaryToLines(type, summary, s.exitCode, s.stdout, s.stderr), '    ');
+    out.blank();
+
+    const seg = { index: s.index, command: s.cmd, ran: true, exitCode: s.exitCode, type, summary: summary.summary };
+    if (type === 'test') seg.failures = summary.failures;
+    else if (type === 'build') { seg.errors = summary.errors; seg.warningCount = summary.warningCount; }
+    else if (type === 'lint') seg.violations = summary.violations;
+    jsonSegments.push(seg);
+  }
+
+  if (diffMode) {
+    const prev = loadPrevious(command);
+    saveSegmented(command, r.exitCode, r.segResults);
+    if (prev) {
+      const changes = diffSegmented(prev, r.exitCode, r.segResults);
+      out.add(changes.length > 0 ? 'vs previous run:' : 'vs previous run: no change');
+      for (const c of changes) out.add(c);
+      if (opts.json) out.setData('diff', changes);
+    } else {
+      out.add('(no previous run to compare — result saved for next --diff)');
+    }
+  }
+
+  if (opts.json) {
+    out.setData('command', command);
+    out.setData('exitCode', r.exitCode);
+    out.setData('elapsed', formatElapsed(r.elapsed));
+    out.setData('type', 'segmented');
+    out.setData('timedOut', r.timedOut);
+    out.setData('segments', jsonSegments);
+  }
+
+  out.print();
+  process.exit(r.timedOut ? 124 : r.exitCode);
+}
+
+// ─────────────────────────────────────────────────────────────
 // Main
 // ─────────────────────────────────────────────────────────────
 
@@ -869,6 +1208,7 @@ async function main() {
   let typeArg = null;
   let raw = false;
   let diffMode = false;
+  let noSplit = false;
   let timeout = null;
   const filteredArgs = [];
 
@@ -880,6 +1220,8 @@ async function main() {
       raw = true;
     } else if (arg === '--diff') {
       diffMode = true;
+    } else if (arg === '--no-split') {
+      noSplit = true;
     } else if (arg === '--timeout') {
       timeout = parseInt(args[++i], 10);
     } else {
@@ -906,6 +1248,17 @@ async function main() {
 
   // The command is the first remaining arg (may be quoted)
   const command = opts.remaining.join(' ');
+
+  // Chained command (cmd1 && cmd2, a || b, x; y)? Run each segment in one shell
+  // and summarize independently. Skipped when --raw (dump as-is), --type (user
+  // forced one type for the whole blob), or --no-split (legacy behavior).
+  if (!raw && !typeArg && !noSplit) {
+    const parsed = splitTopLevel(command);
+    if (parsed) {
+      await runSegmentedFlow(command, parsed, effectiveTimeout, opts, diffMode);
+      return; // runSegmentedFlow exits the process
+    }
+  }
 
   // Execute
   const result = await runCommand(command, effectiveTimeout);
@@ -960,41 +1313,8 @@ async function main() {
     process.exit(result.exitCode);
   }
 
-  // Detect type
-  const type = typeArg || detectType(command, result.stdout, result.stderr);
-
-  // For very large successful outputs, summarize from sampled text only.
-  // On failures we keep full output to preserve diagnostics.
-  let summaryStdout = result.stdout;
-  let summaryStderr = result.stderr;
-  const totalOutputChars = result.stdout.length + result.stderr.length;
-  if (result.exitCode === 0 && totalOutputChars > ANALYSIS_CHAR_LIMIT && type !== 'generic') {
-    summaryStdout = sampleTextForAnalysis(result.stdout, Math.floor(ANALYSIS_CHAR_LIMIT * 0.8));
-    summaryStderr = sampleTextForAnalysis(result.stderr, Math.floor(ANALYSIS_CHAR_LIMIT * 0.2));
-  }
-
-  // Summarize based on type
-  let summary;
-  switch (type) {
-    case 'test':
-      summary = summarizeTest(summaryStdout, summaryStderr, result.exitCode);
-      break;
-    case 'build':
-      summary = summarizeBuild(summaryStdout, summaryStderr, result.exitCode);
-      break;
-    case 'lint':
-      summary = summarizeLint(summaryStdout, summaryStderr, result.exitCode);
-      break;
-    default: {
-      const lineBudget = computeLineBudget(opts);
-      if (lineBudget < Infinity) {
-        summary = smartBudgetGeneric(result.stdout, result.stderr, result.exitCode, lineBudget);
-      } else {
-        summary = summarizeGeneric(result.stdout, result.stderr, result.exitCode);
-      }
-      break;
-    }
-  }
+  // Detect type + summarize
+  const { type, summary } = buildSummary(command, result.stdout, result.stderr, result.exitCode, opts, typeArg);
 
   // Format output
   const out = createOutput(opts);
@@ -1005,71 +1325,7 @@ async function main() {
     out.blank();
   }
 
-  if (type === 'test') {
-    out.add(summary.summary);
-    if (summary.failures.length > 0) {
-      out.blank();
-      for (const f of summary.failures) {
-        out.add(`FAILED: ${f.name}`);
-        if (f.message) {
-          for (const msgLine of f.message.split('\n')) {
-            out.add(`  ${msgLine}`);
-          }
-        }
-        if (f.location) {
-          out.add(`  at ${f.location}`);
-        }
-      }
-    }
-  } else if (type === 'build') {
-    out.add(summary.summary);
-    if (summary.errors.length > 0) {
-      out.blank();
-      for (const e of summary.errors) {
-        out.add(e);
-      }
-    }
-  } else if (type === 'lint') {
-    out.add(summary.summary);
-    if (summary.violations.length > 0) {
-      out.blank();
-      out.add('Top violations:');
-      for (const v of summary.violations) {
-        out.add(`  ${v.count}x ${v.rule}`);
-      }
-    }
-  } else {
-    // generic
-    if (summary.summary) {
-      out.add(summary.summary);
-      out.blank();
-    }
-    out.addLines(summary.lines);
-  }
-
-  // Fallback: when exit != 0 and the summarizer extracted no details,
-  // show raw stderr/output so the agent can diagnose the actual error.
-  if (result.exitCode !== 0 && type !== 'generic') {
-    const hasDetails = (type === 'test' && summary.failures.length > 0) ||
-                       (type === 'build' && summary.errors.length > 0) ||
-                       (type === 'lint' && summary.violations.length > 0);
-
-    if (!hasDetails) {
-      const stderrLines = result.stderr.trim().split('\n').filter(l => l.trim());
-      const stdoutLines = result.stdout.trim().split('\n').filter(l => l.trim());
-
-      out.blank();
-      if (stderrLines.length > 0) {
-        out.add('stderr:');
-        out.addLines(stderrLines.slice(-30));
-        if (stderrLines.length > 30) out.add(`... ${stderrLines.length - 30} earlier lines omitted`);
-      }
-      if (stdoutLines.length > 0 && stderrLines.length < 5) {
-        out.add('output (last lines):');
-        out.addLines(stdoutLines.slice(-20));
-      }
-    }
-  }
+  emitLines(out, summaryToLines(type, summary, result.exitCode, result.stdout, result.stderr));
 
   // Diff mode: compare with previous run
   if (diffMode) {

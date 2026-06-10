@@ -1726,4 +1726,64 @@ describe('CLI regressions', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('TLT-069: tl run types each chained segment independently', () => {
+    // The command text drives type detection: "eslint" -> lint, "vitest" -> test.
+    // Previously one type was forced over the whole concatenated blob.
+    const result = runCli(['bin/tl-run.mjs', 'echo eslint && echo vitest', '-j']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.strictEqual(parsed.type, 'segmented');
+    assert.strictEqual(parsed.segments.length, 2);
+    assert.strictEqual(parsed.segments[0].type, 'lint');
+    assert.strictEqual(parsed.segments[1].type, 'test');
+  });
+
+  it('TLT-070: tl run preserves shell state (cd) across && segments', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tokenlean-run-chain-'));
+    try {
+      mkdirSync(join(dir, 'persist-probe'));
+      // If each segment ran in its own process, the cd would not carry to pwd.
+      const result = runCli([join(repoRoot, 'bin/tl-run.mjs'), 'cd persist-probe && pwd'], dir);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      assert.ok(result.stdout.includes('persist-probe'), `cd did not persist: ${result.stdout}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-071: tl run overall exit code matches the shell for && short-circuit', () => {
+    // echo (0) && false (1) && echo never -> chain fails at false, third skipped.
+    const result = runCli(['bin/tl-run.mjs', 'echo first && false && echo never', '-j']);
+    assert.strictEqual(result.status, 1, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.strictEqual(parsed.exitCode, 1);
+    assert.strictEqual(parsed.segments[2].ran, false, 'third segment should be short-circuited');
+  });
+
+  it('TLT-072: tl run does not split operators inside quotes', () => {
+    // The "&&" lives inside a quoted string — it must stay in one segment.
+    const result = runCli(['bin/tl-run.mjs', "echo 'a && b' ; echo done", '-j']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.strictEqual(parsed.segments.length, 2, `quoted && was wrongly split: ${result.stdout}`);
+    assert.strictEqual(parsed.segments[0].command, "echo 'a && b'");
+  });
+
+  it('TLT-073: tl run --no-split treats a chained command as one blob', () => {
+    const result = runCli(['bin/tl-run.mjs', 'echo eslint && echo vitest', '--no-split', '-j']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.notStrictEqual(parsed.type, 'segmented');
+    assert.strictEqual(parsed.segments, undefined);
+  });
+
+  it('TLT-074: tl run falls back to a single shell for brace groups', () => {
+    // A brace group ("{ ...; }") is not instrumentable — must run unsplit, not crash.
+    const result = runCli(['bin/tl-run.mjs', 'x=1; { echo grouped; }', '-j']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.notStrictEqual(parsed.type, 'segmented');
+    assert.ok((parsed.lines || []).some(l => l.includes('grouped')), `expected grouped output: ${result.stdout}`);
+  });
 });
