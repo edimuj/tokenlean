@@ -105,6 +105,27 @@ function git(args) {
   };
 }
 
+// Resolve the current branch from MULTIPLE git sources and only declare a
+// detached HEAD when ALL of them affirmatively fail. `git branch --show-current`
+// alone is ambiguous: it returns empty both when genuinely detached AND when the
+// command can't produce output in the calling environment — which is what bit us
+// under the Codex sandbox's git env (vent #105), where --show-current came back
+// empty while rev-parse/symbolic-ref still reported `main`, producing a false
+// "detached HEAD" abort. rev-parse returns the literal "HEAD" only when really
+// detached, so it disambiguates; symbolic-ref is the final corroborator.
+function detectBranch() {
+  const showCurrent = gitCommand(['branch', '--show-current']);
+  if (showCurrent) return showCurrent;
+
+  const revParse = gitCommand(['rev-parse', '--abbrev-ref', 'HEAD']);
+  if (revParse && revParse !== 'HEAD') return revParse;
+
+  const symRef = gitCommand(['symbolic-ref', '--short', '-q', 'HEAD']);
+  if (symRef) return symRef;
+
+  return null; // genuinely detached, or git is unusable in this environment
+}
+
 const args = process.argv.slice(2);
 const options = parseCommonArgs(args);
 
@@ -187,9 +208,9 @@ if (inProgress) {
   process.exit(2);
 }
 
-const branch = gitCommand(['branch', '--show-current']);
+const branch = detectBranch();
 if (!branch) {
-  console.error('Error: not on a branch (detached HEAD)');
+  console.error('Error: not on a branch (detached HEAD). If git reports a branch, the working dir may be misdetected — run with -A from the repo root, or commit with raw git.');
   process.exit(1);
 }
 

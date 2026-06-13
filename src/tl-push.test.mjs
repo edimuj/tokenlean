@@ -95,3 +95,47 @@ describe('tl-push in-progress operation guard', () => {
     assert.notEqual(headHash(), before, 'a commit should have been created');
   });
 });
+
+describe('tl-push branch detection (vent #105)', () => {
+  let dir;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'tl-push-branch-'));
+    git(['init', '-q'], dir);
+    git(['config', 'user.email', 'test@example.com'], dir);
+    git(['config', 'user.name', 'Test'], dir);
+    git(['config', 'commit.gpgsign', 'false'], dir);
+    writeFileSync(join(dir, 'a.txt'), 'one\n');
+    git(['add', 'a.txt'], dir);
+    git(['commit', '-qm', 'initial'], dir);
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('still refuses a genuinely detached HEAD', () => {
+    // Detach onto the current commit. All branch sources fail affirmatively, so
+    // the guard must still fire — the #105 fix must not blind the real check.
+    const head = git(['rev-parse', 'HEAD'], dir).stdout.trim();
+    git(['checkout', '-q', '--detach', head], dir);
+    writeFileSync(join(dir, 'a.txt'), 'changed\n');
+
+    const res = runPush(['feat: nope', '--no-push'], dir);
+
+    assert.equal(res.status, 1, res.stderr);
+    assert.match(res.stderr, /detached HEAD/);
+  });
+
+  it('commits on a non-default branch name (detection resolves the real branch)', () => {
+    git(['checkout', '-q', '-b', 'trunk'], dir);
+    writeFileSync(join(dir, 'a.txt'), 'changed\n');
+    const before = git(['rev-parse', 'HEAD'], dir).stdout.trim();
+
+    const res = runPush(['feat: on trunk', '--no-push'], dir);
+
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, /on trunk/);
+    assert.notEqual(git(['rev-parse', 'HEAD'], dir).stdout.trim(), before);
+  });
+});
