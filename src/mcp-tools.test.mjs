@@ -135,6 +135,59 @@ describe('MCP tool definitions', () => {
     }
   });
 
+  it('tl_gh tools accept GitHub-MCP-style split owner + issue_number', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-mcp-gh-compat-'));
+    const ghPath = join(tempDir, 'gh');
+    const logPath = join(tempDir, 'gh-calls.jsonl');
+    const closeTool = TOOLS.find(t => t.name === 'tl_gh_issue_close');
+    const originalPath = process.env.PATH;
+    const originalLog = process.env.GH_LOG;
+
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'const fs = require("node:fs");',
+      'fs.appendFileSync(process.env.GH_LOG, JSON.stringify(process.argv.slice(2)) + "\\n");',
+      'process.stdout.write("{}\\n");',
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    try {
+      process.env.PATH = `${tempDir}:${originalPath}`;
+      process.env.GH_LOG = logPath;
+      // GitHub-MCP convention: split owner + bare repo, issue_number instead of issues.
+      const result = await closeTool.handler({ owner: 'edimuj', repo: 'agent-relay', issue_number: 79 });
+      assert.strictEqual(result.isError, undefined, result.content?.[0]?.text);
+      const calls = readFileSync(logPath, 'utf-8').trim().split('\n').map(line => JSON.parse(line));
+      // tl-gh resolves the issue id via GraphQL first; owner + bare repo were combined,
+      // and issue_number was routed to the issue lookup.
+      const flat = calls.flat();
+      assert.ok(flat.includes('owner=edimuj'), 'owner should reach the gh GraphQL call');
+      assert.ok(flat.includes('name=agent-relay'), 'bare repo should be combined with owner');
+      assert.ok(flat.some(a => /issue\(number: 79\)/.test(a)), 'issue_number should route to the issue lookup');
+    } finally {
+      process.env.PATH = originalPath;
+      if (originalLog === undefined) delete process.env.GH_LOG;
+      else process.env.GH_LOG = originalLog;
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('tl_gh_issue_close requires an issue identifier', async () => {
+    const tool = TOOLS.find(t => t.name === 'tl_gh_issue_close');
+    await assert.rejects(
+      () => tool.handler({ repo: 'edimuj/app' }),
+      /provide "issues" \(or "issue_number"\)/i
+    );
+  });
+
+  it('tl_gh tools expose owner + issue_number compatibility aliases in their schema', () => {
+    for (const name of ['tl_gh_issue_read', 'tl_gh_issue_close', 'tl_gh_issue_close_batch',
+      'tl_gh_issue_label_batch', 'tl_gh_project_add_batch', 'tl_gh_issue_create_batch', 'tl_gh_issue_add_sub']) {
+      const tool = TOOLS.find(t => t.name === name);
+      assert.ok(tool.schema.owner, `${name} should accept "owner"`);
+    }
+  });
+
   it('tl_gh_issue_label_batch exposes add/remove plus addLabels/removeLabels aliases', () => {
     const tool = TOOLS.find(t => t.name === 'tl_gh_issue_label_batch');
     for (const key of ['add', 'remove', 'addLabels', 'removeLabels']) {

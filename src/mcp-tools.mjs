@@ -148,6 +148,26 @@ function withCwd(schema) {
   return { ...schema, cwd: cwdSchema };
 }
 
+// ── GitHub-MCP compatibility ─────────────────────────────────
+// The GitHub MCP tools take split `owner` + `repo` and `issue_number`;
+// tokenlean's take combined `repo: "owner/repo"` and `issues`. Accept both
+// conventions so agents that learned either set don't guess-and-check.
+const ghOwnerAlias = {
+  owner: z.string().optional().describe(
+    'Repo owner, GitHub-MCP style. Optional — combined with "repo" when "repo" is just the bare name.',
+  ),
+};
+const ghIssueNumberAlias = {
+  issue_number: z.union([z.number(), z.array(z.number())]).optional()
+    .describe('Alias for the issue param, GitHub-MCP style (number or array).'),
+};
+
+// Combine split owner+repo into the "owner/repo" form tl-gh expects.
+function ghResolveRepo(repo, owner) {
+  if (owner && repo && !repo.includes('/')) return `${owner}/${repo}`;
+  return repo;
+}
+
 // Keep in sync with DEFAULT_TIMEOUT in bin/tl-run.mjs.
 const DEFAULT_RUN_TIMEOUT = 120000;
 
@@ -459,14 +479,19 @@ export const TOOLS = [
     name: 'tl_gh_issue_read',
     description: 'Read a GitHub issue with its direct sub-issues, labels, assignees, comments count, and optionally bodies.',
     schema: withCwd({
-      repo: z.string().describe('Target repository (owner/repo)'),
-      issue: z.number().describe('Issue number to read'),
+      repo: z.string().describe('Target repository (owner/repo, or bare name with "owner")'),
+      ...ghOwnerAlias,
+      issue: z.number().optional().describe('Issue number to read'),
+      ...ghIssueNumberAlias,
       full: z.boolean().optional().describe('Show complete bodies instead of truncating'),
       noBody: z.boolean().optional().describe('Omit issue bodies for compact output'),
       bodyLines: z.number().optional().describe('Lines of body to show per issue (default: 5)'),
     }),
-    handler: async ({ repo, issue, full, noBody, bodyLines, cwd }) => {
-      const args = ['issue', 'read', '-R', repo, String(issue)];
+    handler: async ({ repo, owner, issue, issue_number, full, noBody, bodyLines, cwd }) => {
+      repo = ghResolveRepo(repo, owner);
+      const issueNum = issue ?? (Array.isArray(issue_number) ? issue_number[0] : issue_number);
+      if (issueNum == null) throw new Error('tl_gh_issue_read: provide "issue" (or "issue_number").');
+      const args = ['issue', 'read', '-R', repo, String(issueNum)];
       if (full) args.push('--full');
       if (noBody) args.push('--no-body');
       if (bodyLines) args.push('--body-lines', String(bodyLines));
@@ -478,11 +503,13 @@ export const TOOLS = [
     name: 'tl_gh_issue_add_sub',
     description: 'Link existing issues as sub-issues of a parent issue via GitHub GraphQL.',
     schema: withCwd({
-      repo: z.string().describe('Target repository (owner/repo)'),
+      repo: z.string().describe('Target repository (owner/repo, or bare name with "owner")'),
+      ...ghOwnerAlias,
       parent: z.number().describe('Parent issue number'),
       children: z.array(z.number()).describe('Child issue numbers to link as sub-issues'),
     }),
-    handler: async ({ repo, parent, children, cwd }) => {
+    handler: async ({ repo, owner, parent, children, cwd }) => {
+      repo = ghResolveRepo(repo, owner);
       const args = ['issue', 'add-sub', '-R', repo, '--parent', String(parent), ...children.map(String), '-j'];
       return dispatchTool('gh', args, { timeout: 120000, cwd });
     },
@@ -491,13 +518,18 @@ export const TOOLS = [
     name: 'tl_gh_issue_close',
     description: 'Close one or more GitHub issues with optional comment and close reason.',
     schema: withCwd({
-      repo: z.string().describe('Target repository (owner/repo)'),
-      issues: z.union([z.number(), z.array(z.number())]).describe('Issue number or issue numbers to close'),
+      repo: z.string().describe('Target repository (owner/repo, or bare name with "owner")'),
+      ...ghOwnerAlias,
+      issues: z.union([z.number(), z.array(z.number())]).optional().describe('Issue number or issue numbers to close'),
+      ...ghIssueNumberAlias,
       comment: z.string().optional().describe('Comment to add when closing'),
       reason: z.enum(['completed', 'not planned']).optional().describe('Close reason (default: completed)'),
     }),
-    handler: async ({ repo, issues, comment, reason, cwd }) => {
-      const issueList = Array.isArray(issues) ? issues : [issues];
+    handler: async ({ repo, owner, issues, issue_number, comment, reason, cwd }) => {
+      repo = ghResolveRepo(repo, owner);
+      const raw = issues ?? issue_number;
+      if (raw == null) throw new Error('tl_gh_issue_close: provide "issues" (or "issue_number").');
+      const issueList = Array.isArray(raw) ? raw : [raw];
       const args = ['issue', 'close', '-R', repo, ...issueList.map(String)];
       if (comment) args.push('-c', comment);
       if (reason) args.push('--reason', reason);
@@ -509,13 +541,19 @@ export const TOOLS = [
     name: 'tl_gh_issue_close_batch',
     description: 'Close multiple issues at once with optional comment and reason. Alias-compatible with tl_gh_issue_close.',
     schema: withCwd({
-      repo: z.string().describe('Target repository (owner/repo)'),
-      issues: z.array(z.number()).describe('Issue numbers to close'),
+      repo: z.string().describe('Target repository (owner/repo, or bare name with "owner")'),
+      ...ghOwnerAlias,
+      issues: z.array(z.number()).optional().describe('Issue numbers to close'),
+      ...ghIssueNumberAlias,
       comment: z.string().optional().describe('Comment to add when closing'),
       reason: z.enum(['completed', 'not planned']).optional().describe('Close reason (default: completed)'),
     }),
-    handler: async ({ repo, issues, comment, reason, cwd }) => {
-      const args = ['issue', 'close-batch', '-R', repo, ...issues.map(String)];
+    handler: async ({ repo, owner, issues, issue_number, comment, reason, cwd }) => {
+      repo = ghResolveRepo(repo, owner);
+      const raw = issues ?? issue_number;
+      const issueList = Array.isArray(raw) ? raw : (raw == null ? [] : [raw]);
+      if (!issueList.length) throw new Error('tl_gh_issue_close_batch: provide "issues" (or "issue_number").');
+      const args = ['issue', 'close-batch', '-R', repo, ...issueList.map(String)];
       if (comment) args.push('-c', comment);
       if (reason) args.push('--reason', reason);
       args.push('-j');
@@ -528,8 +566,10 @@ export const TOOLS = [
       + 'For different labels per issue, call this once per label set. '
       + 'Labels may be a comma-separated string ("P2,bug") or an array (["P2","bug"]).',
     schema: withCwd({
-      repo: z.string().describe('Target repository (owner/repo)'),
-      issues: z.array(z.number()).describe('Issue numbers to update (same labels applied to all)'),
+      repo: z.string().describe('Target repository (owner/repo, or bare name with "owner")'),
+      ...ghOwnerAlias,
+      issues: z.array(z.number()).optional().describe('Issue numbers to update (same labels applied to all)'),
+      ...ghIssueNumberAlias,
       add: z.union([z.string(), z.array(z.string())]).optional()
         .describe('Labels to add — comma-separated string or array. Alias: addLabels'),
       remove: z.union([z.string(), z.array(z.string())]).optional()
@@ -539,14 +579,18 @@ export const TOOLS = [
       removeLabels: z.union([z.string(), z.array(z.string())]).optional()
         .describe('Alias for "remove" (accepted so either name works)'),
     }),
-    handler: async ({ repo, issues, add, remove, addLabels, removeLabels, cwd }) => {
+    handler: async ({ repo, owner, issues, issue_number, add, remove, addLabels, removeLabels, cwd }) => {
+      repo = ghResolveRepo(repo, owner);
+      const rawIssues = issues ?? issue_number;
+      const issueList = Array.isArray(rawIssues) ? rawIssues : (rawIssues == null ? [] : [rawIssues]);
+      if (!issueList.length) throw new Error('tl_gh_issue_label_batch: provide "issues" (or "issue_number").');
       const toCsv = (v) => (Array.isArray(v) ? v.join(',') : v) || '';
       const addCsv = toCsv(add ?? addLabels);
       const removeCsv = toCsv(remove ?? removeLabels);
       if (!addCsv && !removeCsv) {
         throw new Error('tl_gh_issue_label_batch: provide at least one of "add" / "remove" (comma-separated string or array of labels).');
       }
-      const args = ['issue', 'label-batch', '-R', repo, ...issues.map(String)];
+      const args = ['issue', 'label-batch', '-R', repo, ...issueList.map(String)];
       if (addCsv) args.push('--add', addCsv);
       if (removeCsv) args.push('--remove', removeCsv);
       args.push('-j');
@@ -557,12 +601,18 @@ export const TOOLS = [
     name: 'tl_gh_project_add_batch',
     description: 'Add existing issues to a GitHub ProjectV2 board in bulk.',
     schema: withCwd({
-      repo: z.string().describe('Target repository (owner/repo)'),
+      repo: z.string().describe('Target repository (owner/repo, or bare name with "owner")'),
+      ...ghOwnerAlias,
       project: z.string().describe('Project identifier (owner/number, e.g. "edimuj/1")'),
-      issues: z.array(z.number()).describe('Issue numbers to add to the project'),
+      issues: z.array(z.number()).optional().describe('Issue numbers to add to the project'),
+      ...ghIssueNumberAlias,
     }),
-    handler: async ({ repo, project, issues, cwd }) => {
-      const args = ['project', 'add-batch', '-R', repo, '--project', project, ...issues.map(String), '-j'];
+    handler: async ({ repo, owner, project, issues, issue_number, cwd }) => {
+      repo = ghResolveRepo(repo, owner);
+      const raw = issues ?? issue_number;
+      const issueList = Array.isArray(raw) ? raw : (raw == null ? [] : [raw]);
+      if (!issueList.length) throw new Error('tl_gh_project_add_batch: provide "issues" (or "issue_number").');
+      const args = ['project', 'add-batch', '-R', repo, '--project', project, ...issueList.map(String), '-j'];
       return dispatchTool('gh', args, { timeout: 120000, cwd });
     },
   },
@@ -570,7 +620,8 @@ export const TOOLS = [
     name: 'tl_gh_issue_create_batch',
     description: 'Create multiple issues from a JSON array. Each object: { title, body?, labels?, assignee?, milestone? }.',
     schema: withCwd({
-      repo: z.string().describe('Target repository (owner/repo)'),
+      repo: z.string().describe('Target repository (owner/repo, or bare name with "owner")'),
+      ...ghOwnerAlias,
       issues: z.array(z.object({
         title: z.string().describe('Issue title'),
         body: z.string().optional().describe('Issue body (markdown)'),
@@ -580,7 +631,8 @@ export const TOOLS = [
       })).describe('Array of issue objects to create'),
       project: z.string().optional().describe('Add created issues to project (owner/number, e.g. "edimuj/1")'),
     }),
-    handler: async ({ repo, issues, project, cwd }) => {
+    handler: async ({ repo, owner, issues, project, cwd }) => {
+      repo = ghResolveRepo(repo, owner);
       const args = ['issue', 'create-batch', '-R', repo];
       if (project) args.push('--project', project);
       args.push('-j');
