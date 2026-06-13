@@ -313,6 +313,34 @@ describe('CLI regressions', () => {
     assert.match(parsed.lines.join('\n'), /done/);
   });
 
+  it('TLT-075: tl-run surfaces a failing assertion buried mid-output, not just the tail (vent #90)', () => {
+    // The summarizer parses counts fine but its per-runner failure-detail
+    // extraction misses formats it doesn't know, and the old fallback only
+    // showed the tail — so a failure interleaved among thousands of passing
+    // lines was lost, forcing a full rerun. On non-zero exit we now render the
+    // raw output through the generic budgeter, which surfaces fail/error lines
+    // from ANYWHERE in the stream. The assertion below sits in the middle.
+    const nodePath = JSON.stringify(process.execPath);
+    const script = [
+      "for (let i = 0; i < 1500; i++) console.log('ok pass-' + i);",
+      "console.log('(fail) widget > computes the grand total');",
+      "console.log('error: expect(received).toBe(expected) // 41 vs 42');",
+      "for (let i = 0; i < 1500; i++) console.log('ok pass-b-' + i);",
+      "console.log(' 3000 pass'); console.log(' 1 fail');",
+      "console.log('Ran 3001 tests across 1 file. [50.00ms]'); process.exit(1)"
+    ].join(' ');
+    const command = `${nodePath} -e ${JSON.stringify(script)}`;
+
+    const result = runCli(['bin/tl-run.mjs', command, '--type', 'test', '-q']);
+    assert.strictEqual(result.status, 1);
+    // Parsed count rides along as an at-a-glance header...
+    assert.match(result.stdout, /3000 passed, 1 failed/);
+    // ...but the buried failing test + assertion must also be shown verbatim,
+    // even though they are nowhere near the tail of a 3000-line run.
+    assert.match(result.stdout, /computes the grand total/);
+    assert.match(result.stdout, /41 vs 42/);
+  });
+
   it('TLT-009: tl-symbols function filter preserves fallback extraction for non-fast languages', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-symbols-fallback-'));
     const filePath = join(tempDir, 'main.swift');

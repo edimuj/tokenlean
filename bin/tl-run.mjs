@@ -43,6 +43,10 @@ Wraps shell commands and produces token-efficient summaries.
 Auto-detects output type (test/build/lint/generic) and extracts
 only what matters.
 
+Compresses passing runs; on a non-zero exit it shows the raw output
+(budgeted so failing/error lines surface from anywhere in the stream,
+not just the tail) so the failure is never hidden behind a summary.
+
 Chained commands (cmd1 && cmd2, a || b, x; y) run in ONE shell — so
 cd/export/source state carries across — but each segment is detected
 and summarized independently instead of mangling the combined output.
@@ -68,6 +72,11 @@ Examples:
 
 const VALID_TYPES = ['test', 'build', 'lint', 'generic'];
 const ANALYSIS_CHAR_LIMIT = 300000;
+// On a non-zero exit we stop trusting the per-framework failure parser and show
+// raw output instead (see summaryToLines). This is the line budget for that raw
+// dump when the caller didn't set an explicit -l/-t — generous on purpose, since
+// failure is exactly when the agent needs ground truth and a rerun costs more.
+const DEFAULT_FAILURE_BUDGET = 120;
 const GENERIC_FAST_PATH_CHAR_LIMIT = 120000;
 // Default command timeout. Kept modest because output is buffered (no live
 // feedback), so a hung command should surface as a timeout quickly rather than
@@ -1035,7 +1044,37 @@ function buildSummary(command, stdout, stderr, exitCode, opts, typeArg) {
 
 // Turn a summary into renderable lines. Blank entries are preserved so callers
 // can reproduce the original spacing (and indent uniformly when needed).
-function summaryToLines(type, summary, exitCode, stdout, stderr) {
+function summaryToLines(type, summary, exitCode, stdout, stderr, opts = {}) {
+  // FAILURE PATH — "compress success, pass through failure".
+  //
+  // The per-framework summarizers (summarizeTest/Build/Lint) parse pass/fail
+  // COUNTS reliably but their failure-DETAIL extraction is a long tail of
+  // runner-specific regex that silently under-reports: it reported green while
+  // tests were red (#59), miscounted failures (#74), and counted "1 failed" but
+  // produced an empty failures[] with no test name (#90). The old fallback only
+  // showed the tail, so failures buried mid-output were missed entirely.
+  //
+  // So on any non-zero exit (for a typed run) we STOP trusting the typed detail
+  // extraction for the human-readable body and render the raw output through the
+  // generic budgeter. scoreLine ranks fail/error/assertion lines highest, so the
+  // real failure surfaces from ANYWHERE in the stream — not just the tail. The
+  // parsed count rides along as an at-a-glance header but is never the only
+  // thing shown, so the result can never read as "passed" when it didn't, and
+  // the agent gets ground truth without a rerun. (summary.failures/errors are
+  // still populated for JSON/--diff consumers as best-effort metadata.)
+  if (exitCode !== 0 && type !== 'generic') {
+    const lines = [];
+    if (summary.summary) lines.push(summary.summary);
+    const budget = computeLineBudget(opts);
+    const raw = smartBudgetGeneric(stdout, stderr, exitCode, budget < Infinity ? budget : DEFAULT_FAILURE_BUDGET);
+    if (raw.lines.length > 0) {
+      lines.push('');
+      lines.push(...raw.lines);
+    }
+    return lines;
+  }
+
+  // SUCCESS PATH — compress aggressively; this is where tl_run earns its keep.
   const lines = [];
 
   if (type === 'test') {
@@ -1069,30 +1108,6 @@ function summaryToLines(type, summary, exitCode, stdout, stderr) {
       lines.push('');
     }
     lines.push(...summary.lines);
-  }
-
-  // Fallback: when exit != 0 and the summarizer extracted no details,
-  // show raw stderr/output so the agent can diagnose the actual error.
-  if (exitCode !== 0 && type !== 'generic') {
-    const hasDetails = (type === 'test' && summary.failures.length > 0) ||
-                       (type === 'build' && summary.errors.length > 0) ||
-                       (type === 'lint' && summary.violations.length > 0);
-
-    if (!hasDetails) {
-      const stderrLines = stderr.trim().split('\n').filter((l) => l.trim());
-      const stdoutLines = stdout.trim().split('\n').filter((l) => l.trim());
-
-      lines.push('');
-      if (stderrLines.length > 0) {
-        lines.push('stderr:');
-        lines.push(...stderrLines.slice(-30));
-        if (stderrLines.length > 30) lines.push(`... ${stderrLines.length - 30} earlier lines omitted`);
-      }
-      if (stdoutLines.length > 0 && stderrLines.length < 5) {
-        lines.push('output (last lines):');
-        lines.push(...stdoutLines.slice(-20));
-      }
-    }
   }
 
   return lines;
@@ -1161,7 +1176,7 @@ async function runSegmentedFlow(command, parsed, timeout, opts, diffMode) {
 
     const { type, summary } = buildSummary(s.cmd, s.stdout, s.stderr, s.exitCode, opts, null);
     out.add(`[${s.index + 1}] $ ${s.cmd}  -> exit ${s.exitCode} | ${type}`);
-    emitLines(out, summaryToLines(type, summary, s.exitCode, s.stdout, s.stderr), '    ');
+    emitLines(out, summaryToLines(type, summary, s.exitCode, s.stdout, s.stderr, opts), '    ');
     out.blank();
 
     const seg = { index: s.index, command: s.cmd, ran: true, exitCode: s.exitCode, type, summary: summary.summary };
@@ -1325,7 +1340,7 @@ async function main() {
     out.blank();
   }
 
-  emitLines(out, summaryToLines(type, summary, result.exitCode, result.stdout, result.stderr));
+  emitLines(out, summaryToLines(type, summary, result.exitCode, result.stdout, result.stderr, opts));
 
   // Diff mode: compare with previous run
   if (diffMode) {
