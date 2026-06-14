@@ -341,6 +341,36 @@ describe('CLI regressions', () => {
     assert.match(result.stdout, /41 vs 42/);
   });
 
+  it('TLT-077: tl-run surfaces the failing test even when a pipe masks the exit code (vent #114 follow-up)', () => {
+    // A run piped through `| tail`/`| grep` (or a pipefail-less shell) exits 0
+    // even though tests failed. The summarizer still parses "1 failed" from the
+    // text, but failure-detail extraction used to be gated on a non-zero exit —
+    // so the result said "N passed, 1 failed" with an EMPTY failures[], forcing
+    // the agent to re-run with the bare command just to learn WHICH test failed.
+    // Extraction now fires on parsed failed > 0 regardless of exit code.
+    const nodePath = JSON.stringify(process.execPath);
+    // node:test-style failing output, but the process exits 0 (pipe-masked).
+    const script = [
+      "console.log('✔ passes fine (1ms)');",
+      "console.log('✖ computes the grand total (1ms)');",
+      "console.log('  AssertionError: 41 vs 42');",
+      "console.log('ℹ pass 1'); console.log('ℹ fail 1');",
+      "process.exit(0)"
+    ].join(' ');
+    const command = `${nodePath} -e ${JSON.stringify(script)}`;
+
+    const result = runCli(['bin/tl-run.mjs', command, '--type', 'test', '-j']);
+    assert.strictEqual(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+    assert.strictEqual(parsed.exitCode, 0);
+    assert.match(parsed.summary, /1 failed/);
+    // The whole point: the failing test name is surfaced without a rerun.
+    assert.ok(
+      parsed.failures.some(f => /computes the grand total/.test(f.name)),
+      `expected failing test name in failures[], got ${JSON.stringify(parsed.failures)}`
+    );
+  });
+
   it('TLT-009: tl-symbols function filter preserves fallback extraction for non-fast languages', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-symbols-fallback-'));
     const filePath = join(tempDir, 'main.swift');

@@ -544,10 +544,16 @@ function summarizeTest(stdout, stderr, exitCode) {
     result.summary = parts.length > 0 ? parts.join(', ') : (exitCode === 0 ? 'all passed' : 'tests failed');
   }
 
-  // Extract failure details — only when the runner actually reports failures,
-  // or when we couldn't parse counts (unknown state). Avoids false positives
-  // from Jest console blocks, warnings, etc. when all tests actually pass.
-  if (exitCode !== 0 && (failed > 0 || !foundCounts)) {
+  // Extract failure details whenever the runner reported failures (parsed
+  // `failed > 0` from anchored summary lines — reliable), OR when the command
+  // exited non-zero but we couldn't parse counts (unknown state). Crucially,
+  // `failed > 0` triggers extraction even on exit 0: a pipe (`... | tail`,
+  // `| grep`) or a `pipefail`-less shell masks the real exit code, so a run
+  // that printed "1 failed" would otherwise yield an empty failures[] and force
+  // the agent to re-run with the bare command just to see WHICH test failed.
+  // The exit-0 + no-parsed-counts case is still excluded to avoid false
+  // positives from console blocks/warnings on genuinely-green runs.
+  if (failed > 0 || (exitCode !== 0 && !foundCounts)) {
     let inFailure = false;
     let currentFailure = null;
     let failureCount = 0;
