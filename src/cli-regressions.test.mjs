@@ -938,6 +938,31 @@ describe('CLI regressions', () => {
     }
   });
 
+  it('TLT-076: tl-pack splits a multi-path target into per-path sections instead of "Path not found"', { skip: RG_SKIP }, () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-pack-multipath-'));
+    const dirA = join(tempDir, 'a');
+    const dirB = join(tempDir, 'b');
+    mkdirSync(dirA, { recursive: true });
+    mkdirSync(dirB, { recursive: true });
+    writeFileSync(join(dirA, 'one.ts'), 'export const one = 1;\n', 'utf-8');
+    writeFileSync(join(dirB, 'two.ts'), 'export const two = 2;\n', 'utf-8');
+
+    try {
+      const result = runCli(['bin/tl-pack.mjs', 'refactor', `${dirA} ${dirB}`, '--budget', '8000', '-j']);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+
+      assert.strictEqual(parsed.pack, 'refactor');
+      const titles = parsed.sections.map(s => s.title);
+      // Each path contributes its own directory-refactor sections, tagged with the path.
+      assert.ok(titles.some(t => t === `Project structure — ${dirA}`), titles.join(' | '));
+      assert.ok(titles.some(t => t === `Project structure — ${dirB}`), titles.join(' | '));
+      assert.doesNotMatch(result.stdout, /Path not found/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('TLT-051: tl-pack debug keeps prose targets as context instead of shell commands', () => {
     const target = 'delivery attempts dead-letter observability issue 43';
     const result = runCli(['bin/tl-pack.mjs', 'debug', target, '--budget', '900', '-j']);

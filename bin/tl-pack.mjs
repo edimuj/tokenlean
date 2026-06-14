@@ -286,6 +286,18 @@ function buildReview(target, options) {
   ];
 }
 
+// A target like "src/services src/db sdk/src/types.ts" is multiple paths the
+// CLI/MCP collapsed into one string. Split it back out only when every token
+// resolves to a real path — otherwise it's a single path (possibly with spaces)
+// or a non-path target (PR ref, command) and we leave it untouched.
+function splitExistingPaths(target) {
+  if (!target || typeof target !== 'string') return null;
+  const tokens = target.trim().split(/\s+/);
+  if (tokens.length < 2) return null;
+  if (!tokens.every((t) => existsSync(t))) return null;
+  return tokens;
+}
+
 function isExistingFile(target) {
   try {
     return statSync(target).isFile();
@@ -486,6 +498,17 @@ function buildDebug(target, options) {
 function buildPack(pack, target, options) {
   const config = PACKS[pack];
   const effectiveTarget = target || config?.defaultTarget;
+
+  // Path-oriented packs accept multiple paths in one target string; build the
+  // per-path sections for each and tag titles so the output stays readable.
+  if (['onboard', 'review', 'refactor'].includes(pack)) {
+    const paths = splitExistingPaths(effectiveTarget);
+    if (paths) {
+      return paths.flatMap((p) =>
+        (buildPack(pack, p, options) || []).map((s) => ({ ...s, title: `${s.title} — ${p}` }))
+      );
+    }
+  }
 
   if (pack === 'onboard') return buildOnboard(effectiveTarget, options);
   if (pack === 'review') return buildReview(effectiveTarget, options);

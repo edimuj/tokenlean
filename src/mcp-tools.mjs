@@ -159,13 +159,22 @@ const ghOwnerAlias = {
 };
 const ghIssueNumberAlias = {
   issue_number: z.union([z.number(), z.array(z.number())]).optional()
-    .describe('Alias for the issue param, GitHub-MCP style (number or array).'),
+    .describe('Alias for the issue identifier, GitHub-MCP style (number or array).'),
+  number: z.union([z.number(), z.array(z.number())]).optional()
+    .describe('Alias for the issue identifier — the bare GitHub field name (number or array). '
+      + 'Works on every tl_gh_issue_* tool, so one identifier name covers them all.'),
 };
 
 // Combine split owner+repo into the "owner/repo" form tl-gh expects.
 function ghResolveRepo(repo, owner) {
   if (owner && repo && !repo.includes('/')) return `${owner}/${repo}`;
   return repo;
+}
+
+// Pick the first supplied issue identifier across all accepted aliases.
+function ghPickIssues(...candidates) {
+  for (const c of candidates) if (c != null) return c;
+  return null;
 }
 
 // Keep in sync with DEFAULT_TIMEOUT in bin/tl-run.mjs.
@@ -487,10 +496,11 @@ export const TOOLS = [
       noBody: z.boolean().optional().describe('Omit issue bodies for compact output'),
       bodyLines: z.number().optional().describe('Lines of body to show per issue (default: 5)'),
     }),
-    handler: async ({ repo, owner, issue, issue_number, full, noBody, bodyLines, cwd }) => {
+    handler: async ({ repo, owner, issue, issue_number, number, full, noBody, bodyLines, cwd }) => {
       repo = ghResolveRepo(repo, owner);
-      const issueNum = issue ?? (Array.isArray(issue_number) ? issue_number[0] : issue_number);
-      if (issueNum == null) throw new Error('tl_gh_issue_read: provide "issue" (or "issue_number").');
+      const raw = ghPickIssues(issue, issue_number, number);
+      const issueNum = Array.isArray(raw) ? raw[0] : raw;
+      if (issueNum == null) throw new Error('tl_gh_issue_read: provide "issue" (or "issue_number" / "number").');
       const args = ['issue', 'read', '-R', repo, String(issueNum)];
       if (full) args.push('--full');
       if (noBody) args.push('--no-body');
@@ -525,10 +535,10 @@ export const TOOLS = [
       comment: z.string().optional().describe('Comment to add when closing'),
       reason: z.enum(['completed', 'not planned']).optional().describe('Close reason (default: completed)'),
     }),
-    handler: async ({ repo, owner, issues, issue_number, comment, reason, cwd }) => {
+    handler: async ({ repo, owner, issues, issue_number, number, comment, reason, cwd }) => {
       repo = ghResolveRepo(repo, owner);
-      const raw = issues ?? issue_number;
-      if (raw == null) throw new Error('tl_gh_issue_close: provide "issues" (or "issue_number").');
+      const raw = ghPickIssues(issues, issue_number, number);
+      if (raw == null) throw new Error('tl_gh_issue_close: provide "issues" (or "issue_number" / "number").');
       const issueList = Array.isArray(raw) ? raw : [raw];
       const args = ['issue', 'close', '-R', repo, ...issueList.map(String)];
       if (comment) args.push('-c', comment);
@@ -548,11 +558,11 @@ export const TOOLS = [
       comment: z.string().optional().describe('Comment to add when closing'),
       reason: z.enum(['completed', 'not planned']).optional().describe('Close reason (default: completed)'),
     }),
-    handler: async ({ repo, owner, issues, issue_number, comment, reason, cwd }) => {
+    handler: async ({ repo, owner, issues, issue_number, number, comment, reason, cwd }) => {
       repo = ghResolveRepo(repo, owner);
-      const raw = issues ?? issue_number;
+      const raw = ghPickIssues(issues, issue_number, number);
       const issueList = Array.isArray(raw) ? raw : (raw == null ? [] : [raw]);
-      if (!issueList.length) throw new Error('tl_gh_issue_close_batch: provide "issues" (or "issue_number").');
+      if (!issueList.length) throw new Error('tl_gh_issue_close_batch: provide "issues" (or "issue_number" / "number").');
       const args = ['issue', 'close-batch', '-R', repo, ...issueList.map(String)];
       if (comment) args.push('-c', comment);
       if (reason) args.push('--reason', reason);
@@ -579,11 +589,11 @@ export const TOOLS = [
       removeLabels: z.union([z.string(), z.array(z.string())]).optional()
         .describe('Alias for "remove" (accepted so either name works)'),
     }),
-    handler: async ({ repo, owner, issues, issue_number, add, remove, addLabels, removeLabels, cwd }) => {
+    handler: async ({ repo, owner, issues, issue_number, number, add, remove, addLabels, removeLabels, cwd }) => {
       repo = ghResolveRepo(repo, owner);
-      const rawIssues = issues ?? issue_number;
+      const rawIssues = ghPickIssues(issues, issue_number, number);
       const issueList = Array.isArray(rawIssues) ? rawIssues : (rawIssues == null ? [] : [rawIssues]);
-      if (!issueList.length) throw new Error('tl_gh_issue_label_batch: provide "issues" (or "issue_number").');
+      if (!issueList.length) throw new Error('tl_gh_issue_label_batch: provide "issues" (or "issue_number" / "number").');
       const toCsv = (v) => (Array.isArray(v) ? v.join(',') : v) || '';
       const addCsv = toCsv(add ?? addLabels);
       const removeCsv = toCsv(remove ?? removeLabels);
@@ -607,11 +617,11 @@ export const TOOLS = [
       issues: z.array(z.number()).optional().describe('Issue numbers to add to the project'),
       ...ghIssueNumberAlias,
     }),
-    handler: async ({ repo, owner, project, issues, issue_number, cwd }) => {
+    handler: async ({ repo, owner, project, issues, issue_number, number, cwd }) => {
       repo = ghResolveRepo(repo, owner);
-      const raw = issues ?? issue_number;
+      const raw = ghPickIssues(issues, issue_number, number);
       const issueList = Array.isArray(raw) ? raw : (raw == null ? [] : [raw]);
-      if (!issueList.length) throw new Error('tl_gh_project_add_batch: provide "issues" (or "issue_number").');
+      if (!issueList.length) throw new Error('tl_gh_project_add_batch: provide "issues" (or "issue_number" / "number").');
       const args = ['project', 'add-batch', '-R', repo, '--project', project, ...issueList.map(String), '-j'];
       return dispatchTool('gh', args, { timeout: 120000, cwd });
     },

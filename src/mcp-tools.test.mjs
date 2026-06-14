@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TOOLS, withCwdHint } from './mcp-tools.mjs';
@@ -176,15 +176,66 @@ describe('MCP tool definitions', () => {
     const tool = TOOLS.find(t => t.name === 'tl_gh_issue_close');
     await assert.rejects(
       () => tool.handler({ repo: 'edimuj/app' }),
-      /provide "issues" \(or "issue_number"\)/i
+      /provide "issues" \(or "issue_number" \/ "number"\)/i
     );
   });
 
-  it('tl_gh tools expose owner + issue_number compatibility aliases in their schema', () => {
+  it('tl_gh issue tools accept "number" as an identifier alias on every tool', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-mcp-gh-number-'));
+    const ghPath = join(tempDir, 'gh');
+    const logPath = join(tempDir, 'gh-calls.jsonl');
+    const originalPath = process.env.PATH;
+    const originalLog = process.env.GH_LOG;
+
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'const fs = require("node:fs");',
+      'fs.appendFileSync(process.env.GH_LOG, JSON.stringify(process.argv.slice(2)) + "\\n");',
+      'process.stdout.write("{}\\n");',
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    // Every tl_gh_issue_* tool should resolve the identifier from a bare `number`.
+    const cases = [
+      { name: 'tl_gh_issue_read', args: { repo: 'edimuj/app', number: 113 } },
+      { name: 'tl_gh_issue_close', args: { repo: 'edimuj/app', number: 113 } },
+      { name: 'tl_gh_issue_close_batch', args: { repo: 'edimuj/app', number: [113, 114] } },
+      { name: 'tl_gh_issue_label_batch', args: { repo: 'edimuj/app', number: 113, add: 'bug' } },
+      { name: 'tl_gh_project_add_batch', args: { repo: 'edimuj/app', project: 'edimuj/1', number: 113 } },
+    ];
+
+    try {
+      process.env.PATH = `${tempDir}:${originalPath}`;
+      process.env.GH_LOG = logPath;
+      for (const { name, args } of cases) {
+        const tool = TOOLS.find(t => t.name === name);
+        const before = existsSync(logPath) ? readFileSync(logPath, 'utf-8') : '';
+        await tool.handler(args);
+        // The bare `number` must resolve and reach the gh invocation for this tool.
+        const after = readFileSync(logPath, 'utf-8');
+        const fresh = after.slice(before.length);
+        assert.ok(/113/.test(fresh), `${name}: "number" should route the issue id (113) to the gh call`);
+      }
+    } finally {
+      process.env.PATH = originalPath;
+      if (originalLog === undefined) delete process.env.GH_LOG;
+      else process.env.GH_LOG = originalLog;
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('tl_gh tools expose owner + issue_number + number compatibility aliases in their schema', () => {
     for (const name of ['tl_gh_issue_read', 'tl_gh_issue_close', 'tl_gh_issue_close_batch',
       'tl_gh_issue_label_batch', 'tl_gh_project_add_batch', 'tl_gh_issue_create_batch', 'tl_gh_issue_add_sub']) {
       const tool = TOOLS.find(t => t.name === name);
       assert.ok(tool.schema.owner, `${name} should accept "owner"`);
+    }
+    // The issue-identifier tools also expose the "number" alias.
+    for (const name of ['tl_gh_issue_read', 'tl_gh_issue_close', 'tl_gh_issue_close_batch',
+      'tl_gh_issue_label_batch', 'tl_gh_project_add_batch']) {
+      const tool = TOOLS.find(t => t.name === name);
+      assert.ok(tool.schema.number, `${name} should accept "number"`);
+      assert.ok(tool.schema.issue_number, `${name} should accept "issue_number"`);
     }
   });
 
