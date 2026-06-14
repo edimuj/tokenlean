@@ -517,12 +517,18 @@ export const TOOLS = [
     schema: withCwd({
       repo: z.string().describe('Target repository (owner/repo, or bare name with "owner")'),
       ...ghOwnerAlias,
-      parent: z.number().describe('Parent issue number'),
+      parent: z.number().optional().describe('Parent issue number (alias: number / issue_number)'),
+      ...ghIssueNumberAlias,
       children: z.array(z.number()).describe('Child issue numbers to link as sub-issues'),
     }),
-    handler: async ({ repo, owner, parent, children, cwd }) => {
+    handler: async ({ repo, owner, parent, issue_number, number, children, cwd }) => {
       repo = ghResolveRepo(repo, owner);
-      const args = ['issue', 'add-sub', '-R', repo, '--parent', String(parent), ...children.map(String), '-j'];
+      // Accept the same parent identifier under parent / number / issue_number so
+      // one identifier name works across every tl_gh_issue_* tool (vent #114 class).
+      const rawParent = ghPickIssues(parent, issue_number, number);
+      const parentNum = Array.isArray(rawParent) ? rawParent[0] : rawParent;
+      if (parentNum == null) throw new Error('tl_gh_issue_add_sub: provide "parent" (or "number" / "issue_number").');
+      const args = ['issue', 'add-sub', '-R', repo, '--parent', String(parentNum), ...children.map(String), '-j'];
       return dispatchTool('gh', args, { timeout: 120000, cwd });
     },
   },

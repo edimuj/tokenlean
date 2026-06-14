@@ -293,6 +293,37 @@ describe('CLI regressions', () => {
     }
   });
 
+  it('TLT-124: tl-gh issue create-tree reports the created parent when child-linking fails (no lost work)', () => {
+    // The parent issue is created on GitHub, then resolving its node id (to link
+    // children) fails. The command must report the parent (so the agent knows it
+    // exists and won't recreate it) and exit 0 — not abort and lose all state.
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-gh-tree-'));
+    const ghPath = join(tempDir, 'gh');
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'const argv = process.argv.slice(2);',
+      // issue create → return a parent URL; graphql node-id lookup → null issue.
+      'if (argv[0] === "issue" && argv[1] === "create") process.stdout.write("https://github.com/o/r/issues/100\\n");',
+      'else process.stdout.write(JSON.stringify({ data: { repository: { issue: null } } }) + "\\n");',
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    const originalPath = process.env.PATH;
+    try {
+      const result = spawnSync(process.execPath, ['bin/tl-gh.mjs', 'issue', 'create-tree', '-R', 'o/r', '-q'], {
+        cwd: repoRoot, encoding: 'utf-8',
+        input: JSON.stringify([{ title: 'Parent', children: [{ title: 'Child A' }, { title: 'Child B' }] }]),
+        env: { ...process.env, PATH: `${tempDir}:${originalPath}` },
+      });
+      assert.strictEqual(result.status, 0, `should not crash; stderr: ${result.stderr}`);
+      assert.match(result.stdout, /#100 Parent/, 'reports the created parent');
+      assert.match(result.stdout, /Could not link children/, 'flags the child-link failure');
+      assert.doesNotMatch(result.stderr, /at \w+ \(|node:internal/, 'no raw stack trace');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('TLT-007: tl-snippet --all still returns all matches after caching changes', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-snippet-all-'));
     const filePath = join(tempDir, 'multi.ts');

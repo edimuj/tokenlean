@@ -240,12 +240,44 @@ describe('MCP tool definitions', () => {
       const tool = TOOLS.find(t => t.name === name);
       assert.ok(tool.schema.owner, `${name} should accept "owner"`);
     }
-    // The issue-identifier tools also expose the "number" alias.
+    // The issue-identifier tools also expose the "number" alias (add_sub maps it
+    // to the parent identifier).
     for (const name of ['tl_gh_issue_read', 'tl_gh_issue_close', 'tl_gh_issue_close_batch',
-      'tl_gh_issue_label_batch', 'tl_gh_project_add_batch']) {
+      'tl_gh_issue_label_batch', 'tl_gh_project_add_batch', 'tl_gh_issue_add_sub']) {
       const tool = TOOLS.find(t => t.name === name);
       assert.ok(tool.schema.number, `${name} should accept "number"`);
       assert.ok(tool.schema.issue_number, `${name} should accept "issue_number"`);
+    }
+  });
+
+  it('tl_gh_issue_add_sub resolves the parent from "number"/"issue_number" alias', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-addsub-alias-'));
+    const ghPath = join(tempDir, 'gh');
+    const logPath = join(tempDir, 'gh-calls.jsonl');
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'const fs = require("node:fs");',
+      'fs.appendFileSync(process.env.GH_LOG, JSON.stringify(process.argv.slice(2)) + "\\n");',
+      'process.stdout.write("{}\\n");',
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    const originalPath = process.env.PATH;
+    const originalLog = process.env.GH_LOG;
+    try {
+      process.env.PATH = `${tempDir}:${originalPath}`;
+      process.env.GH_LOG = logPath;
+      const tool = TOOLS.find(t => t.name === 'tl_gh_issue_add_sub');
+      // No "parent" — only the bare "number" alias. The parent's node-id lookup
+      // passes "-F number=10" to gh, proving the alias routed to the parent.
+      await tool.handler({ repo: 'edimuj/app', number: 10, children: [11, 12] });
+      const calls = readFileSync(logPath, 'utf-8');
+      assert.match(calls, /number=10\b/, 'number alias routes to the parent identifier');
+    } finally {
+      process.env.PATH = originalPath;
+      if (originalLog === undefined) delete process.env.GH_LOG;
+      else process.env.GH_LOG = originalLog;
+      rmSync(tempDir, { recursive: true, force: true });
     }
   });
 

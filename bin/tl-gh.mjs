@@ -784,7 +784,18 @@ async function issueCreateTree(args) {
 
     const children = tree.children || [];
     if (children.length) {
-      const parentId = await getIssueNodeIdAsync(repo, parseInt(parentNum));
+      let parentId;
+      try {
+        parentId = await getIssueNodeIdAsync(repo, parseInt(parentNum));
+      } catch (e) {
+        // The parent issue WAS created, but we couldn't resolve its node id to
+        // link children. Report it on the tree (so the agent knows the parent
+        // exists and won't recreate it) instead of throwing and losing all
+        // per-item state for the whole command.
+        treeResult.childrenError = `Could not link children: ${e.message}`;
+        results.push(treeResult);
+        continue;
+      }
 
       treeResult.children = await parallelMap(children, async (child) => {
         const childArgs = ['issue', 'create', '-R', repo, '--title', child.title, '--body', child.body || ''];
@@ -831,6 +842,7 @@ async function issueCreateTree(args) {
     }
     const projTag = tree.project === true ? ' [+project]' : '';
     out.add(`  #${tree.number} ${tree.title}${projTag}`);
+    if (tree.childrenError) out.add(`    ⚠ ${tree.childrenError}`);
     for (const c of tree.children || []) {
       if (c.status === 'created') out.add(`    └─ #${c.number} ${c.title}`);
       else out.add(`    └─ FAILED: ${c.title} — ${c.error}`);
