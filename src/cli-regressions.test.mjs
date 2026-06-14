@@ -324,6 +324,38 @@ describe('CLI regressions', () => {
     }
   });
 
+  it('TLT-125: tl-gh release notes picks the previous tag by semver, not tags-API order (#31)', () => {
+    // The tags API isn't semver-ordered; tags[0] used to win, so 0.9.0 could be
+    // chosen over 0.50.0 and the "changes since X" range came out wrong. The fake
+    // gh returns a scrambled, non-semver order to prove selection is by precedence.
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-gh-relnotes-'));
+    const ghPath = join(tempDir, 'gh');
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'const a = process.argv.slice(2); const j = a.join(" ");',
+      'if (j.includes("/tags")) process.stdout.write("0.9.0\\n0.10.0\\n0.50.0\\n0.49.10\\n0.8.5\\n");',
+      'else if (j.includes("/compare/")) process.stdout.write(JSON.stringify({ commits: [{ sha: "abcdef1234567", commit: { message: "feat: new thing", author: { name: "e" }, committer: { date: "2026-06-01T00:00:00Z" } }, author: { login: "edin" } }] }) + "\\n");',
+      'else if (j.includes("/commits/")) process.stdout.write(JSON.stringify({ commit: { committer: { date: "2026-06-01T00:00:00Z" } } }) + "\\n");',
+      'else if (a[0] === "pr" && a[1] === "list") process.stdout.write("[]\\n");',
+      'else process.stdout.write("{}\\n");',
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    const originalPath = process.env.PATH;
+    try {
+      const result = spawnSync(process.execPath, ['bin/tl-gh.mjs', 'release', 'notes', '-R', 'o/r', '--tag', '0.50.1', '--dry-run'], {
+        cwd: repoRoot, encoding: 'utf-8',
+        env: { ...process.env, PATH: `${tempDir}:${originalPath}` },
+      });
+      assert.strictEqual(result.status, 0, `stderr: ${result.stderr}`);
+      assert.match(result.stdout, /Previous tag: 0\.50\.0/, 'chose 0.50.0 by semver');
+      assert.doesNotMatch(result.stdout, /Previous tag: 0\.9\.0/, 'did not fall for the lexical-first tag');
+      assert.match(result.stdout, /Changes since 0\.50\.0/, 'range uses the right base');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('TLT-007: tl-snippet --all still returns all matches after caching changes', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-snippet-all-'));
     const filePath = join(tempDir, 'multi.ts');

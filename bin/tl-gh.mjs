@@ -24,6 +24,7 @@ import { execFileSync, execFile as execFileCb } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { createOutput, parseCommonArgs, COMMON_OPTIONS_HELP } from '../src/output.mjs';
+import { pickPreviousTag } from '../src/semver.mjs';
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -1361,16 +1362,19 @@ async function releaseNotes(args) {
   const out = createOutput(parseCommonArgs(args));
   const [owner, name] = repo.split('/');
 
-  // Find previous tag
+  // Find previous tag. The GitHub tags API is NOT semver-ordered, so the old
+  // `tags[0]` silently picked the wrong base (e.g. 0.9.0 over 0.10.0) and produced
+  // a wrong "changes since X" range (#31). Pull a page of tags and choose the
+  // highest one strictly below the new tag by semver precedence.
   let prevTag;
   try {
-    const tags = gh(['api', `repos/${owner}/${name}/tags`, '--jq', '.[].name'], { json: false });
+    const tags = gh(['api', `repos/${owner}/${name}/tags?per_page=100`, '--jq', '.[].name'], { json: false });
     const tagList = tags.split('\n').filter(Boolean);
-    // Previous tag is the latest existing one
-    prevTag = tagList[0];
+    prevTag = pickPreviousTag(tagList, tag);
   } catch { /* no previous tags */ }
 
   out.header(`Release ${tag} for ${repo}`);
+  if (prevTag) out.add(`  Previous tag: ${prevTag}`);
 
   // Get commits since last tag
   let commits = [];
