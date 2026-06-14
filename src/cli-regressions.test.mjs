@@ -263,6 +263,36 @@ describe('CLI regressions', () => {
     }
   });
 
+  it('TLT-123: tl-gh surfaces handler errors as one clean line, not a raw Node stack trace', () => {
+    // Ordinary errors (bad project/PR/repo) used to throw uncaught → a JS stack
+    // trace that reads as "broken tool" and triggers reruns / raw-gh fallback.
+    // A top-level catch must collapse them to "Error: <cause>" + exit 1.
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-gh-err-'));
+    const ghPath = join(tempDir, 'gh');
+    // Fake gh that always fails the project-resolution query (empty data) so
+    // resolveProjectIdAsync throws "Project not found".
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'process.stdout.write("{}\\n");',
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    const originalPath = process.env.PATH;
+    try {
+      const result = spawnSync(process.execPath, ['bin/tl-gh.mjs', 'project', 'add-batch', '-R', 'o/r', '--project', 'o/9', '1', '-q'], {
+        cwd: repoRoot, encoding: 'utf-8',
+        env: { ...process.env, PATH: `${tempDir}:${originalPath}` },
+      });
+      assert.strictEqual(result.status, 1);
+      assert.match(result.stderr, /^Error: /m, 'leads with a clean "Error:" line');
+      assert.match(result.stderr, /Project not found/, 'includes the actual cause');
+      // The giveaway of an uncaught throw — must NOT appear.
+      assert.doesNotMatch(result.stderr, /at \w+ \(|processTicksAndRejections|node:internal/, 'no raw stack trace');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('TLT-007: tl-snippet --all still returns all matches after caching changes', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-snippet-all-'));
     const filePath = join(tempDir, 'multi.ts');

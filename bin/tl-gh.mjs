@@ -1708,44 +1708,67 @@ if (hasFlag(args, '-h') || hasFlag(args, '--help') || args.length === 0) {
 
 const sub = `${args[0]} ${args[1] || ''}`.trim();
 
-switch (sub) {
-  case 'issue read':
-  case 'issue view':
-    await issueView(args.slice(2));
-    break;
-  case 'issue create-batch':
-    await issueCreateBatch(args.slice(2));
-    break;
-  case 'issue add-sub':
-    await issueAddSub(args.slice(2));
-    break;
-  case 'issue create-tree':
-    await issueCreateTree(args.slice(2));
-    break;
-  case 'issue close':
-  case 'issue close-batch':
-    await issueCloseBatch(args.slice(2));
-    break;
-  case 'issue label-batch':
-    await issueLabelBatch(args.slice(2));
-    break;
-  case 'pr digest':
-    await prDigest(args.slice(2));
-    break;
-  case 'pr comments':
-    await prComments(args.slice(2));
-    break;
-  case 'pr land':
-    await prLand(args.slice(2));
-    break;
-  case 'release notes':
-    await releaseNotes(args.slice(2));
-    break;
-  case 'project add-batch':
-    await projectAddBatch(args.slice(2));
-    break;
-  default:
-    console.error(`Unknown command: ${sub}`);
-    console.error('Run tl-gh --help for usage');
-    process.exit(1);
+// Extract the meaningful line from a thrown error. gh subprocess failures put
+// the useful text (the GraphQL/API message) on stderr and prefix e.message with
+// a noisy "Command failed: gh …" line — strip that so the agent sees the cause,
+// not a stack trace masquerading as a broken tool (same legibility class as #123).
+function cleanErrorMessage(e) {
+  const stderr = e?.stderr && String(e.stderr).trim();
+  const raw = (stderr || e?.message || String(e)).trim();
+  return raw
+    .split('\n')
+    .filter(line => !/^Command failed:/.test(line) && line.trim())
+    .join('\n')
+    .trim() || raw;
+}
+
+try {
+  switch (sub) {
+    case 'issue read':
+    case 'issue view':
+      await issueView(args.slice(2));
+      break;
+    case 'issue create-batch':
+      await issueCreateBatch(args.slice(2));
+      break;
+    case 'issue add-sub':
+      await issueAddSub(args.slice(2));
+      break;
+    case 'issue create-tree':
+      await issueCreateTree(args.slice(2));
+      break;
+    case 'issue close':
+    case 'issue close-batch':
+      await issueCloseBatch(args.slice(2));
+      break;
+    case 'issue label-batch':
+      await issueLabelBatch(args.slice(2));
+      break;
+    case 'pr digest':
+      await prDigest(args.slice(2));
+      break;
+    case 'pr comments':
+      await prComments(args.slice(2));
+      break;
+    case 'pr land':
+      await prLand(args.slice(2));
+      break;
+    case 'release notes':
+      await releaseNotes(args.slice(2));
+      break;
+    case 'project add-batch':
+      await projectAddBatch(args.slice(2));
+      break;
+    default:
+      console.error(`Unknown command: ${sub}`);
+      console.error('Run tl-gh --help for usage');
+      process.exit(1);
+  }
+} catch (e) {
+  // Any handler that throws lands here as one clean line + exit 1, never a raw
+  // Node stack trace. Per-item failures are still reported inline by handlers;
+  // this is the backstop for whole-command failures (bad project/PR/repo, auth,
+  // GraphQL/API errors).
+  console.error(`Error: ${cleanErrorMessage(e)}`);
+  process.exit(1);
 }
