@@ -327,7 +327,10 @@ describe('CLI regressions', () => {
       "console.log('error: expect(received).toBe(expected) // 41 vs 42');",
       "for (let i = 0; i < 1500; i++) console.log('ok pass-b-' + i);",
       "console.log(' 3000 pass'); console.log(' 1 fail');",
-      "console.log('Ran 3001 tests across 1 file. [50.00ms]'); process.exit(1)"
+      // process.exitCode (not process.exit) so the 3000-line stdout fully drains
+      // before exit — process.exit() drops unflushed pipe writes (the footer),
+      // which would intermittently lose the count line and flake this test.
+      "console.log('Ran 3001 tests across 1 file. [50.00ms]'); process.exitCode = 1"
     ].join(' ');
     const command = `${nodePath} -e ${JSON.stringify(script)}`;
 
@@ -369,6 +372,83 @@ describe('CLI regressions', () => {
       parsed.failures.some(f => /computes the grand total/.test(f.name)),
       `expected failing test name in failures[], got ${JSON.stringify(parsed.failures)}`
     );
+  });
+
+  it('TLT-119: tl-run keeps Bun assertion blocks (Expected/Received + trailing marker) under budget (vent #119)', () => {
+    // Bun prints a failure as a CONTIGUOUS BLOCK whose pieces sit on separate
+    // lines: source context, `error:`, blank, `Expected:`/`Received:`, blank,
+    // the `at …` stack frame, and only THEN the `(fail) name` marker. The old
+    // failure renderer scored lines individually, so a tight budget kept the
+    // `error:`/`(fail)` keyword lines but dropped the score-0 Expected/Received
+    // values — forcing a raw rerun. Block-aware extraction must keep each block
+    // whole. We pad with noise and force a tight budget so compression engages.
+    const nodePath = JSON.stringify(process.execPath);
+    const script = [
+      "for (let i = 0; i < 60; i++) console.log('  passing noise line ' + i);",
+      "console.log('sample.test.ts:');",
+      "console.log('11 |   test(\\\"upper FAILS\\\", () => expect(\\\"abc\\\".toUpperCase()).toBe(\\\"ABCD\\\"));');",
+      "console.log('                          ^');",
+      "console.log('error: expect(received).toBe(expected)');",
+      "console.log('');",
+      "console.log('Expected: \\\"ABCD\\\"');",
+      "console.log('Received: \\\"ABC\\\"');",
+      "console.log('');",
+      "console.log('      at <anonymous> (/x/sample.test.ts:11:59)');",
+      "console.log('(fail) strings > upper FAILS');",
+      "for (let i = 0; i < 60; i++) console.log('  more passing noise ' + i);",
+      "console.log(' 6 pass'); console.log(' 1 fail');",
+      // exitCode (not exit) so buffered stdout drains fully — see TLT-075.
+      "console.log('Ran 7 tests across 1 file. [30.00ms]'); process.exitCode = 1"
+    ].join(' ');
+    const command = `${nodePath} -e ${JSON.stringify(script)}`;
+
+    // -l 40 forces a tight budget so the region path (not full passthrough) runs.
+    const result = runCli(['bin/tl-run.mjs', command, '--type', 'test', '-q', '-l', '40']);
+    assert.strictEqual(result.status, 1);
+    // The assertion VALUES must survive — this is what regressed and forced reruns.
+    assert.match(result.stdout, /Expected: "ABCD"/, 'kept the Expected value');
+    assert.match(result.stdout, /Received: "ABC"/, 'kept the Received value');
+    // The trailing marker (printed AFTER the values by Bun) must stay attached.
+    assert.match(result.stdout, /\(fail\) strings > upper FAILS/, 'kept the (fail) marker');
+    // And the passing noise that used to crowd out the assertion is dropped.
+    assert.doesNotMatch(result.stdout, /passing noise line 5\b/, 'dropped passing noise');
+  });
+
+  it('TLT-120: tl-run preserves multiple Bun failure blocks under budget, not just the first (vent #119)', () => {
+    // A large failing run (many blocks) must keep each block's values, not keep
+    // the first and cherry-pick stray keyword lines from the rest.
+    const nodePath = JSON.stringify(process.execPath);
+    const blocks = [];
+    for (let n = 0; n < 6; n++) {
+      blocks.push(
+        `console.log('error: expect(received).toBe(expected)');`,
+        `console.log('');`,
+        `console.log('Expected: ${n * 2 + 1}');`,
+        `console.log('Received: ${n * 2}');`,
+        `console.log('');`,
+        `console.log('      at <anonymous> (/x/case.test.ts:${n}:10)');`,
+        `console.log('(fail) case ${n} differs');`
+      );
+    }
+    const script = [
+      "for (let i = 0; i < 50; i++) console.log('  passing noise head ' + i);",
+      ...blocks,
+      "for (let i = 0; i < 50; i++) console.log('  passing noise tail ' + i);",
+      "console.log(' 0 pass'); console.log(' 6 fail');",
+      // exitCode (not exit) so buffered stdout drains fully — see TLT-075.
+      "console.log('Ran 6 tests across 1 file. [10.00ms]'); process.exitCode = 1"
+    ].join(' ');
+    const command = `${nodePath} -e ${JSON.stringify(script)}`;
+
+    // Total ~145 lines; -l 120 (≈115 budget) forces compression but easily fits
+    // the ~45 lines of failure regions — so all 6 blocks survive, noise drops.
+    const result = runCli(['bin/tl-run.mjs', command, '--type', 'test', '-q', '-l', '120']);
+    assert.strictEqual(result.status, 1);
+    // Every block keeps its Received value paired with its (fail) marker.
+    for (let n = 0; n < 6; n++) {
+      assert.match(result.stdout, new RegExp(`Received: ${n * 2}\\b`), `kept block ${n} Received`);
+      assert.match(result.stdout, new RegExp(`\\(fail\\) case ${n} differs`), `kept block ${n} marker`);
+    }
   });
 
   it('TLT-009: tl-symbols function filter preserves fallback extraction for non-fast languages', () => {

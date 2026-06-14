@@ -922,6 +922,105 @@ function smartBudgetGeneric(stdout, stderr, exitCode, budget) {
   return result;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Block-aware failure extraction (test/build/lint failure rendering)
+// ─────────────────────────────────────────────────────────────
+
+// A test/build/lint failure is a contiguous BLOCK — an assertion/error line plus
+// the Expected/Received/diff/stack-trace lines around it — not a set of
+// independent lines. smartBudgetGeneric scores lines individually, so under a
+// tight budget it keeps the `error:`/`(fail)` line (keyword hit) but discards the
+// score-0 `Expected:`/`Received:`/diff payload right beneath it — gutting the
+// exact detail an agent needs and forcing a raw rerun (vent #119). Bun makes this
+// acute: it prints source context, then `error:`, then the values, then the stack
+// `at …`, and only THEN the `(fail) name` marker — so the marker, the error, and
+// the values all live on different lines that line-scoring shreds apart.
+//
+// So on a failing typed run we anchor on failure signals and keep a CONTIGUOUS
+// WINDOW around each anchor, merging overlaps. Passing-test noise between failures
+// is dropped; each failure block survives whole.
+const FAILURE_ANCHOR = new RegExp([
+  '\\(fail\\)',           // Bun (non-TTY reporter)
+  '[✗✕✘×⨯✖]',             // unicode fail marks (jest / vitest / node:test)
+  '\\bFAILED?\\b',        // FAIL / FAILED
+  '^\\s*●\\s',            // jest failure bullet
+  '\\berror\\b',          // error: / error TS1234 / error[E0001]
+  '\\bAssertionError\\b',
+  '\\bexpect\\(',         // expect(received)…
+  '\\bExpected\\b',       // Expected: / - Expected
+  '\\bReceived\\b',       // Received: / + Received
+  '^\\s*@@ ',             // unified-diff hunk header (assertion diffs)
+  '\\bpanic\\b',
+  '\\bTraceback\\b'
+].join('|'), 'i');
+
+const FAILURE_BEFORE = 2;     // leading context (source line + caret)
+const FAILURE_AFTER = 6;      // trailing context (values, diff, stack, trailing marker)
+const FAILURE_MERGE_GAP = 2;  // join windows separated by ≤ this many lines (blank gaps)
+
+// Extract contiguous failure regions from a failing run's output, rendered under
+// `budget` lines. Returns { lines } or null. Returns null when the output already
+// fits the budget (let the generic path show it verbatim — no loss) or when no
+// failure anchor is found (unstructured output — fall back to line scoring).
+function extractFailureRegions(stdout, stderr, budget) {
+  const combined = (stdout + (stderr ? '\n' + stderr : '')).trim();
+  if (!combined) return null;
+  const lines = combined.split('\n');
+  if (lines.length <= budget) return null; // fits — generic path renders it whole
+
+  const anchors = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (FAILURE_ANCHOR.test(lines[i])) anchors.push(i);
+  }
+  if (anchors.length === 0) return null; // no failure structure — let scoring try
+
+  // Expand each anchor to a window, merging overlapping/adjacent ones so a block
+  // whose error, values, and marker straddle blank lines stays in one region.
+  const ranges = [];
+  for (const i of anchors) {
+    const start = Math.max(0, i - FAILURE_BEFORE);
+    const end = Math.min(lines.length - 1, i + FAILURE_AFTER);
+    const last = ranges[ranges.length - 1];
+    if (last && start <= last.end + FAILURE_MERGE_GAP) {
+      last.end = Math.max(last.end, end);
+    } else {
+      ranges.push({ start, end });
+    }
+  }
+
+  // Render whole regions under budget. Failure blocks are the point, so we keep
+  // each region intact and note any dropped rather than slicing one mid-assertion.
+  const out = [];
+  let used = 0;
+  let prevEnd = -1;
+  let droppedRegions = 0;
+  let renderedAny = false;
+  for (let r = 0; r < ranges.length; r++) {
+    const { start, end } = ranges[r];
+    const size = end - start + 1;
+    const gapBefore = start - (prevEnd + 1);
+    const cost = size + (gapBefore > 0 ? 1 : 0);
+    if (renderedAny && used + cost > budget) {
+      droppedRegions = ranges.length - r;
+      break;
+    }
+    if (gapBefore > 0) { out.push(`... ${gapBefore} lines omitted ...`); used += 1; }
+    for (let k = start; k <= end; k++) out.push(lines[k]);
+    used += size;
+    prevEnd = end;
+    renderedAny = true;
+  }
+
+  if (droppedRegions > 0) {
+    out.push(`... ${droppedRegions} more failure region(s) omitted — rerun with --raw for the full log ...`);
+  } else {
+    const trailing = lines.length - 1 - prevEnd;
+    if (trailing > 0) out.push(`... ${trailing} lines omitted ...`);
+  }
+
+  return { lines: out, summary: `${lines.length} total lines → failure regions` };
+}
+
 function computeLineBudget(opts) {
   let budget = Infinity;
   if (opts.maxLines < Infinity) {
@@ -1072,7 +1171,12 @@ function summaryToLines(type, summary, exitCode, stdout, stderr, opts = {}) {
     const lines = [];
     if (summary.summary) lines.push(summary.summary);
     const budget = computeLineBudget(opts);
-    const raw = smartBudgetGeneric(stdout, stderr, exitCode, budget < Infinity ? budget : DEFAULT_FAILURE_BUDGET);
+    const failBudget = budget < Infinity ? budget : DEFAULT_FAILURE_BUDGET;
+    // Prefer block-aware extraction so contiguous assertion blocks (error +
+    // Expected/Received + diff + stack + marker) survive whole; it returns null
+    // when the output fits or has no failure structure, falling back to scoring.
+    const raw = extractFailureRegions(stdout, stderr, failBudget)
+      || smartBudgetGeneric(stdout, stderr, exitCode, failBudget);
     if (raw.lines.length > 0) {
       lines.push('');
       lines.push(...raw.lines);

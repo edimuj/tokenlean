@@ -187,11 +187,21 @@ describe('MCP tool definitions', () => {
     const originalPath = process.env.PATH;
     const originalLog = process.env.GH_LOG;
 
+    // Faithful stub: log every call, and return a project id for the projectV2
+    // resolution query so tl_gh_project_add_batch gets PAST project resolution to
+    // the issue-id lookup (where the number lands in the gh query) — otherwise it
+    // throws "Project not found" before the issue number ever reaches gh. Issue
+    // tools see "{}" exactly as before.
     writeFileSync(ghPath, [
       '#!/usr/bin/env node',
       'const fs = require("node:fs");',
-      'fs.appendFileSync(process.env.GH_LOG, JSON.stringify(process.argv.slice(2)) + "\\n");',
-      'process.stdout.write("{}\\n");',
+      'const argv = process.argv.slice(2);',
+      'fs.appendFileSync(process.env.GH_LOG, JSON.stringify(argv) + "\\n");',
+      'if (argv.join(" ").includes("projectV2")) {',
+      '  process.stdout.write(JSON.stringify({ data: { user: { projectV2: { id: "PVT_test" } } } }) + "\\n");',
+      '} else {',
+      '  process.stdout.write("{}\\n");',
+      '}',
     ].join('\n') + '\n', 'utf-8');
     chmodSync(ghPath, 0o755);
 
