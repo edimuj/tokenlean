@@ -438,8 +438,18 @@ async function issueView(args) {
 
   const full = hasFlag(args, '--full');
   const noBody = hasFlag(args, '--no-body');
+  const withComments = hasFlag(args, '--comments');
   const bodyLines = parseInt(extractArg(args, '--body-lines') || '5', 10);
   const out = createOutput(parseCommonArgs(args));
+
+  // Pull the most recent comment bodies only when asked — keeps the default read
+  // compact, but gives a first-class tokenlean path for reading the discussion so
+  // agents don't drop to `gh issue view --comments` (which prints NOTHING on a
+  // zero-comment issue and reads as broken — vent #123).
+  const COMMENT_FETCH = 30;
+  const commentsField = withComments
+    ? `comments(last: ${COMMENT_FETCH}) { totalCount nodes { author { login } createdAt body } }`
+    : `comments { totalCount }`;
 
   const [owner, name] = repo.split('/');
   let result;
@@ -451,7 +461,7 @@ async function issueView(args) {
           author { login }
           assignees(first: 5) { nodes { login } }
           labels(first: 10) { nodes { name } }
-          comments { totalCount }
+          ${commentsField}
           subIssues(first: 100) {
             totalCount
             nodes {
@@ -524,10 +534,35 @@ async function issueView(args) {
     }
   }
 
+  // ── Comments (only with --comments) ──
+  // Always emit a visible line here — "No comments." rather than nothing — so a
+  // successful read is never silent (the footgun behind vent #123).
+  let commentNodes = [];
+  if (withComments) {
+    commentNodes = issue.comments?.nodes || [];
+    const total = issue.comments?.totalCount || 0;
+    out.blank();
+    if (total === 0) {
+      out.add('  No comments.');
+    } else {
+      const shownNote = total > commentNodes.length ? `, showing last ${commentNodes.length}` : '';
+      out.add(`  Comments: ${total}${shownNote}`);
+      out.add('  ─'.padEnd(60, '─'));
+      for (const c of commentNodes) {
+        out.add(`  @${c.author?.login || 'ghost'} · ${c.createdAt || ''}`.trimEnd());
+        const lines = truncateBody(c.body || '', full ? Infinity : bodyLines);
+        for (const line of lines.split('\n')) out.add(`    ${line}`);
+      }
+    }
+  }
+
   out.setData('issue', {
     ...issue,
     labels,
     assignees,
+    comments: withComments
+      ? { totalCount: issue.comments?.totalCount || 0, nodes: commentNodes.map(c => ({ author: c.author?.login || null, createdAt: c.createdAt, body: c.body })) }
+      : { totalCount: issue.comments?.totalCount || 0 },
     subIssues: subs.map(s => ({
       number: s.number,
       title: s.title,
@@ -1554,10 +1589,12 @@ ${COMMON_OPTIONS_HELP}
     --full                Show complete bodies (no truncation)
     --no-body             Titles and metadata only (most compact)
     --body-lines <n>      Lines of body to show per issue (default: 5)
+    --comments            Include comment bodies (prints "No comments." if none)
 
   Usage:
     tl-gh issue read -R owner/repo 434
     tl-gh issue read -R owner/repo 434 --no-body
+    tl-gh issue read -R owner/repo 434 --comments
     tl-gh issue view -R owner/repo 434
     tl-gh issue view -R owner/repo 434 --full
     tl-gh issue view -R owner/repo 434 --body-lines 10

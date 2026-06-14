@@ -188,6 +188,81 @@ describe('CLI regressions', () => {
     assert.match(result.stderr, /ERR/);
   });
 
+  it('TLT-121: tl-gh issue read --comments prints "No comments." on a zero-comment issue (never silent — vent #123)', () => {
+    // Raw `gh issue view <n> --comments` prints NOTHING when an issue has no
+    // comments, reading as a broken tool. tokenlean must give a first-class,
+    // never-empty path so agents don't drop to that footgun.
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-gh-comments-'));
+    const ghPath = join(tempDir, 'gh');
+    const issueJson = JSON.stringify({
+      data: { repository: { issue: {
+        number: 42, title: 'Probe', state: 'OPEN', body: 'body text', url: 'http://x/42',
+        author: { login: 'edin' }, assignees: { nodes: [] }, labels: { nodes: [] },
+        comments: { totalCount: 0, nodes: [] },
+        subIssues: { totalCount: 0, nodes: [] },
+      } } },
+    });
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'const argv = process.argv.slice(2);',
+      // Respond to the issueView GraphQL query (it asks for subIssues); else "{}".
+      'if (argv.join(" ").includes("subIssues")) process.stdout.write(process.env.GH_ISSUE_JSON + "\\n");',
+      'else process.stdout.write("{}\\n");',
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    const originalPath = process.env.PATH;
+    try {
+      const result = spawnSync(process.execPath, ['bin/tl-gh.mjs', 'issue', 'read', '-R', 'o/r', '42', '--comments', '-q'], {
+        cwd: repoRoot, encoding: 'utf-8',
+        env: { ...process.env, PATH: `${tempDir}:${originalPath}`, GH_ISSUE_JSON: issueJson },
+      });
+      assert.strictEqual(result.status, 0);
+      assert.match(result.stdout, /No comments\./, 'must state "No comments." rather than print nothing');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-122: tl-gh issue read --comments renders comment authors and bodies (vent #123)', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-gh-comments-body-'));
+    const ghPath = join(tempDir, 'gh');
+    const issueJson = JSON.stringify({
+      data: { repository: { issue: {
+        number: 42, title: 'Probe', state: 'OPEN', body: 'body text', url: 'http://x/42',
+        author: { login: 'edin' }, assignees: { nodes: [] }, labels: { nodes: [] },
+        comments: { totalCount: 2, nodes: [
+          { author: { login: 'alice' }, createdAt: '2026-01-01T00:00:00Z', body: 'first point made here' },
+          { author: { login: 'bob' }, createdAt: '2026-01-02T00:00:00Z', body: 'second point made here' },
+        ] },
+        subIssues: { totalCount: 0, nodes: [] },
+      } } },
+    });
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'const argv = process.argv.slice(2);',
+      'if (argv.join(" ").includes("subIssues")) process.stdout.write(process.env.GH_ISSUE_JSON + "\\n");',
+      'else process.stdout.write("{}\\n");',
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    const originalPath = process.env.PATH;
+    try {
+      const result = spawnSync(process.execPath, ['bin/tl-gh.mjs', 'issue', 'read', '-R', 'o/r', '42', '--comments', '-q'], {
+        cwd: repoRoot, encoding: 'utf-8',
+        env: { ...process.env, PATH: `${tempDir}:${originalPath}`, GH_ISSUE_JSON: issueJson },
+      });
+      assert.strictEqual(result.status, 0);
+      assert.match(result.stdout, /Comments: 2/, 'shows the comment count header');
+      assert.match(result.stdout, /@alice/, 'shows the first commenter');
+      assert.match(result.stdout, /first point made here/, 'shows the first comment body');
+      assert.match(result.stdout, /@bob/, 'shows the second commenter');
+      assert.match(result.stdout, /second point made here/, 'shows the second comment body');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('TLT-007: tl-snippet --all still returns all matches after caching changes', () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-snippet-all-'));
     const filePath = join(tempDir, 'multi.ts');

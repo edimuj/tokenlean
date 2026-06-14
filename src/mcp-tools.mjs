@@ -486,7 +486,7 @@ export const TOOLS = [
 
   {
     name: 'tl_gh_issue_read',
-    description: 'Read a GitHub issue with its direct sub-issues, labels, assignees, comments count, and optionally bodies.',
+    description: 'Read a GitHub issue with its direct sub-issues, labels, assignees, comment count, and optionally bodies. Pass comments:true to include comment bodies — use this instead of "gh issue view --comments", which prints nothing on a zero-comment issue.',
     schema: withCwd({
       repo: z.string().describe('Target repository (owner/repo, or bare name with "owner")'),
       ...ghOwnerAlias,
@@ -495,8 +495,9 @@ export const TOOLS = [
       full: z.boolean().optional().describe('Show complete bodies instead of truncating'),
       noBody: z.boolean().optional().describe('Omit issue bodies for compact output'),
       bodyLines: z.number().optional().describe('Lines of body to show per issue (default: 5)'),
+      comments: z.boolean().optional().describe('Include comment bodies (the discussion thread), not just the count. Reports "No comments." when there are none — never empty.'),
     }),
-    handler: async ({ repo, owner, issue, issue_number, number, full, noBody, bodyLines, cwd }) => {
+    handler: async ({ repo, owner, issue, issue_number, number, full, noBody, bodyLines, comments, cwd }) => {
       repo = ghResolveRepo(repo, owner);
       const raw = ghPickIssues(issue, issue_number, number);
       const issueNum = Array.isArray(raw) ? raw[0] : raw;
@@ -505,6 +506,7 @@ export const TOOLS = [
       if (full) args.push('--full');
       if (noBody) args.push('--no-body');
       if (bodyLines) args.push('--body-lines', String(bodyLines));
+      if (comments) args.push('--comments');
       args.push('-j');
       return dispatchTool('gh', args, { timeout: 120000, cwd });
     },
