@@ -1686,6 +1686,87 @@ describe('CLI regressions', () => {
     }
   });
 
+  it('TLT-126: tl-unused suppresses exports with inline // tl-keep', { skip: RG_SKIP }, () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-unused-keep-'));
+    try {
+      writeFileSync(join(tempDir, 'api.mjs'),
+        'export const reallyUnused = 1;\n' +
+        'export const keptInline = 2; // tl-keep\n' +
+        '// tl-guard-ignore-unused\n' +
+        'export function keptAbove() {}\n',
+        'utf-8');
+
+      const result = runCli([join(repoRoot, 'bin/tl-unused.mjs'), '.', '-e', '-j'], tempDir);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      assert.deepStrictEqual(parsed.unusedExports.map(e => e.name), ['reallyUnused']);
+      assert.deepStrictEqual(
+        parsed.suppressedExports.map(e => e.name).sort(),
+        ['keptAbove', 'keptInline']
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-127: tl-unused honors config publicApiGlobs and ignoreExports', { skip: RG_SKIP }, () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-unused-config-'));
+    try {
+      mkdirSync(join(tempDir, 'sdk', 'src'), { recursive: true });
+      writeFileSync(join(tempDir, 'sdk', 'src', 'index.mjs'),
+        'export const PublicThing = 1;\n', 'utf-8');
+      writeFileSync(join(tempDir, 'api.mjs'),
+        'export const PROVIDER_CATALOG = {};\n' +
+        'export const scopedThing = 9;\n' +
+        'export const leftover = 7;\n', 'utf-8');
+      writeFileSync(join(tempDir, 'other.mjs'),
+        'export const scopedThing = 10;\n', 'utf-8');
+      writeFileSync(join(tempDir, '.tokenleanrc.json'), JSON.stringify({
+        unused: {
+          publicApiGlobs: ['sdk/src/**'],
+          ignoreExports: ['PROVIDER_CATALOG', 'api.mjs:scopedThing']
+        }
+      }), 'utf-8');
+
+      const result = runCli([join(repoRoot, 'bin/tl-unused.mjs'), '.', '-e', '-j'], tempDir);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      // leftover (api.mjs) and scopedThing (other.mjs, not scoped) stay flagged
+      assert.deepStrictEqual(
+        parsed.unusedExports.map(e => `${e.file}:${e.name}`).sort(),
+        ['api.mjs:leftover', 'other.mjs:scopedThing']
+      );
+      const suppressed = parsed.suppressedExports.map(e => `${e.file}:${e.name}`).sort();
+      assert.deepStrictEqual(suppressed, [
+        'api.mjs:PROVIDER_CATALOG',
+        'api.mjs:scopedThing',
+        join('sdk', 'src', 'index.mjs') + ':PublicThing'
+      ].sort());
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-128: tl-guard reports suppressed public-API exports as a clean pass', { skip: RG_SKIP }, () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-guard-keep-'));
+    try {
+      writeFileSync(join(tempDir, 'api.mjs'),
+        'export const PublicApi = 1; // tl-keep\n', 'utf-8');
+
+      const result = runCli([
+        join(repoRoot, 'bin/tl-guard.mjs'),
+        '--no-secrets', '--no-todos', '--no-circular', '--no-ctrlbytes', '-j'
+      ], tempDir);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      assert.strictEqual(parsed.checks.unused.status, 'pass');
+      assert.strictEqual(parsed.checks.unused.count, 0);
+      assert.match(parsed.checks.unused.note, /1 suppressed/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('TLT-037: tl-parallel keeps env-prefixed commands intact', () => {
     const script = 'console.log(process.env.NODE_ENV)';
     const result = runCli([

@@ -27,7 +27,8 @@ import {
   parseCommonArgs,
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
-import { findProjectRoot, findCodeFiles, CODE_EXTENSIONS, getExternalContractFiles } from '../src/project.mjs';
+import { findProjectRoot, findCodeFiles, CODE_EXTENSIONS, getExternalContractFiles, matchesAnyGlob } from '../src/project.mjs';
+import { getConfig } from '../src/config.mjs';
 import { withCache } from '../src/cache.mjs';
 import { ensureRipgrep, batchRipgrep } from '../src/traverse.mjs';
 
@@ -43,6 +44,7 @@ Options:
   --files-only, -f      Only check for unreferenced files
   --ignore <pattern>    Ignore files matching pattern (can use multiple times)
   --include-tests       Include test files in analysis (default: excluded)
+  --show-suppressed     List exports suppressed as intentional public API
 ${COMMON_OPTIONS_HELP}
 
 Examples:
@@ -50,6 +52,14 @@ Examples:
   tl-unused src/                  # Analyze src/ only
   tl-unused -e                    # Unused exports only
   tl-unused --ignore "*.d.ts"     # Ignore type definitions
+  tl-unused --show-suppressed     # Also list kept public-API exports
+
+Suppressing intentional public API (libraries):
+  - Inline:  add a "// tl-keep" comment on the export line or directly above it
+  - Config:  .tokenleanrc.json "unused": {
+               "publicApiGlobs": ["sdk/src/**"],
+               "ignoreExports": ["PROVIDER_CATALOG", "src/api.mjs:foo"]
+             }
 
 Note: This is a heuristic analysis. Some "unused" exports might be:
   - Used dynamically (require(), dynamic imports)
@@ -61,6 +71,18 @@ Note: This is a heuristic analysis. Some "unused" exports might be:
 // ─────────────────────────────────────────────────────────────
 // Export Extraction
 // ─────────────────────────────────────────────────────────────
+
+// Inline opt-out: `// tl-keep` (or `// tl-guard-ignore-unused`) on the export
+// line itself or the comment line directly above marks an export as
+// intentional public API — never flagged as unused.
+const KEEP_RE = /\b(?:tl-keep|tl-guard-ignore-unused)\b/;
+
+function isKept(line, prevLine) {
+  if (KEEP_RE.test(line)) return true;
+  const prev = (prevLine || '').trim();
+  const isComment = prev.startsWith('//') || prev.startsWith('*') || prev.startsWith('/*');
+  return isComment && KEEP_RE.test(prev);
+}
 
 function extractExports(content) {
   const exports = [];
@@ -75,6 +97,8 @@ function extractExports(content) {
     // Skip re-exports (these are pass-through)
     if (trimmed.includes(' from ')) continue;
 
+    const keep = isKept(line, lines[i - 1]);
+
     // Named exports: export { a, b }
     const namedMatch = trimmed.match(/^export\s+\{([^}]+)\}/);
     if (namedMatch) {
@@ -82,34 +106,34 @@ function extractExports(content) {
         const parts = n.trim().split(/\s+as\s+/);
         return parts[parts.length - 1].trim();  // Use alias if present
       });
-      names.forEach(name => exports.push({ name, line: i + 1 }));
+      names.forEach(name => exports.push({ name, line: i + 1, keep }));
       continue;
     }
 
     // Default export
     if (trimmed.startsWith('export default ')) {
-      exports.push({ name: 'default', line: i + 1 });
+      exports.push({ name: 'default', line: i + 1, keep });
       continue;
     }
 
     // export interface/type/enum
     const typeMatch = trimmed.match(/^export\s+(?:interface|type|enum|const\s+enum)\s+(\w+)/);
     if (typeMatch) {
-      exports.push({ name: typeMatch[1], line: i + 1, isType: true });
+      exports.push({ name: typeMatch[1], line: i + 1, isType: true, keep });
       continue;
     }
 
     // export function/class/const
     const valueMatch = trimmed.match(/^export\s+(?:async\s+)?(?:function|class|const|let|var)\s+(\w+)/);
     if (valueMatch) {
-      exports.push({ name: valueMatch[1], line: i + 1 });
+      exports.push({ name: valueMatch[1], line: i + 1, keep });
       continue;
     }
 
     // export abstract class
     const abstractMatch = trimmed.match(/^export\s+abstract\s+class\s+(\w+)/);
     if (abstractMatch) {
-      exports.push({ name: abstractMatch[1], line: i + 1 });
+      exports.push({ name: abstractMatch[1], line: i + 1, keep });
     }
   }
 
@@ -182,8 +206,34 @@ function extractImports(content) {
 // Analysis
 // ─────────────────────────────────────────────────────────────
 
+// Parse the `unused` config section into a resolved suppression spec.
+function resolveSuppression() {
+  const cfg = getConfig('unused') || {};
+  const publicApiGlobs = Array.isArray(cfg.publicApiGlobs) ? cfg.publicApiGlobs : [];
+  const ignoreExports = (Array.isArray(cfg.ignoreExports) ? cfg.ignoreExports : []).map(entry => {
+    const idx = entry.lastIndexOf(':');
+    return idx > 0
+      ? { glob: entry.slice(0, idx), name: entry.slice(idx + 1) }
+      : { glob: null, name: entry };
+  });
+  return { publicApiGlobs, ignoreExports };
+}
+
+// True if an export should never be flagged: inline `tl-keep`, a publicApiGlobs
+// file, or a matching ignoreExports entry.
+function isSuppressed(relPath, name, keep, { publicApiGlobs, ignoreExports }) {
+  if (keep) return true;
+  if (matchesAnyGlob(relPath, publicApiGlobs)) return true;
+  return ignoreExports.some(e =>
+    (e.name === name || e.name === '*') &&
+    (e.glob === null || matchesAnyGlob(relPath, [e.glob]))
+  );
+}
+
 function analyzeUnusedExports(files, projectRoot, targetFiles = null) {
   const externalContractFiles = getExternalContractFiles();
+  const suppress = resolveSuppression();
+  const suppressed = [];
   const checkFiles = (targetFiles || files).filter(file =>
     !externalContractFiles.has(relative(projectRoot, file))
   );
@@ -215,21 +265,25 @@ function analyzeUnusedExports(files, projectRoot, targetFiles = null) {
     for (const exp of exports) {
       if (exp.name === 'default') continue;
 
-      if (hasWildcardImport) {
-        // All exports need grep verification when wildcard imports exist
+      // Statically imported by name → definitely used.
+      if (!hasWildcardImport && allImports.named.has(exp.name)) continue;
+
+      // Intentional public API → suppress (inline tl-keep or config allowlist).
+      if (isSuppressed(relPath, exp.name, exp.keep, suppress)) {
+        suppressed.push({ file: relPath, name: exp.name, line: exp.line, isType: exp.isType });
+        continue;
+      }
+
+      if (hasWildcardImport || exp.name.length <= 3 || /^[A-Z]/.test(exp.name)) {
+        // Wildcard imports or short/capitalized names need grep confirmation
         candidates.push({ name: exp.name, file, relPath, exp });
-      } else if (!allImports.named.has(exp.name)) {
-        // Not in static imports — short/capitalized names need grep confirmation
-        if (exp.name.length <= 3 || /^[A-Z]/.test(exp.name)) {
-          candidates.push({ name: exp.name, file, relPath, exp });
-        } else {
-          directUnused.push({
-            file: relPath,
-            name: exp.name,
-            line: exp.line,
-            isType: exp.isType
-          });
-        }
+      } else {
+        directUnused.push({
+          file: relPath,
+          name: exp.name,
+          line: exp.line,
+          isType: exp.isType
+        });
       }
     }
   }
@@ -271,7 +325,7 @@ function analyzeUnusedExports(files, projectRoot, targetFiles = null) {
     }
   }
 
-  return unused;
+  return { unused, suppressed };
 }
 
 function analyzeUnreferencedFiles(files, projectRoot, targetFiles = null) {
@@ -359,6 +413,7 @@ const options = parseCommonArgs(args);
 let exportsOnly = false;
 let filesOnly = false;
 let includeTests = false;
+let showSuppressed = false;
 const ignorePatterns = [];
 
 const remaining = [];
@@ -371,6 +426,8 @@ for (let i = 0; i < options.remaining.length; i++) {
     filesOnly = true;
   } else if (arg === '--include-tests') {
     includeTests = true;
+  } else if (arg === '--show-suppressed') {
+    showSuppressed = true;
   } else if (arg === '--ignore') {
     ignorePatterns.push(options.remaining[++i]);
   } else if (!arg.startsWith('-')) {
@@ -419,12 +476,15 @@ out.blank();
 
 const results = {
   unusedExports: [],
+  suppressedExports: [],
   unreferencedFiles: []
 };
 
 // Analyze unused exports
 if (!filesOnly) {
-  results.unusedExports = analyzeUnusedExports(allProjectFiles, projectRoot, files);
+  const exportAnalysis = analyzeUnusedExports(allProjectFiles, projectRoot, files);
+  results.unusedExports = exportAnalysis.unused;
+  results.suppressedExports = exportAnalysis.suppressed;
 
   if (results.unusedExports.length > 0) {
     out.add(`Potentially unused exports (${results.unusedExports.length}):`);
@@ -448,6 +508,16 @@ if (!filesOnly) {
     }
     out.blank();
   }
+
+  if (showSuppressed && results.suppressedExports.length > 0) {
+    out.add(`Suppressed public-API exports (${results.suppressedExports.length}):`);
+    out.blank();
+    for (const exp of results.suppressedExports) {
+      const typeIndicator = exp.isType ? ' (type)' : '';
+      out.add(`  ${exp.file} L${exp.line}: ${exp.name}${typeIndicator}`);
+    }
+    out.blank();
+  }
 }
 
 // Analyze unreferenced files
@@ -467,16 +537,23 @@ if (!exportsOnly) {
 
 // Set JSON data
 out.setData('unusedExports', results.unusedExports);
+out.setData('suppressedExports', results.suppressedExports);
 out.setData('unreferencedFiles', results.unreferencedFiles);
 
 // Summary
 if (!options.quiet) {
   const totalIssues = results.unusedExports.length + results.unreferencedFiles.length;
+  const suppressedCount = results.suppressedExports.length;
 
   if (totalIssues === 0) {
     out.add('ok No obviously unused code found');
   } else {
     out.add(`Found ${results.unusedExports.length} potentially unused exports, ${results.unreferencedFiles.length} unreferenced files`);
+  }
+
+  if (suppressedCount > 0) {
+    const hint = showSuppressed ? '' : ' (--show-suppressed to list)';
+    out.add(`${suppressedCount} export(s) suppressed as intentional public API${hint}`);
   }
 
   out.blank();

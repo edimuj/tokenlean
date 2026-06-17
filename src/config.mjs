@@ -83,6 +83,16 @@ const DEFAULT_CONFIG = {
   symbols: {
     includePrivate: false
   },
+  unused: {
+    // File globs whose exports are all treated as public API surface — never
+    // flagged as unused (libraries: external installers are the consumers tl
+    // can't see). e.g. ["sdk/src/**", "src/index.mjs"]
+    publicApiGlobs: [],
+    // Specific exports to never flag. Each entry is either a bare name
+    // ("PROVIDER_CATALOG", matches that export in any file) or "<glob>:<name>"
+    // ("src/api.mjs:foo", scopes the match to files matching the glob).
+    ignoreExports: []
+  },
   impact: {
     depth: 2
   },

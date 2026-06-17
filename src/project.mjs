@@ -88,6 +88,46 @@ export function getExternalContractFiles() { return getCombinedSets().externalCo
 export function clearProjectCache() { _cachedSets = null; }
 
 // ─────────────────────────────────────────────────────────────
+// Glob Matching (lightweight, no deps)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Convert a glob pattern to an anchored RegExp.
+ * Supports `*` (any chars except `/`), `**` (any chars incl `/`), `?` (one
+ * non-slash char). All other regex metacharacters are escaped. Paths are
+ * compared with forward slashes.
+ */
+export function globToRegExp(glob) {
+  let re = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    if (c === '*') {
+      if (glob[i + 1] === '*') {
+        re += '.*';
+        i++;
+        if (glob[i + 1] === '/') i++; // a/**/b matches a/b
+      } else {
+        re += '[^/]*';
+      }
+    } else if (c === '?') {
+      re += '[^/]';
+    } else if ('.+^${}()|[]\\'.includes(c)) {
+      re += '\\' + c;
+    } else {
+      re += c;
+    }
+  }
+  return new RegExp('^' + re + '$');
+}
+
+/** True if `path` matches any of the given glob patterns. */
+export function matchesAnyGlob(path, globs) {
+  if (!globs || globs.length === 0) return false;
+  const normalized = path.split('\\').join('/');
+  return globs.some(g => globToRegExp(g).test(normalized));
+}
+
+// ─────────────────────────────────────────────────────────────
 // Project Detection
 // ─────────────────────────────────────────────────────────────
 

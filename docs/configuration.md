@@ -27,6 +27,15 @@ Create in your project root or `~/.tokenleanrc.json` globally.
   "externalContractFiles": [
     "src/my-copied-plugin.js"
   ],
+  "unused": {
+    "publicApiGlobs": [
+      "sdk/src/**"
+    ],
+    "ignoreExports": [
+      "PROVIDER_CATALOG",
+      "src/api.mjs:internalButPublic"
+    ]
+  },
   "searchPatterns": {
     "hooks": {
       "description": "Find React hooks",
@@ -52,6 +61,19 @@ Create in your project root or `~/.tokenleanrc.json` globally.
 Config values extend built-in defaults (they don't replace them).
 
 `externalContractFiles` are project-relative paths copied/generated verbatim into another tool (so they can't import from your source). Their duplicate helpers are by-design, so `tl dupes`, `tl unused`, and `tl lookup` exclude them from their indexes by default. `tl dupes --include-contracts` opts them back in.
+
+### Suppressing intentional unused exports (`unused`)
+
+Library packages export public API that's consumed by external installers — code `tl unused`/`tl guard` can't see, so it flags those exports as unused forever. Mark them as intentional so guard stays green:
+
+- **Inline** — add a `// tl-keep` (or `// tl-guard-ignore-unused`) comment on the export line or the line directly above it. Co-located and survives refactors:
+  ```js
+  export const PROVIDER_CATALOG = {...}; // tl-keep
+  ```
+- **`unused.publicApiGlobs`** — file globs whose exports are *all* treated as public API (e.g. an SDK's `sdk/src/**`). Supports `*`, `**`, `?`.
+- **`unused.ignoreExports`** — specific exports to never flag. Each entry is a bare name (`"PROVIDER_CATALOG"`, matches that export in any file) or `"<glob>:<name>"` (`"src/api.mjs:foo"`, scopes the match to files matching the glob).
+
+Suppressed exports are removed from the unused list but still counted — `tl unused --show-suppressed` lists them, and `tl guard` notes the count on a clean pass.
 
 ## Caching
 

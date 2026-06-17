@@ -229,8 +229,12 @@ function checkUnused() {
   }
 
   const unused = data.unusedExports || [];
+  const suppressed = (data.suppressedExports || []).length;
   if (unused.length === 0) {
-    return { status: 'pass', count: 0, details: [] };
+    const note = suppressed > 0
+      ? `No unused exports detected (${suppressed} suppressed as public API)`
+      : undefined;
+    return { status: 'pass', count: 0, details: [], note };
   }
 
   return {
