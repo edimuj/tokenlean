@@ -65,6 +65,17 @@ Examples:
   tl-guard --strict           # Warnings become failures
   tl-guard -j                 # JSON output
   tl-guard -q                 # Quiet mode
+
+Suppressing intentional unused exports (library public API):
+  The Unused check shells out to "tl unused". Mark intentional public-API
+  exports so they stop being flagged (both here and in tl unused):
+  - Inline:  add "// tl-keep" on the export line or directly above it
+  - Config:  .tokenleanrc.json — nest the keys under "unused":
+               { "unused": {
+                   "publicApiGlobs": ["sdk/src/**"],
+                   "ignoreExports": ["PROVIDER_CATALOG", "src/api.mjs:foo"]
+               } }
+  See: tl unused --help
 `;
 
 // ─────────────────────────────────────────────────────────────

@@ -207,10 +207,29 @@ function extractImports(content) {
 // ─────────────────────────────────────────────────────────────
 
 // Parse the `unused` config section into a resolved suppression spec.
+// Canonical location is the `unused` section, but the keys are also accepted at
+// the top level of .tokenleanrc.json — a natural shape that would otherwise be
+// silently ignored. Top-level and nested are unioned (both are allowlists), and
+// top-level use prints a one-line hint so the canonical spot is discoverable.
 function resolveSuppression() {
-  const cfg = getConfig('unused') || {};
-  const publicApiGlobs = Array.isArray(cfg.publicApiGlobs) ? cfg.publicApiGlobs : [];
-  const ignoreExports = (Array.isArray(cfg.ignoreExports) ? cfg.ignoreExports : []).map(entry => {
+  const root = getConfig() || {};
+  const cfg = root.unused || {};
+  const arr = v => (Array.isArray(v) ? v : []);
+
+  // Union nested (canonical) + top-level (forgiving fallback).
+  const publicApiGlobs = [...arr(cfg.publicApiGlobs), ...arr(root.publicApiGlobs)];
+  const rawIgnore = [...arr(cfg.ignoreExports), ...arr(root.ignoreExports)];
+
+  // Warn once if a suppression key sits at the top level instead of under `unused`.
+  const misplaced = ['publicApiGlobs', 'ignoreExports'].filter(k => arr(root[k]).length > 0);
+  if (misplaced.length > 0) {
+    console.error(
+      `tokenlean: found ${misplaced.join(', ')} at the top level of .tokenleanrc.json — ` +
+      `nest under "unused" (e.g. { "unused": { "${misplaced[0]}": [...] } }). Honoring it anyway.`
+    );
+  }
+
+  const ignoreExports = rawIgnore.map(entry => {
     const idx = entry.lastIndexOf(':');
     return idx > 0
       ? { glob: entry.slice(0, idx), name: entry.slice(idx + 1) }

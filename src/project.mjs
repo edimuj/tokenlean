@@ -97,7 +97,7 @@ export function clearProjectCache() { _cachedSets = null; }
  * non-slash char). All other regex metacharacters are escaped. Paths are
  * compared with forward slashes.
  */
-export function globToRegExp(glob) {
+function globToRegExp(glob) {
   let re = '';
   for (let i = 0; i < glob.length; i++) {
     const c = glob[i];

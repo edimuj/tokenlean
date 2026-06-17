@@ -75,6 +75,8 @@ Library packages export public API that's consumed by external installers — co
 
 Suppressed exports are removed from the unused list but still counted — `tl unused --show-suppressed` lists them, and `tl guard` notes the count on a clean pass.
 
+`publicApiGlobs` and `ignoreExports` belong under the `unused` section, but they're also honored if placed at the top level of `.tokenleanrc.json` (a common mistake) — tokenlean prints a one-line hint pointing you to the canonical spot and applies them anyway.
+
 ## Caching
 
 tokenlean caches expensive operations with **git-based invalidation** — including ripgrep-backed searches, cached

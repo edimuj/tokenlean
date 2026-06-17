@@ -1747,6 +1747,39 @@ describe('CLI regressions', () => {
     }
   });
 
+  it('TLT-129: tl-unused honors publicApiGlobs/ignoreExports placed at the top level', { skip: RG_SKIP }, () => {
+    // The canonical spot is the `unused` section, but a natural top-level shape
+    // (what users actually write) must be honored too, not silently ignored.
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-unused-toplevel-'));
+    try {
+      mkdirSync(join(tempDir, 'sdk', 'src'), { recursive: true });
+      writeFileSync(join(tempDir, 'sdk', 'src', 'index.mjs'),
+        'export const PublicThing = 1;\n', 'utf-8');
+      writeFileSync(join(tempDir, 'api.mjs'),
+        'export const PROVIDER_CATALOG = {};\n' +
+        'export const leftover = 7;\n', 'utf-8');
+      // Keys at the top level, NOT nested under "unused".
+      writeFileSync(join(tempDir, '.tokenleanrc.json'), JSON.stringify({
+        publicApiGlobs: ['sdk/src/**'],
+        ignoreExports: ['PROVIDER_CATALOG']
+      }), 'utf-8');
+
+      const result = runCli([join(repoRoot, 'bin/tl-unused.mjs'), '.', '-e', '-j'], tempDir);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      assert.deepStrictEqual(parsed.unusedExports.map(e => `${e.file}:${e.name}`), ['api.mjs:leftover']);
+      const suppressed = parsed.suppressedExports.map(e => `${e.file}:${e.name}`).sort();
+      assert.deepStrictEqual(suppressed, [
+        'api.mjs:PROVIDER_CATALOG',
+        join('sdk', 'src', 'index.mjs') + ':PublicThing'
+      ].sort());
+      // And it nudges the user toward the canonical location.
+      assert.match(result.stderr, /top level of \.tokenleanrc\.json/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('TLT-128: tl-guard reports suppressed public-API exports as a clean pass', { skip: RG_SKIP }, () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-guard-keep-'));
     try {
