@@ -153,6 +153,54 @@ describe('MCP tool definitions', () => {
     }
   });
 
+  it('tl_gh_issue_read reads every issue when identifier aliases are arrays', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-mcp-gh-read-batch-'));
+    const ghPath = join(tempDir, 'gh');
+    const logPath = join(tempDir, 'gh-calls.jsonl');
+    const readTool = TOOLS.find(tool => tool.name === 'tl_gh_issue_read');
+    const originalPath = process.env.PATH;
+    const originalLog = process.env.GH_LOG;
+
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'const fs = require("node:fs");',
+      'if (process.env.GH_PROMPT_DISABLED !== "1") process.exit(42);',
+      'const args = process.argv.slice(2);',
+      'fs.appendFileSync(process.env.GH_LOG, JSON.stringify(args) + "\\n");',
+      'const numberArg = args.find((arg) => arg.startsWith("number="));',
+      'const number = Number(numberArg?.slice("number=".length) || 0);',
+      'process.stdout.write(JSON.stringify({ data: { repository: { issue: {',
+      '  number, title: `Issue ${number}`, state: "OPEN", body: "", url: `https://example.test/${number}`,',
+      '  createdAt: "2026-05-09T00:00:00Z", closedAt: null, author: { login: "edimuj" },',
+      '  assignees: { nodes: [] }, labels: { nodes: [] }, comments: { totalCount: 0 },',
+      '  subIssues: { totalCount: 0, nodes: [] }',
+      '} } } }) + "\\n");'
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    try {
+      process.env.PATH = `${tempDir}:${originalPath}`;
+      process.env.GH_LOG = logPath;
+      const result = await readTool.handler({ repo: 'edimuj/agent-relay', number: [573, 565], noBody: true });
+      assert.strictEqual(result.isError, undefined, result.content?.[0]?.text);
+      const parsed = JSON.parse(result.content[0].text);
+      const calls = readFileSync(logPath, 'utf-8').trim().split('\n').map(line => JSON.parse(line));
+
+      assert.deepStrictEqual(parsed.issues.map(issue => issue.number), [573, 565]);
+      assert.deepStrictEqual(parsed.results, [
+        { number: 573, status: 'read' },
+        { number: 565, status: 'read' },
+      ]);
+      assert.strictEqual(parsed.totalItems, 2);
+      assert.strictEqual(calls.length, 2);
+    } finally {
+      process.env.PATH = originalPath;
+      if (originalLog === undefined) delete process.env.GH_LOG;
+      else process.env.GH_LOG = originalLog;
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('tl_gh tools accept GitHub-MCP-style split owner + issue_number', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-mcp-gh-compat-'));
     const ghPath = join(tempDir, 'gh');

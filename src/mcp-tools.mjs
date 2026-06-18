@@ -177,6 +177,16 @@ function ghPickIssues(...candidates) {
   return null;
 }
 
+function ghIssueReadArgs(repo, issueNum, { full, noBody, bodyLines, comments } = {}) {
+  const args = ['issue', 'read', '-R', repo, String(issueNum)];
+  if (full) args.push('--full');
+  if (noBody) args.push('--no-body');
+  if (bodyLines) args.push('--body-lines', String(bodyLines));
+  if (comments) args.push('--comments');
+  args.push('-j');
+  return args;
+}
+
 // Keep in sync with DEFAULT_TIMEOUT in bin/tl-run.mjs.
 const DEFAULT_RUN_TIMEOUT = 300000;
 
@@ -501,15 +511,45 @@ export const TOOLS = [
     handler: async ({ repo, owner, issue, issue_number, number, full, noBody, bodyLines, comments, cwd }) => {
       repo = ghResolveRepo(repo, owner);
       const raw = ghPickIssues(issue, issue_number, number);
-      const issueNum = Array.isArray(raw) ? raw[0] : raw;
-      if (issueNum == null) throw new Error('tl_gh_issue_read: provide "issue" (or "issue_number" / "number").');
-      const args = ['issue', 'read', '-R', repo, String(issueNum)];
-      if (full) args.push('--full');
-      if (noBody) args.push('--no-body');
-      if (bodyLines) args.push('--body-lines', String(bodyLines));
-      if (comments) args.push('--comments');
-      args.push('-j');
-      return dispatchTool('gh', args, { timeout: 120000, cwd });
+      if (raw == null) throw new Error('tl_gh_issue_read: provide "issue" (or "issue_number" / "number").');
+      const issueNums = Array.isArray(raw) ? raw : [raw];
+      if (issueNums.length === 1) {
+        return dispatchTool('gh', ghIssueReadArgs(repo, issueNums[0], { full, noBody, bodyLines, comments }), { timeout: 120000, cwd });
+      }
+
+      const issues = [];
+      const results = [];
+      for (const issueNum of issueNums) {
+        const r = await runCli('gh', ghIssueReadArgs(repo, issueNum, { full, noBody, bodyLines, comments }), { timeout: 120000, cwd });
+        if (!r.ok) {
+          results.push({
+            number: issueNum,
+            status: 'failed',
+            error: withCwdHint(r.stderr || r.stdout || 'Tool failed with no output', { cwd }),
+          });
+          continue;
+        }
+        try {
+          const parsed = JSON.parse(r.stdout || '{}');
+          if (parsed.issue) {
+            issues.push(parsed.issue);
+            results.push({ number: parsed.issue.number ?? issueNum, status: 'read' });
+          } else {
+            results.push({ number: issueNum, status: 'failed', error: 'tl-gh returned no issue object' });
+          }
+        } catch (err) {
+          results.push({ number: issueNum, status: 'failed', error: `Invalid tl-gh JSON: ${err.message}` });
+        }
+      }
+
+      const failed = results.some(r => r.status === 'failed');
+      return textResult(JSON.stringify({
+        issues,
+        results,
+        failed,
+        truncated: false,
+        totalItems: issueNums.length,
+      }, null, 2), failed && issues.length === 0);
     },
   },
   {
