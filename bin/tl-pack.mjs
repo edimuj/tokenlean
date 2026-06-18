@@ -52,6 +52,7 @@ Options:
   --budget N           Approximate output budget; smaller budgets collect fewer sections
   --list               List available packs
   --full               Pass fuller output to selected underlying tools where useful
+  --context            For debug packs, keep target as context instead of executing it
 ${COMMON_OPTIONS_HELP}
 
 Examples:
@@ -115,11 +116,13 @@ function parseArgs(rawArgs) {
   const options = parseCommonArgs(normalized);
   let list = false;
   let full = false;
+  let contextOnly = false;
   const positional = [];
 
   for (const arg of options.remaining) {
     if (arg === '--list') list = true;
     else if (arg === '--full') full = true;
+    else if (arg === '--context') contextOnly = true;
     else positional.push(arg);
   }
 
@@ -128,6 +131,7 @@ function parseArgs(rawArgs) {
     budget,
     list,
     full,
+    contextOnly,
     pack: positional[0] || null,
     target: positional.slice(1).join(' ') || null
   };
@@ -467,14 +471,16 @@ function buildDebug(target, options) {
   const sections = [];
 
   if (target) {
-    if (looksLikeRunnableCommand(target)) {
+    if (!options.contextOnly && looksLikeRunnableCommand(target)) {
       sections.push(section('Command result', 'run', [target, '--type', 'test'], { timeout: 300000 }));
     } else {
       sections.push({
         title: 'Command result',
         command: 'tl pack debug <command>',
         exitCode: 0,
-        output: `Target kept as context only because it does not start with an executable command: ${target}`,
+        output: options.contextOnly
+          ? `Target kept as context only: ${target}`
+          : `Target kept as context only because it does not start with an executable command: ${target}`,
         optional: true
       });
     }

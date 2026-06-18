@@ -1047,6 +1047,13 @@ describe('CLI regressions', () => {
     assert.match(result.stdout, /^pack\tWorkflow context packs/m);
   });
 
+  it('TLT-077: package exposes underscore aliases for common MCP tool names', () => {
+    const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf-8'));
+
+    assert.strictEqual(pkg.bin.tl_pack, 'bin/tl-pack.mjs');
+    assert.strictEqual(pkg.bin.tl_run, 'bin/tl-run.mjs');
+  });
+
   it('TLT-024: tl-advise routes PR review goals to tl-pack pr', () => {
     const result = runCli(['bin/tl-advise.mjs', 'review PR 123', '-j']);
     assert.strictEqual(result.status, 0, result.stdout || result.stderr);

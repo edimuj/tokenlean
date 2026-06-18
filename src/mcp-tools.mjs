@@ -178,7 +178,7 @@ function ghPickIssues(...candidates) {
 }
 
 // Keep in sync with DEFAULT_TIMEOUT in bin/tl-run.mjs.
-const DEFAULT_RUN_TIMEOUT = 120000;
+const DEFAULT_RUN_TIMEOUT = 300000;
 
 function normalizeMcpTimeoutMs(timeout) {
   if (!Number.isFinite(timeout) || timeout <= 0) return null;
@@ -234,7 +234,7 @@ export const TOOLS = [
       command: z.string().describe('Shell command to run'),
       type: z.enum(['test', 'build', 'lint', 'generic']).optional().describe('Force output type (default: auto-detect)'),
       raw: z.boolean().optional().describe('Show full output, no summarization'),
-      timeout: z.number().optional().describe('Command timeout. Values under 1000 are treated as seconds; larger values are treated as ms. Default: 120000ms.'),
+      timeout: z.number().optional().describe('Command timeout. Values under 1000 are treated as seconds; larger values are treated as ms. Default: 300000ms.'),
       diff: z.boolean().optional().describe('Compare against previous run of same command'),
     }),
     handler: async ({ command, type, raw, timeout, diff, cwd }) => {
@@ -403,6 +403,7 @@ export const TOOLS = [
       if (effectiveTarget) args.push(effectiveTarget);
       if (budget) args.push('--budget', String(budget));
       if (full) args.push('--full');
+      if (pack === 'debug' && target && !command) args.push('--context');
       args.push('-j');
       return dispatchTool('pack', args, { timeout: pack === 'debug' ? 305000 : 120000, cwd });
     },

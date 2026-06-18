@@ -57,7 +57,7 @@ Options:
                         (forcing a type disables per-segment splitting)
   --raw                 Show full output, no summarization
   --no-split            Treat a chained command as one blob (legacy behavior)
-  --timeout <ms>        Command timeout in ms (default: 120000 / 2min)
+  --timeout <ms>        Command timeout in ms (default: 300000 / 5min)
   --diff                Compare output against previous run of same command
 ${COMMON_OPTIONS_HELP}
 
@@ -78,10 +78,10 @@ const ANALYSIS_CHAR_LIMIT = 300000;
 // failure is exactly when the agent needs ground truth and a rerun costs more.
 const DEFAULT_FAILURE_BUDGET = 120;
 const GENERIC_FAST_PATH_CHAR_LIMIT = 120000;
-// Default command timeout. Kept modest because output is buffered (no live
-// feedback), so a hung command should surface as a timeout quickly rather than
-// tying up an interactive agent. Override with --timeout or run.timeout config.
-const DEFAULT_TIMEOUT = 120000;
+// Default command timeout. Long enough for full repo gates such as `bun test`
+// while still bounded for hung commands. Override with --timeout or
+// run.timeout config when a repo has tighter expectations.
+const DEFAULT_TIMEOUT = 300000;
 const MAX_BUFFER = 50 * 1024 * 1024;
 // Grace period between SIGTERM and SIGKILL when terminating the process group.
 const KILL_GRACE_MS = 2000;

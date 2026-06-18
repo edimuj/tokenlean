@@ -90,6 +90,24 @@ describe('MCP tool definitions', () => {
     assert.doesNotMatch(output, /delivery: not found/);
   });
 
+  it('tl_pack debug keeps target context even when it starts with a real command', async () => {
+    const packTool = TOOLS.find(tool => tool.name === 'tl_pack');
+    const result = await packTool.handler({
+      pack: 'debug',
+      target: 'tl run and tl_pack command compatibility issues',
+      budget: 900,
+      cwd: process.cwd(),
+    });
+
+    assert.strictEqual(result.isError, undefined, result.content?.[0]?.text);
+    const parsed = JSON.parse(result.content[0].text);
+    const output = parsed.sections[0].output.join('\n');
+
+    assert.strictEqual(parsed.failed, false);
+    assert.match(output, /kept as context only/);
+    assert.doesNotMatch(output, /and: not found/);
+  });
+
   it('tl_gh_issue_read dispatches the natural issue read workflow', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-mcp-gh-read-'));
     const ghPath = join(tempDir, 'gh');
