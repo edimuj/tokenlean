@@ -195,6 +195,12 @@ function normalizeMcpTimeoutMs(timeout) {
   return Math.round(timeout < 1000 ? timeout * 1000 : timeout);
 }
 
+function resolveRunTimeoutMs({ commandTimeoutMs, commandTimeoutSeconds, timeout } = {}) {
+  if (Number.isFinite(commandTimeoutMs) && commandTimeoutMs > 0) return Math.round(commandTimeoutMs);
+  if (Number.isFinite(commandTimeoutSeconds) && commandTimeoutSeconds > 0) return Math.round(commandTimeoutSeconds * 1000);
+  return normalizeMcpTimeoutMs(timeout);
+}
+
 // ─────────────────────────────────────────────────────────────
 // Tool definitions
 // ─────────────────────────────────────────────────────────────
@@ -244,11 +250,12 @@ export const TOOLS = [
       command: z.string().describe('Shell command to run'),
       type: z.enum(['test', 'build', 'lint', 'generic']).optional().describe('Force output type (default: auto-detect)'),
       raw: z.boolean().optional().describe('Show full output, no summarization'),
-      timeout: z.number().optional().describe('Command timeout. Values under 1000 are treated as seconds; larger values are treated as ms. Default: 300000ms.'),
+      commandTimeoutMs: z.number().optional().describe('Command runtime timeout in milliseconds. Use this instead of a generic "timeout" field to avoid MCP request-timeout collisions. Default: 300000ms.'),
+      commandTimeoutSeconds: z.number().optional().describe('Command runtime timeout in seconds. Use this for long-running gates such as typecheck/test. Default: 300s.'),
       diff: z.boolean().optional().describe('Compare against previous run of same command'),
     }),
-    handler: async ({ command, type, raw, timeout, diff, cwd }) => {
-      const timeoutMs = normalizeMcpTimeoutMs(timeout);
+    handler: async ({ command, type, raw, commandTimeoutMs, commandTimeoutSeconds, timeout, diff, cwd }) => {
+      const timeoutMs = resolveRunTimeoutMs({ commandTimeoutMs, commandTimeoutSeconds, timeout });
       const args = [command];
       if (type) args.push('--type', type);
       if (raw) args.push('--raw');

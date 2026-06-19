@@ -185,7 +185,7 @@ MCP tools include the core context reducers (`tl_symbols`, `tl_snippet`, `tl_run
 
 The `tl_gh_*` tools accept both their native `repo: "owner/repo"` + `issues` shape **and** the GitHub-MCP convention (split `owner` + bare `repo`, `issue_number`) — pass either and it just works, no guess-and-check. The issue identifier also accepts the bare `number` alias, so one identifier name (`number` or `issue_number`, scalar or array) works across every `tl_gh_issue_*` tool.
 
-All MCP tools accept an optional `cwd` argument for shared-server setups where the MCP server process is not already running in the target repo. For `tl_pack` debug packs, pass `command` when you want to execute a command; prose `target` values are kept as context instead of being treated as shell commands.
+All MCP tools accept an optional `cwd` argument for shared-server setups where the MCP server process is not already running in the target repo. For `tl_run`, use `commandTimeoutMs` or `commandTimeoutSeconds` for long-running commands; avoid a generic `timeout` argument because some MCP clients treat that as the request envelope timeout. For `tl_pack` debug packs, pass `command` when you want to execute a command; prose `target` values are kept as context instead of being treated as shell commands.
 
 **Hooks** — automatically nudge agents toward token-efficient tool usage:
 

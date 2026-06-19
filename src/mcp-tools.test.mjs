@@ -56,12 +56,53 @@ describe('MCP tool definitions', () => {
     }
   });
 
-  it('tl_run treats small MCP timeout values as seconds', async () => {
+  it('tl_run advertises command timeout aliases instead of generic timeout', () => {
+    const runTool = TOOLS.find(tool => tool.name === 'tl_run');
+    const schemaKeys = new Set(Object.keys(runTool.schema));
+
+    assert.ok(schemaKeys.has('commandTimeoutMs'));
+    assert.ok(schemaKeys.has('commandTimeoutSeconds'));
+    assert.ok(!schemaKeys.has('timeout'));
+  });
+
+  it('tl_run treats small legacy MCP timeout values as seconds', async () => {
     const runTool = TOOLS.find(tool => tool.name === 'tl_run');
     const result = await runTool.handler({
       command: 'node -e "setTimeout(() => process.stdout.write(\'ok\'), 50)"',
       raw: true,
       timeout: 1,
+      cwd: process.cwd(),
+    });
+
+    assert.strictEqual(result.isError, undefined, result.content?.[0]?.text);
+    const parsed = JSON.parse(result.content[0].text);
+    assert.strictEqual(parsed.exitCode, 0);
+    assert.strictEqual(parsed.stdout, 'ok');
+    assert.notStrictEqual(parsed.type, 'timeout');
+  });
+
+  it('tl_run accepts commandTimeoutSeconds for command runtime limits', async () => {
+    const runTool = TOOLS.find(tool => tool.name === 'tl_run');
+    const result = await runTool.handler({
+      command: 'node -e "setTimeout(() => process.stdout.write(\'ok\'), 50)"',
+      raw: true,
+      commandTimeoutSeconds: 1,
+      cwd: process.cwd(),
+    });
+
+    assert.strictEqual(result.isError, undefined, result.content?.[0]?.text);
+    const parsed = JSON.parse(result.content[0].text);
+    assert.strictEqual(parsed.exitCode, 0);
+    assert.strictEqual(parsed.stdout, 'ok');
+    assert.notStrictEqual(parsed.type, 'timeout');
+  });
+
+  it('tl_run accepts commandTimeoutMs for command runtime limits', async () => {
+    const runTool = TOOLS.find(tool => tool.name === 'tl_run');
+    const result = await runTool.handler({
+      command: 'node -e "setTimeout(() => process.stdout.write(\'ok\'), 50)"',
+      raw: true,
+      commandTimeoutMs: 1000,
       cwd: process.cwd(),
     });
 
