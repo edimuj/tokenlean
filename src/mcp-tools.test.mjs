@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { TOOLS, withCwdHint } from './mcp-tools.mjs';
 
 describe('MCP tool definitions', () => {
@@ -111,6 +112,79 @@ describe('MCP tool definitions', () => {
     assert.strictEqual(parsed.exitCode, 0);
     assert.strictEqual(parsed.stdout, 'ok');
     assert.notStrictEqual(parsed.type, 'timeout');
+  });
+
+  it('tl_run async long-polls and returns completed short jobs in one call', async () => {
+    const runTool = TOOLS.find(tool => tool.name === 'tl_run');
+    const command = `${JSON.stringify(process.execPath)} -e "setTimeout(() => process.stdout.write('async-ok'), 250)"`;
+
+    const startedAt = Date.now();
+    const result = await runTool.handler({
+      command,
+      raw: true,
+      async: true,
+      commandTimeoutMs: 3000,
+      waitSeconds: 5,
+      cwd: process.cwd(),
+    });
+    const elapsed = Date.now() - startedAt;
+
+    assert.strictEqual(result.isError, undefined, result.content?.[0]?.text);
+    assert.ok(elapsed < 2000, `async tl_run took ${elapsed}ms`);
+
+    const payload = JSON.parse(result.content[0].text);
+    assert.match(payload.jobId, /^[a-f0-9-]{36}$/i);
+    assert.strictEqual(payload.status, 'completed');
+    assert.strictEqual(payload.exitCode, 0);
+    assert.strictEqual(payload.result.exitCode, 0);
+    assert.strictEqual(payload.result.stdout, 'async-ok');
+  });
+
+  it('tl_run async can return immediate status only when waitSeconds is zero', async () => {
+    const runTool = TOOLS.find(tool => tool.name === 'tl_run');
+    const command = `${JSON.stringify(process.execPath)} -e "setTimeout(() => process.stdout.write('async-later'), 300)"`;
+
+    const startResult = await runTool.handler({
+      command,
+      raw: true,
+      async: true,
+      commandTimeoutMs: 3000,
+      waitSeconds: 0,
+      cwd: process.cwd(),
+    });
+
+    assert.strictEqual(startResult.isError, undefined, startResult.content?.[0]?.text);
+
+    const startPayload = JSON.parse(startResult.content[0].text);
+    assert.match(startPayload.jobId, /^[a-f0-9-]{36}$/i);
+    assert.match(startPayload.message, /avoid frequent short polling/i);
+    assert.deepStrictEqual(startPayload.poll.arguments, {
+      jobId: startPayload.jobId,
+      waitSeconds: 90,
+    });
+
+    let pollResult = null;
+    let pollPayload = null;
+    for (let i = 0; i < 20; i++) {
+      pollResult = await runTool.handler({ jobId: startPayload.jobId, tailLines: 5, waitSeconds: 1 });
+      pollPayload = JSON.parse(pollResult.content[0].text);
+      if (pollPayload.status === 'completed') break;
+      await sleep(50);
+    }
+
+    assert.strictEqual(pollPayload.status, 'completed', pollResult.content[0].text);
+    assert.strictEqual(pollResult.isError, undefined, pollResult.content[0].text);
+    assert.strictEqual(pollPayload.exitCode, 0);
+    assert.strictEqual(pollPayload.result.exitCode, 0);
+    assert.strictEqual(pollPayload.result.stdout, 'async-later');
+  });
+
+  it('tl_run reports unknown async job ids clearly', async () => {
+    const runTool = TOOLS.find(tool => tool.name === 'tl_run');
+    const result = await runTool.handler({ jobId: '00000000-0000-4000-8000-000000000000' });
+
+    assert.strictEqual(result.isError, true);
+    assert.match(result.content[0].text, /Unknown tl_run jobId/);
   });
 
   it('tl_pack debug does not execute prose targets from MCP calls', async () => {

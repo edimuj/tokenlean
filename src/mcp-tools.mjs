@@ -7,15 +7,114 @@
  */
 
 import { execFile, spawn } from 'node:child_process';
-import { statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { promisify } from 'node:util';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const binDir = join(__dirname, '..', 'bin');
+const RUN_JOB_ID_RE = /^[a-f0-9-]{36}$/i;
+const DEFAULT_ASYNC_WAIT_SECONDS = 90;
+const MAX_ASYNC_WAIT_SECONDS = 110;
+
+const asyncRunWorker = String.raw`
+const { spawn } = require('node:child_process');
+const fs = require('node:fs');
+
+const cfg = JSON.parse(process.argv[1]);
+
+function writeStatus(next) {
+  const status = { ...next, updatedAt: new Date().toISOString() };
+  const tmp = cfg.statusFile + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(status) + '\n', 'utf-8');
+  fs.renameSync(tmp, cfg.statusFile);
+}
+
+writeStatus({
+  jobId: cfg.jobId,
+  status: 'starting',
+  command: cfg.command,
+  cwd: cfg.cwd,
+  runnerPid: process.pid,
+  startedAt: cfg.startedAt,
+});
+
+let outFd;
+let errFd;
+try {
+  outFd = fs.openSync(cfg.stdoutFile, 'a');
+  errFd = fs.openSync(cfg.stderrFile, 'a');
+  const child = spawn(process.execPath, [cfg.toolPath, ...cfg.args], {
+    cwd: cfg.cwd,
+    env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+    stdio: ['ignore', outFd, errFd],
+  });
+  fs.closeSync(outFd);
+  fs.closeSync(errFd);
+
+  writeStatus({
+    jobId: cfg.jobId,
+    status: 'running',
+    command: cfg.command,
+    cwd: cfg.cwd,
+    runnerPid: process.pid,
+    pid: child.pid,
+    startedAt: cfg.startedAt,
+  });
+
+  child.on('error', (err) => {
+    try { fs.appendFileSync(cfg.stderrFile, err.message + '\n', 'utf-8'); } catch {}
+    writeStatus({
+      jobId: cfg.jobId,
+      status: 'failed',
+      command: cfg.command,
+      cwd: cfg.cwd,
+      runnerPid: process.pid,
+      pid: child.pid,
+      error: err.message,
+      startedAt: cfg.startedAt,
+      completedAt: new Date().toISOString(),
+    });
+  });
+
+  child.on('close', (code, signal) => {
+    writeStatus({
+      jobId: cfg.jobId,
+      status: 'completed',
+      command: cfg.command,
+      cwd: cfg.cwd,
+      runnerPid: process.pid,
+      pid: child.pid,
+      exitCode: code,
+      signal,
+      startedAt: cfg.startedAt,
+      completedAt: new Date().toISOString(),
+    });
+  });
+} catch (err) {
+  try {
+    if (outFd) fs.closeSync(outFd);
+    if (errFd) fs.closeSync(errFd);
+    fs.appendFileSync(cfg.stderrFile, err.message + '\n', 'utf-8');
+  } catch {}
+  writeStatus({
+    jobId: cfg.jobId,
+    status: 'failed',
+    command: cfg.command,
+    cwd: cfg.cwd,
+    runnerPid: process.pid,
+    error: err.message,
+    startedAt: cfg.startedAt,
+    completedAt: new Date().toISOString(),
+  });
+}
+`;
 
 // Validate an explicitly-provided working directory before spawning. Node's
 // spawn reports a missing cwd as "spawn <execPath> ENOENT" (pointing at node,
@@ -135,6 +234,163 @@ async function dispatchTool(tool, args, opts) {
   return textResult(ok ? (text || '(no output)') : withCwdHint(text || '(no output)', opts), !ok);
 }
 
+function runJobsDir() {
+  return join(homedir() || '/tmp', '.cache', 'tokenlean', 'mcp-run');
+}
+
+function runJobDir(jobId) {
+  if (!RUN_JOB_ID_RE.test(jobId || '')) return null;
+  return join(runJobsDir(), jobId);
+}
+
+function readJsonFile(file) {
+  return JSON.parse(readFileSync(file, 'utf-8'));
+}
+
+function tailText(text, maxLines = 40) {
+  if (!text) return '';
+  const lines = text.split('\n');
+  return lines.slice(Math.max(0, lines.length - maxLines)).join('\n');
+}
+
+function runArgs({ command, type, raw, timeoutMs, diff }) {
+  const args = [command];
+  if (type) args.push('--type', type);
+  if (raw) args.push('--raw');
+  if (timeoutMs) args.push('--timeout', String(timeoutMs));
+  if (diff) args.push('--diff');
+  args.push('-j');
+  return args;
+}
+
+function resolveAsyncWaitSeconds(waitSeconds) {
+  if (waitSeconds === 0) return 0;
+  if (!Number.isFinite(waitSeconds) || waitSeconds < 0) return DEFAULT_ASYNC_WAIT_SECONDS;
+  return Math.min(Math.round(waitSeconds), MAX_ASYNC_WAIT_SECONDS);
+}
+
+function readRunJobStatus(jobId) {
+  const dir = runJobDir(jobId);
+  if (!dir || !existsSync(dir)) return null;
+  return readJsonFile(join(dir, 'status.json'));
+}
+
+async function waitForRunJob(jobId, waitSeconds) {
+  const deadline = Date.now() + (resolveAsyncWaitSeconds(waitSeconds) * 1000);
+  while (Date.now() < deadline) {
+    try {
+      const status = readRunJobStatus(jobId);
+      if (status?.status === 'completed' || status?.status === 'failed') return;
+    } catch { /* status may be mid-rename; retry */ }
+    await sleep(Math.min(250, Math.max(0, deadline - Date.now())));
+  }
+}
+
+async function formatRunJobPoll(jobId, { tailLines, waitSeconds } = {}) {
+  const dir = runJobDir(jobId);
+  if (!dir || !existsSync(dir)) {
+    return textResult(`Unknown tl_run jobId: ${jobId}`, true);
+  }
+
+  await waitForRunJob(jobId, waitSeconds);
+
+  let status;
+  try {
+    status = readRunJobStatus(jobId);
+  } catch {
+    return textResult(`tl_run job ${jobId} has no readable status yet`, true);
+  }
+
+  const stdoutFile = join(dir, 'stdout.json');
+  const stderrFile = join(dir, 'stderr.log');
+  const stdout = existsSync(stdoutFile) ? readFileSync(stdoutFile, 'utf-8').trim() : '';
+  const stderr = existsSync(stderrFile) ? readFileSync(stderrFile, 'utf-8').trim() : '';
+
+  if (status.status === 'completed' || status.status === 'failed') {
+    let result = null;
+    if (stdout) {
+      try { result = JSON.parse(stdout); } catch { /* raw fallback below */ }
+    }
+    const payload = {
+      jobId,
+      status: status.status,
+      command: status.command,
+      cwd: status.cwd,
+      pid: status.pid,
+      exitCode: status.exitCode ?? (status.status === 'failed' ? 1 : null),
+      signal: status.signal ?? null,
+      startedAt: status.startedAt,
+      completedAt: status.completedAt,
+      ...(result ? { result } : { stdout }),
+      ...(stderr ? { stderr } : {}),
+      ...(status.error ? { error: status.error } : {}),
+    };
+    const isError = status.status === 'failed' || (Number.isInteger(payload.exitCode) && payload.exitCode !== 0);
+    return textResult(JSON.stringify(payload, null, 2), isError);
+  }
+
+  return textResult(JSON.stringify({
+    jobId,
+    status: status.status,
+    command: status.command,
+    cwd: status.cwd,
+    pid: status.pid,
+    runnerPid: status.runnerPid,
+    startedAt: status.startedAt,
+    updatedAt: status.updatedAt,
+    waitedSeconds: resolveAsyncWaitSeconds(waitSeconds),
+    nextPollAfterSeconds: 0,
+    message: `Still running after waiting up to ${resolveAsyncWaitSeconds(waitSeconds)}s. Poll again with jobId and waitSeconds:${DEFAULT_ASYNC_WAIT_SECONDS}; avoid frequent short polling.`,
+    stdoutTail: tailText(stdout, tailLines),
+    stderrTail: tailText(stderr, tailLines),
+    poll: { tool: 'tl_run', arguments: { jobId, waitSeconds: DEFAULT_ASYNC_WAIT_SECONDS } },
+  }, null, 2));
+}
+
+async function startRunJob({ command, type, raw, timeoutMs, diff, cwd, tailLines, waitSeconds }) {
+  const cwdError = checkCwd(cwd);
+  if (cwdError) return textResult(cwdError, true);
+
+  const jobId = randomUUID();
+  const dir = runJobDir(jobId);
+  const startedAt = new Date().toISOString();
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+
+  const toolPath = join(binDir, 'tl-run.mjs');
+  const args = runArgs({ command, type, raw, timeoutMs, diff });
+  const statusFile = join(dir, 'status.json');
+  const cfg = {
+    jobId,
+    command,
+    cwd: cwd || process.cwd(),
+    toolPath,
+    args,
+    statusFile,
+    stdoutFile: join(dir, 'stdout.json'),
+    stderrFile: join(dir, 'stderr.log'),
+    startedAt,
+  };
+
+  writeFileSync(statusFile, JSON.stringify({
+    jobId,
+    status: 'queued',
+    command,
+    cwd: cfg.cwd,
+    startedAt,
+    updatedAt: startedAt,
+  }) + '\n', 'utf-8');
+
+  const child = spawn(process.execPath, ['-e', asyncRunWorker, JSON.stringify(cfg)], {
+    detached: true,
+    stdio: 'ignore',
+    cwd: cfg.cwd,
+    env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
+  });
+  child.unref();
+
+  return formatRunJobPoll(jobId, { tailLines, waitSeconds });
+}
+
 async function dispatchToolWithStdin(tool, args, stdinData, opts) {
   const { stdout, stderr, ok } = await runCliWithStdin(tool, args, stdinData, opts);
   if (!ok && !stdout) return textResult(withCwdHint(stderr || 'Tool failed with no output', opts), true);
@@ -245,23 +501,25 @@ export const TOOLS = [
   },
   {
     name: 'tl_run',
-    description: 'Execute a shell command with token-efficient output. Auto-detects test/build/lint output and summarizes to essentials.',
+    description: 'Execute a shell command with token-efficient output. Auto-detects test/build/lint output and summarizes to essentials. For long commands, call with async:true; tokenlean long-polls under MCP client watchdogs and returns either the result or a jobId to poll again.',
     schema: withCwd({
-      command: z.string().describe('Shell command to run'),
+      command: z.string().optional().describe('Shell command to run. Required for normal runs and async starts; omit when polling an async job with jobId.'),
+      async: z.boolean().optional().describe('Start command in a background job and long-poll for completion under the MCP client watchdog. Use for long-running test/build gates, e.g. { command: "npm test", async: true, commandTimeoutSeconds: 600, cwd: "/repo" }.'),
+      jobId: z.string().optional().describe('Poll a background tl_run job previously started with async:true, e.g. { jobId: "...", waitSeconds: 90 }. Returns running status with tails, or the completed tl_run JSON result.'),
+      waitSeconds: z.number().optional().describe('For async starts or jobId polls, wait this many seconds for completion before returning running status. Default: 90, max: 110, use 0 for immediate status. Prefer long waits over frequent polling to avoid quota churn.'),
+      tailLines: z.number().optional().describe('Lines of stdout/stderr tail to include while an async job is still running (default: 40).'),
       type: z.enum(['test', 'build', 'lint', 'generic']).optional().describe('Force output type (default: auto-detect)'),
       raw: z.boolean().optional().describe('Show full output, no summarization'),
-      commandTimeoutMs: z.number().optional().describe('Command runtime timeout in milliseconds. Use this instead of a generic "timeout" field to avoid MCP request-timeout collisions. Default: 300000ms.'),
-      commandTimeoutSeconds: z.number().optional().describe('Command runtime timeout in seconds. Use this for long-running gates such as typecheck/test. Default: 300s.'),
+      commandTimeoutMs: z.number().optional().describe('Child command runtime timeout in milliseconds. This does not extend the MCP client request watchdog; combine with async:true for commands that may run longer than the client allows. Default: 300000ms.'),
+      commandTimeoutSeconds: z.number().optional().describe('Child command runtime timeout in seconds. This does not extend the MCP client request watchdog; combine with async:true for long-running gates such as typecheck/test. Default: 300s.'),
       diff: z.boolean().optional().describe('Compare against previous run of same command'),
     }),
-    handler: async ({ command, type, raw, commandTimeoutMs, commandTimeoutSeconds, timeout, diff, cwd }) => {
+    handler: async ({ command, async: asyncMode, jobId, waitSeconds, tailLines, type, raw, commandTimeoutMs, commandTimeoutSeconds, timeout, diff, cwd }) => {
+      if (jobId) return formatRunJobPoll(jobId, { tailLines, waitSeconds });
+      if (!command) return textResult('tl_run requires command, or jobId when polling an async run.', true);
       const timeoutMs = resolveRunTimeoutMs({ commandTimeoutMs, commandTimeoutSeconds, timeout });
-      const args = [command];
-      if (type) args.push('--type', type);
-      if (raw) args.push('--raw');
-      if (timeoutMs) args.push('--timeout', String(timeoutMs));
-      if (diff) args.push('--diff');
-      args.push('-j');
+      if (asyncMode) return startRunJob({ command, type, raw, timeoutMs, diff, cwd, tailLines, waitSeconds });
+      const args = runArgs({ command, type, raw, timeoutMs, diff });
       // Outer (execFile) timeout is the inner command timeout plus a margin so
       // tl-run can emit its own timeout result before we hard-kill the wrapper.
       return dispatchTool('run', args, { timeout: (timeoutMs || DEFAULT_RUN_TIMEOUT) + 10000, cwd });
