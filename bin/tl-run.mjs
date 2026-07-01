@@ -1147,6 +1147,14 @@ function buildSummary(command, stdout, stderr, exitCode, opts, typeArg) {
   return { type, summary };
 }
 
+function failureDiagnosticLines(stdout, stderr, exitCode, opts = {}) {
+  const budget = computeLineBudget(opts);
+  const failBudget = budget < Infinity ? budget : DEFAULT_FAILURE_BUDGET;
+  const raw = extractFailureRegions(stdout, stderr, failBudget)
+    || smartBudgetGeneric(stdout, stderr, exitCode, failBudget);
+  return raw.lines;
+}
+
 // Turn a summary into renderable lines. Blank entries are preserved so callers
 // can reproduce the original spacing (and indent uniformly when needed).
 function summaryToLines(type, summary, exitCode, stdout, stderr, opts = {}) {
@@ -1170,16 +1178,13 @@ function summaryToLines(type, summary, exitCode, stdout, stderr, opts = {}) {
   if (exitCode !== 0 && type !== 'generic') {
     const lines = [];
     if (summary.summary) lines.push(summary.summary);
-    const budget = computeLineBudget(opts);
-    const failBudget = budget < Infinity ? budget : DEFAULT_FAILURE_BUDGET;
     // Prefer block-aware extraction so contiguous assertion blocks (error +
     // Expected/Received + diff + stack + marker) survive whole; it returns null
     // when the output fits or has no failure structure, falling back to scoring.
-    const raw = extractFailureRegions(stdout, stderr, failBudget)
-      || smartBudgetGeneric(stdout, stderr, exitCode, failBudget);
-    if (raw.lines.length > 0) {
+    const diagnostics = failureDiagnosticLines(stdout, stderr, exitCode, opts);
+    if (diagnostics.length > 0) {
       lines.push('');
-      lines.push(...raw.lines);
+      lines.push(...diagnostics);
     }
     return lines;
   }
@@ -1290,6 +1295,7 @@ async function runSegmentedFlow(command, parsed, timeout, opts, diffMode) {
     out.blank();
 
     const seg = { index: s.index, command: s.cmd, ran: true, exitCode: s.exitCode, type, summary: summary.summary };
+    if (s.exitCode !== 0 && type !== 'generic') seg.diagnostics = failureDiagnosticLines(s.stdout, s.stderr, s.exitCode, opts);
     if (type === 'test') seg.failures = summary.failures;
     else if (type === 'build') { seg.errors = summary.errors; seg.warningCount = summary.warningCount; }
     else if (type === 'lint') seg.violations = summary.violations;
@@ -1481,6 +1487,9 @@ async function main() {
     out.setData('elapsed', formatElapsed(result.elapsed));
     out.setData('type', type);
     out.setData('summary', summary.summary);
+    if (result.exitCode !== 0 && type !== 'generic') {
+      out.setData('diagnostics', failureDiagnosticLines(result.stdout, result.stderr, result.exitCode, opts));
+    }
 
     if (type === 'test') {
       out.setData('failures', summary.failures);

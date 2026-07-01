@@ -460,6 +460,23 @@ describe('CLI regressions', () => {
     assert.deepStrictEqual(parsed.failures, []);
   });
 
+  it('TLT-122: tl-run JSON includes compiler diagnostics when npm test fails during tsc (vent #187)', () => {
+    const nodePath = JSON.stringify(process.execPath);
+    const diagnostic = "src/listener.ts(1034,7): error TS2353: 'dashboard' does not exist in type 'DashboardSnapshot'.";
+    const script = `console.error(${JSON.stringify(diagnostic)}); process.exit(2)`;
+    const command = `${nodePath} -e ${JSON.stringify(script)}`;
+
+    const result = runCli(['bin/tl-run.mjs', command, '--type', 'test', '-j']);
+    assert.strictEqual(result.status, 2);
+    const parsed = JSON.parse(result.stdout);
+    assert.strictEqual(parsed.exitCode, 2);
+    assert.strictEqual(parsed.summary, 'tests failed: exit 2');
+    assert.deepStrictEqual(parsed.failures, []);
+    assert.ok(Array.isArray(parsed.diagnostics));
+    assert.ok(parsed.diagnostics.some(line => line.includes("src/listener.ts(1034,7): error TS2353")));
+    assert.ok(parsed.diagnostics.some(line => line.includes("'dashboard' does not exist in type 'DashboardSnapshot'")));
+  });
+
   it('TLT-068: tl-run does not hang when a grandchild escapes the process group and holds the pipe', () => {
     // A daemonized/setsid worker (e.g. some test runners' workers) outlives the
     // command and keeps the stdout/stderr pipe open. 'close' then never fires —
@@ -2211,6 +2228,22 @@ describe('CLI regressions', () => {
     const parsed = JSON.parse(result.stdout);
     assert.strictEqual(parsed.exitCode, 1);
     assert.strictEqual(parsed.segments[2].ran, false, 'third segment should be short-circuited');
+  });
+
+  it('TLT-123: tl-run segmented JSON includes diagnostics for failing typed segments', () => {
+    const nodePath = JSON.stringify(process.execPath);
+    const diagnostic = "src/listener.ts(1034,7): error TS2353: 'dashboard' does not exist in type 'DashboardSnapshot'.";
+    const script = `console.error(${JSON.stringify(diagnostic)}); process.exit(2)`;
+    const command = `echo setup && TL_FAKE=tsc ${nodePath} -e ${JSON.stringify(script)}`;
+
+    const result = runCli(['bin/tl-run.mjs', command, '-j']);
+    assert.strictEqual(result.status, 2, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.strictEqual(parsed.type, 'segmented');
+    assert.strictEqual(parsed.segments[1].exitCode, 2);
+    assert.strictEqual(parsed.segments[1].type, 'build');
+    assert.ok(Array.isArray(parsed.segments[1].diagnostics));
+    assert.ok(parsed.segments[1].diagnostics.some(line => line.includes("src/listener.ts(1034,7): error TS2353")));
   });
 
   it('TLT-072: tl run does not split operators inside quotes', () => {
