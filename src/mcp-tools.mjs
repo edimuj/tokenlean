@@ -667,7 +667,7 @@ export const TOOLS = [
     description: 'Build a compact workflow context pack for onboard, review, pr, refactor, or debug tasks.',
     schema: withCwd({
       pack: z.enum(['onboard', 'review', 'pr', 'refactor', 'debug']).describe('Workflow pack to run'),
-      target: z.string().optional().describe('Optional path, PR/branch target, or task context. For debug packs, use command when you want to execute a command.'),
+      target: z.string().optional().describe('Optional path, revision range, PR/branch target, or task context. For debug packs, use command when you want to execute a command.'),
       command: z.string().optional().describe('Command to execute for debug packs. Prefer this over target when pack is debug.'),
       budget: z.number().optional().describe('Output budget in approximate tokens'),
       full: z.boolean().optional().describe('Include fuller underlying tool output where useful'),

@@ -1209,6 +1209,45 @@ describe('CLI regressions', () => {
     assert.doesNotMatch(result.stdout, /tl analyze src/);
   });
 
+  it('TLT-132: tl-pack review treats explicit git revision ranges as diff context', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'tokenlean-pack-review-range-'));
+    const gitIn = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf-8' });
+    try {
+      gitIn('init', '-q');
+      gitIn('config', 'user.email', 't@t.t');
+      gitIn('config', 'user.name', 't');
+      writeFileSync(join(repo, 'a.txt'), 'one\n', 'utf-8');
+      gitIn('add', '-A');
+      gitIn('commit', '-qm', 'init');
+      writeFileSync(join(repo, 'a.txt'), 'two\n', 'utf-8');
+      gitIn('add', '-A');
+      gitIn('commit', '-qm', 'change');
+
+      const result = runCli([
+        join(repoRoot, 'bin/tl-pack.mjs'),
+        'review',
+        'HEAD~1..HEAD',
+        '--budget',
+        '900',
+        '-j'
+      ], repo);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+
+      assert.strictEqual(parsed.pack, 'review');
+      assert.strictEqual(parsed.target, 'HEAD~1..HEAD');
+      assert.deepStrictEqual(
+        parsed.sections.map(section => section.title),
+        ['Target diff', 'Review risk checks']
+      );
+      assert.strictEqual(parsed.sections[0].command, 'tl diff "HEAD~1..HEAD"');
+      assert.doesNotMatch(result.stdout, /Branch not found/);
+      assert.doesNotMatch(result.stdout, /tl pr/);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it('TLT-042: tl-pack refactor treats directory targets as area context', { skip: RG_SKIP }, () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-pack-refactor-dir-'));
     const srcDir = join(tempDir, 'src');

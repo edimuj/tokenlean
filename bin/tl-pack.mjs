@@ -43,7 +43,7 @@ Usage: tl-pack <pack> [target] [options]
 
 Packs:
   onboard [path]        Project shape, entry points, stack, and token hotspots
-  review [target]      Review context for current branch, staged diff, or branch/PR
+  review [target]      Review context for current diff, path, revision range, branch, or PR
   pr <target>          PR/branch review briefing
   refactor <path>      File or directory context for a planned refactor
   debug [command]      Token-efficient command output plus likely follow-up checks
@@ -71,7 +71,7 @@ const PACKS = {
     defaultTarget: '.'
   },
   review: {
-    summary: 'Review context for current branch, staged diff, or branch/PR',
+    summary: 'Review context for current diff, path, revision range, branch, or PR',
     targetLabel: 'target',
     defaultTarget: null
   },
@@ -280,6 +280,9 @@ function buildReview(target, options) {
     if (isExistingDirectory(target)) {
       return buildOnboard(target, options);
     }
+    if (isGitRevisionRange(target)) {
+      return buildDiffReview(target);
+    }
     return buildPr(target, options);
   }
 
@@ -316,6 +319,10 @@ function isExistingDirectory(target) {
   } catch {
     return false;
   }
+}
+
+function isGitRevisionRange(target) {
+  return /^\S+\.{2,3}\S+$/.test(String(target || '').trim());
 }
 
 function firstShellToken(command) {
@@ -392,6 +399,13 @@ function buildFileReview(target, options) {
   ];
 }
 
+function buildDiffReview(target) {
+  return [
+    section('Target diff', 'diff', [target]),
+    section('Review risk checks', 'guard', [], { optional: true, timeout: 45000 })
+  ];
+}
+
 function buildDirectoryRefactor(target, options) {
   const tier = budgetTier(options);
   const depth = tier === 'small' ? '1' : options.full ? '3' : '2';
@@ -412,7 +426,7 @@ function buildPr(target, options) {
         title: 'Missing target',
         command: 'tl pack pr <target>',
         exitCode: 1,
-        output: 'Provide a PR number, branch, or revision target.',
+        output: 'Provide a PR number or branch.',
         optional: false
       }
     ];
