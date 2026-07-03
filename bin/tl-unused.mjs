@@ -42,6 +42,7 @@ Usage: tl-unused [dir] [options]
 Options:
   --exports-only, -e    Only check for unused exports
   --files-only, -f      Only check for unreferenced files
+  --target <file|dir>   Only report candidates from this target (can repeat)
   --ignore <pattern>    Ignore files matching pattern (can use multiple times)
   --include-tests       Include test files in analysis (default: excluded)
   --show-suppressed     List exports suppressed as intentional public API
@@ -51,6 +52,7 @@ Examples:
   tl-unused                       # Full analysis
   tl-unused src/                  # Analyze src/ only
   tl-unused -e                    # Unused exports only
+  tl-unused . -e --target src/api.ts
   tl-unused --ignore "*.d.ts"     # Ignore type definitions
   tl-unused --show-suppressed     # Also list kept public-API exports
 
@@ -434,6 +436,7 @@ let filesOnly = false;
 let includeTests = false;
 let showSuppressed = false;
 const ignorePatterns = [];
+const targetPaths = [];
 
 const remaining = [];
 for (let i = 0; i < options.remaining.length; i++) {
@@ -447,6 +450,8 @@ for (let i = 0; i < options.remaining.length; i++) {
     includeTests = true;
   } else if (arg === '--show-suppressed') {
     showSuppressed = true;
+  } else if (arg === '--target') {
+    targetPaths.push(options.remaining[++i]);
   } else if (arg === '--ignore') {
     ignorePatterns.push(options.remaining[++i]);
   } else if (!arg.startsWith('-')) {
@@ -473,6 +478,7 @@ const out = createOutput(options);
 const targetStat = statSync(targetDir);
 let files;
 let allProjectFiles;
+let targetFiles = null;
 
 if (targetStat.isFile()) {
   if (!CODE_EXTENSIONS.has(extname(targetDir).toLowerCase())) {
@@ -491,6 +497,41 @@ if (targetStat.isFile()) {
   }
   out.header(`Analyzing ${files.length} files for unused code...`);
 }
+files = files.map(file => resolve(file));
+allProjectFiles = allProjectFiles.map(file => resolve(file));
+
+if (targetPaths.length > 0) {
+  const resolvedTargets = [];
+  for (const targetPath of targetPaths) {
+    if (!targetPath) {
+      console.error('--target requires a file or directory');
+      process.exit(1);
+    }
+
+    const absTarget = resolve(targetPath);
+    if (!existsSync(absTarget)) {
+      console.error(`Target not found: ${targetPath}`);
+      process.exit(1);
+    }
+
+    const stat = statSync(absTarget);
+    if (stat.isDirectory()) {
+      resolvedTargets.push(...findCodeFiles(absTarget, [], { includeTests, ignorePatterns }));
+    } else if (stat.isFile() && CODE_EXTENSIONS.has(extname(absTarget).toLowerCase())) {
+      resolvedTargets.push(absTarget);
+    } else {
+      console.error(`Not a code target: ${targetPath}`);
+      process.exit(1);
+    }
+  }
+
+  const projectFileSet = new Set(allProjectFiles);
+  targetFiles = [...new Set(resolvedTargets)].filter(file => projectFileSet.has(file));
+  if (targetFiles.length === 0) {
+    console.error('No target code files found in analysis scope');
+    process.exit(1);
+  }
+}
 out.blank();
 
 const results = {
@@ -501,7 +542,7 @@ const results = {
 
 // Analyze unused exports
 if (!filesOnly) {
-  const exportAnalysis = analyzeUnusedExports(allProjectFiles, projectRoot, files);
+  const exportAnalysis = analyzeUnusedExports(allProjectFiles, projectRoot, targetFiles || files);
   results.unusedExports = exportAnalysis.unused;
   results.suppressedExports = exportAnalysis.suppressed;
 
@@ -541,7 +582,7 @@ if (!filesOnly) {
 
 // Analyze unreferenced files
 if (!exportsOnly) {
-  results.unreferencedFiles = analyzeUnreferencedFiles(allProjectFiles, projectRoot, files);
+  results.unreferencedFiles = analyzeUnreferencedFiles(allProjectFiles, projectRoot, targetFiles || files);
 
   if (results.unreferencedFiles.length > 0) {
     out.add(`Potentially unreferenced files (${results.unreferencedFiles.length}):`);

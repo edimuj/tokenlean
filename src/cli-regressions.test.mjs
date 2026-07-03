@@ -1824,6 +1824,76 @@ describe('CLI regressions', () => {
     }
   });
 
+  it('TLT-130: tl-unused --target limits reported exports but scans project references', { skip: RG_SKIP }, () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-unused-target-'));
+    try {
+      writeFileSync(join(tempDir, 'untouched.mjs'),
+        'export const staleUnused = 1;\n', 'utf-8');
+      writeFileSync(join(tempDir, 'changed.mjs'),
+        'export const usedChanged = 2;\n' +
+        'export const freshUnused = 3;\n', 'utf-8');
+      writeFileSync(join(tempDir, 'consumer.mjs'),
+        "import { usedChanged } from './changed.mjs';\n" +
+        'console.log(usedChanged);\n', 'utf-8');
+
+      const result = runCli([
+        join(repoRoot, 'bin/tl-unused.mjs'),
+        '.',
+        '--exports-only',
+        '--target',
+        'changed.mjs',
+        '-j'
+      ], tempDir);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      assert.deepStrictEqual(parsed.unusedExports.map(e => `${e.file}:${e.name}`), ['changed.mjs:freshUnused']);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('TLT-131: tl-guard scopes unused-export warnings to staged code files', { skip: RG_SKIP }, () => {
+    const repo = mkdtempSync(join(tmpdir(), 'tokenlean-guard-staged-unused-'));
+    const gitIn = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf-8' });
+    try {
+      gitIn('init', '-q');
+      gitIn('config', 'user.email', 't@t.t');
+      gitIn('config', 'user.name', 't');
+      writeFileSync(join(repo, 'untouched.mjs'),
+        'export const staleUnused = 1;\n', 'utf-8');
+      writeFileSync(join(repo, 'changed.mjs'),
+        'export const usedChanged = 2;\n', 'utf-8');
+      writeFileSync(join(repo, 'consumer.mjs'),
+        "import { usedChanged } from './changed.mjs';\n" +
+        'console.log(usedChanged);\n', 'utf-8');
+      gitIn('add', '-A');
+      gitIn('commit', '-qm', 'init');
+
+      writeFileSync(join(repo, 'changed.mjs'),
+        'export const usedChanged = 2;\n' +
+        'export const freshUnused = 3;\n', 'utf-8');
+      gitIn('add', 'changed.mjs');
+
+      const result = runCli([
+        join(repoRoot, 'bin/tl-guard.mjs'),
+        '--no-secrets',
+        '--no-todos',
+        '--no-circular',
+        '--no-ctrlbytes',
+        '-j'
+      ], repo);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      assert.strictEqual(parsed.checks.unused.status, 'warn');
+      assert.deepStrictEqual(
+        parsed.checks.unused.details.map(e => `${e.file}:${e.name}`),
+        ['changed.mjs:freshUnused']
+      );
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it('TLT-037: tl-parallel keeps env-prefixed commands intact', () => {
     const script = 'console.log(process.env.NODE_ENV)';
     const result = runCli([

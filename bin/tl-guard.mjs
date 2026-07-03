@@ -41,7 +41,7 @@ tl-guard - Pre-commit sanity check
 Runs 5 checks against your project and staged files:
   1. Secrets    — hardcoded secrets in staged files
   2. TODOs      — new TODO/FIXME/HACK/XXX in staged diff
-  3. Unused     — unused exports across the project
+  3. Unused     — unused exports in staged code files when available
   4. Circular   — circular import dependencies
   5. CtrlBytes  — raw control bytes (NUL etc.) in tracked text files
 
@@ -233,8 +233,25 @@ function checkTodos() {
 // Check 3: Unused exports
 // ─────────────────────────────────────────────────────────────
 
-function checkUnused() {
-  const data = runSubTool('unused', ['.']);
+function getStagedCodeFiles(projectRoot, stagedFiles) {
+  return stagedFiles.filter(file => {
+    const absPath = resolve(projectRoot, file);
+    return existsSync(absPath) && isCodeFile(absPath);
+  });
+}
+
+function checkUnused(projectRoot, stagedFiles, hasGitStagedList) {
+  const stagedCodeFiles = getStagedCodeFiles(projectRoot, stagedFiles);
+  if (hasGitStagedList && stagedFiles.length > 0 && stagedCodeFiles.length === 0) {
+    return { status: 'pass', count: 0, details: [], note: 'No staged code files to check for unused exports' };
+  }
+
+  const args = ['.', '--exports-only'];
+  for (const file of stagedCodeFiles) {
+    args.push('--target', file);
+  }
+
+  const data = runSubTool('unused', args);
   if (!data) {
     return { status: 'pass', count: 0, details: [], note: 'tool unavailable' };
   }
@@ -242,9 +259,14 @@ function checkUnused() {
   const unused = data.unusedExports || [];
   const suppressed = (data.suppressedExports || []).length;
   if (unused.length === 0) {
+    const scope = stagedCodeFiles.length > 0
+      ? ` in ${stagedCodeFiles.length} staged code file(s)`
+      : '';
     const note = suppressed > 0
-      ? `No unused exports detected (${suppressed} suppressed as public API)`
-      : undefined;
+      ? `No unused exports detected${scope} (${suppressed} suppressed as public API)`
+      : scope
+        ? `No unused exports detected${scope}`
+        : undefined;
     return { status: 'pass', count: 0, details: [], note };
   }
 
@@ -551,7 +573,7 @@ function autoFix(projectRoot, stagedFiles) {
 const projectRoot = findProjectRoot();
 
 // Get staged file count for display
-const stagedRaw = gitCommand(['diff', '--cached', '--name-only']);
+const stagedRaw = gitCommand(['diff', '--cached', '--name-only'], { cwd: projectRoot });
 const stagedFiles = stagedRaw ? stagedRaw.split('\n').filter(Boolean) : [];
 
 // Run enabled checks
@@ -566,7 +588,7 @@ if (!skipChecks.todos) {
 }
 
 if (!skipChecks.unused) {
-  checks.unused = limitDetails(checkUnused());
+  checks.unused = limitDetails(checkUnused(projectRoot, stagedFiles, stagedRaw !== null));
 }
 
 if (!skipChecks.circular) {
