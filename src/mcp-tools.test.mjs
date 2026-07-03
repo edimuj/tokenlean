@@ -223,6 +223,27 @@ describe('MCP tool definitions', () => {
     assert.doesNotMatch(output, /and: not found/);
   });
 
+  it('tl_pack onboard treats prose targets as project queries', async () => {
+    const packTool = TOOLS.find(tool => tool.name === 'tl_pack');
+    const result = await packTool.handler({
+      pack: 'onboard',
+      target: 'provider quota orchestrator server runner',
+      budget: 900,
+      cwd: process.cwd(),
+    });
+
+    assert.strictEqual(result.isError, undefined, result.content?.[0]?.text);
+    const parsed = JSON.parse(result.content[0].text);
+
+    assert.strictEqual(parsed.failed, false);
+    assert.deepStrictEqual(
+      parsed.sections.map(section => section.title),
+      ['Target query', 'Project structure']
+    );
+    assert.match(parsed.sections[0].output.join('\n'), /treating it as a query/);
+    assert.strictEqual(parsed.sections[1].command, 'tl structure . --depth 1');
+  });
+
   it('tl_gh_issue_read dispatches the natural issue read workflow', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-mcp-gh-read-'));
     const ghPath = join(tempDir, 'gh');

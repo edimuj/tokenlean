@@ -42,7 +42,7 @@ tl-pack - Workflow context packs for common agent tasks
 Usage: tl-pack <pack> [target] [options]
 
 Packs:
-  onboard [path]        Project shape, entry points, stack, and token hotspots
+  onboard [path|query]  Project shape plus optional keyword-oriented context
   review [target]      Review context for current diff, path, revision range, branch, or PR
   pr <target>          PR/branch review briefing
   refactor <path>      File or directory context for a planned refactor
@@ -66,8 +66,8 @@ Examples:
 
 const PACKS = {
   onboard: {
-    summary: 'Project shape, entry points, stack, and token hotspots',
-    targetLabel: 'path',
+    summary: 'Project shape plus optional keyword-oriented context',
+    targetLabel: 'path|query',
     defaultTarget: '.'
   },
   review: {
@@ -264,11 +264,37 @@ async function executeSection(item) {
 }
 
 function buildOnboard(target, options) {
+  if (!existsSync(target)) {
+    return buildOnboardQuery(target, options);
+  }
+
+  return buildOnboardPath(target, options);
+}
+
+function buildOnboardPath(target, options) {
   return [
     section('Project structure', 'structure', [target, '--depth', budgetTier(options) === 'small' ? '1' : options.full ? '3' : '2']),
     section('Entry points', 'entry', [target]),
     section('Technology stack', 'stack', []),
     section('Context hotspots', 'context', [target, '--top', options.full ? '20' : '10'])
+  ];
+}
+
+function buildOnboardQuery(query, options) {
+  const depth = budgetTier(options) === 'small' ? '1' : options.full ? '3' : '2';
+  return [
+    {
+      title: 'Target query',
+      command: formatToolCommand('pack', ['onboard', query]),
+      exitCode: 0,
+      output: `Target is not an existing path; treating it as a query while onboarding the current project: ${query}`,
+      optional: false
+    },
+    section('Project structure', 'structure', ['.', '--depth', depth]),
+    section('Query function matches', 'lookup', [query, '.'], { optional: true }),
+    section('Entry points', 'entry', ['.']),
+    section('Technology stack', 'stack', []),
+    section('Context hotspots', 'context', ['.', '--top', options.full ? '20' : '10'])
   ];
 }
 

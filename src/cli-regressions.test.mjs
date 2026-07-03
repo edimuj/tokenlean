@@ -1195,6 +1195,25 @@ describe('CLI regressions', () => {
     assert.strictEqual(parsed.sections[0].command, 'tl analyze src/cache.mjs');
   });
 
+  it('TLT-133: tl-pack onboard treats natural-language targets as project queries', () => {
+    const target = 'provider quota orchestrator server runner';
+    const result = runCli(['bin/tl-pack.mjs', 'onboard', target, '--budget', '900', '-j']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    const output = parsed.sections.map(section => section.output.join('\n')).join('\n');
+
+    assert.strictEqual(parsed.pack, 'onboard');
+    assert.strictEqual(parsed.target, target);
+    assert.deepStrictEqual(
+      parsed.sections.map(section => section.title),
+      ['Target query', 'Project structure']
+    );
+    assert.match(output, /not an existing path; treating it as a query/);
+    assert.strictEqual(parsed.sections[1].command, 'tl structure . --depth 1');
+    assert.ok(parsed.omittedSections.some(section => section.title === 'Query function matches'));
+    assert.doesNotMatch(result.stdout, /Path not found/);
+  });
+
   it('TLT-039: tl-pack review does not route directories into file-only review tools', { skip: RG_SKIP }, () => {
     const result = runCli(['bin/tl-pack.mjs', 'review', 'src', '--budget', '900', '-j']);
     assert.strictEqual(result.status, 0, result.stdout || result.stderr);
