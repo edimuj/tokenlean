@@ -22,7 +22,7 @@ if (process.argv.includes('--prompt')) {
 }
 
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -90,6 +90,33 @@ const KILL_GRACE_MS = 2000;
 // we finish anyway once this elapses rather than hang forever. See runCommand.
 const CLOSE_GRACE_MS = 1000;
 
+// Accumulates streamed chunks up to maxBytes, keeping both the head and a
+// sliding tail window instead of dropping everything past the cap. See #39.
+function createCappedSink(maxBytes) {
+  const headCap = Math.floor(maxBytes / 2);
+  const tailCap = maxBytes - headCap;
+  let head = '';
+  let tail = '';
+  let truncated = false;
+  return {
+    write(chunk) {
+      if (head.length < headCap) {
+        const room = headCap - head.length;
+        head += chunk.slice(0, room);
+        chunk = chunk.slice(room);
+      }
+      if (chunk.length === 0) return;
+      truncated = true;
+      tail += chunk;
+      if (tail.length > tailCap) tail = tail.slice(tail.length - tailCap);
+    },
+    result() {
+      if (!truncated) return head;
+      return `${head}${truncationMarker(maxBytes)}${tail}`;
+    }
+  };
+}
+
 function sampleTextForAnalysis(text, maxChars = ANALYSIS_CHAR_LIMIT) {
   if (!text || text.length <= maxChars) return text;
   const headChars = Math.floor(maxChars * 0.45);
@@ -100,11 +127,57 @@ function sampleTextForAnalysis(text, maxChars = ANALYSIS_CHAR_LIMIT) {
 
 function countLines(text) {
   if (!text) return 0;
+  // A trailing newline shouldn't count as an extra blank final line — matches
+  // the `if (lines[lines.length-1] === '') lines.pop()` convention used
+  // elsewhere (e.g. smartBudgetGeneric) after `.split('\n')`.
+  const end = text.endsWith('\n') ? text.length - 1 : text.length;
   let lines = 1;
-  for (let i = 0; i < text.length; i++) {
+  for (let i = 0; i < end; i++) {
     if (text[i] === '\n') lines++;
   }
   return lines;
+}
+
+// Bounded head+tail read for a segment's output file. A plain readFileSync
+// with no cap can throw (Node's string length limit) and silently become ''
+// on an oversize file, hiding the segment's output entirely (#39). Falls
+// back to a full read when the file fits within maxBytes.
+function readCappedFile(path, maxBytes) {
+  let size;
+  try {
+    size = statSync(path).size;
+  } catch {
+    return '';
+  }
+  if (size <= maxBytes) {
+    try {
+      return readFileSync(path, 'utf-8');
+    } catch {
+      return '';
+    }
+  }
+
+  const headCap = Math.floor(maxBytes / 2);
+  const tailCap = maxBytes - headCap;
+  let fd;
+  try {
+    fd = openSync(path, 'r');
+  } catch {
+    return '';
+  }
+  try {
+    const headBuf = Buffer.alloc(headCap);
+    readSync(fd, headBuf, 0, headCap, 0);
+    const tailBuf = Buffer.alloc(tailCap);
+    readSync(fd, tailBuf, 0, tailCap, size - tailCap);
+    return `${headBuf.toString('utf-8')}${truncationMarker(maxBytes)}${tailBuf.toString('utf-8')}`;
+  } finally {
+    try { closeSync(fd); } catch { /* already closed */ }
+  }
+}
+
+function truncationMarker(maxBytes) {
+  return `\n\n... [output truncated at ${Math.round(maxBytes / (1024 * 1024))}MB — showing head and tail] ...\n\n`;
 }
 
 function headLines(text, maxLines, maxChars = 60000) {
@@ -145,8 +218,11 @@ function runCommand(command, timeout) {
       return;
     }
 
-    let stdout = '';
-    let stderr = '';
+    // Cap captured output at MAX_BUFFER while keeping BOTH head and tail —
+    // plain head-only truncation silently drops the tail, which is exactly
+    // where a failing test's crash/summary lines usually live (#39).
+    const stdoutSink = createCappedSink(MAX_BUFFER);
+    const stderrSink = createCappedSink(MAX_BUFFER);
     let timedOut = false;
     let settled = false;
     let killTimer = null;
@@ -174,12 +250,8 @@ function runCommand(command, timeout) {
 
     child.stdout.setEncoding('utf-8');
     child.stderr.setEncoding('utf-8');
-    child.stdout.on('data', (chunk) => {
-      if (stdout.length < MAX_BUFFER) stdout += chunk;
-    });
-    child.stderr.on('data', (chunk) => {
-      if (stderr.length < MAX_BUFFER) stderr += chunk;
-    });
+    child.stdout.on('data', (chunk) => stdoutSink.write(chunk));
+    child.stderr.on('data', (chunk) => stderrSink.write(chunk));
 
     const finish = (exitCode) => {
       if (settled) return;
@@ -188,8 +260,8 @@ function runCommand(command, timeout) {
       if (killTimer) clearTimeout(killTimer);
       if (graceTimer) clearTimeout(graceTimer);
       resolve({
-        stdout: stripAnsi(stdout),
-        stderr: stripAnsi(stderr),
+        stdout: stripAnsi(stdoutSink.result()),
+        stderr: stripAnsi(stderrSink.result()),
         exitCode,
         elapsed: Date.now() - start,
         timedOut
@@ -344,8 +416,8 @@ async function runSegmented(segments, ops, timeout) {
     const segResults = segments.map((cmd, i) => {
       if (!ran.has(i)) return { index: i, cmd, ran: false };
       let stdout = '', stderr = '';
-      try { stdout = stripAnsi(readFileSync(join(dir, `${i}.out`), 'utf-8')); } catch { /* none */ }
-      try { stderr = stripAnsi(readFileSync(join(dir, `${i}.err`), 'utf-8')); } catch { /* none */ }
+      try { stdout = stripAnsi(readCappedFile(join(dir, `${i}.out`), MAX_BUFFER)); } catch { /* none */ }
+      try { stderr = stripAnsi(readCappedFile(join(dir, `${i}.err`), MAX_BUFFER)); } catch { /* none */ }
       return { index: i, cmd, ran: true, exitCode: ran.get(i), stdout, stderr };
     });
 
@@ -359,6 +431,14 @@ async function runSegmented(segments, ops, timeout) {
 // Type Detection
 // ─────────────────────────────────────────────────────────────
 
+// NOTE on "test"/"build"/"lint" as bare words: they're ordinary English words
+// that also show up as ARGUMENTS — `cat test.log`, `grep build file.txt` — as
+// well as legitimate signals in flags/filenames — `node --test foo.test.mjs`
+// (TLT-063) has no runner name anywhere except the literal word "test".
+// Requiring these to be the command VERB breaks the latter, common case, so
+// detection is intentionally left permissive here; the exit-0-with-no-parsed-
+// counts fallback in buildSummary is what actually prevents a detection false
+// positive from swallowing real output behind a confident "all passed" (#36).
 const CMD_PATTERNS = {
   test: /\b(test|jest|vitest|mocha|pytest|rspec|phpunit|go\s+test|cargo\s+test|npm\s+test|npx\s+jest|npx\s+vitest)\b/i,
   build: /\b(build|compile|tsc|webpack|make|cargo\s+build|go\s+build|gcc|g\+\+|esbuild|rollup|vite\s+build)\b/i,
@@ -418,6 +498,16 @@ function detectType(command, stdout, stderr) {
 
   return 'generic';
 }
+
+// Matches CamelCase exception class names (ReferenceError, TypeError,
+// MyCustomException) and "Unhandled"/"Uncaught" rejection headers. A bare
+// `\berror\b` word boundary can NEVER match inside "ReferenceError" — the E
+// is preceded by a letter, so there's no boundary before it — which let the
+// most actionable line in a crash (the exception itself) score 0 and get cut
+// while a useless "Unhandled error between tests" header survived (#35,
+// vent #214). Shared by summarizeGeneric's diagPattern, scoreLine, and
+// FAILURE_ANCHOR so every keep-heuristic agrees on what a failure looks like.
+const EXCEPTION_PATTERN = /\b\w+(?:Error|Exception)\b|\bUn(?:handled|caught)\b/i;
 
 // ─────────────────────────────────────────────────────────────
 // Summarizers
@@ -509,8 +599,10 @@ function summarizeTest(stdout, stderr, exitCode) {
     return { passed, failed, skipped, total, foundCounts };
   }
 
+  // extractCounts is a full line-scan; only run it against stderr when it's
+  // actually needed (exit 0 and stdout's own counts didn't already qualify),
+  // instead of unconditionally scanning stdout/stderr/combined every time (#33).
   const stdoutCounts = extractCounts(stdoutLines);
-  const stderrCounts = extractCounts(stderrLines);
   const combinedCounts = extractCounts(lines);
   let { passed, failed, skipped, foundCounts } = combinedCounts;
 
@@ -520,8 +612,11 @@ function summarizeTest(stdout, stderr, exitCode) {
   if (exitCode === 0) {
     if (stdoutCounts.foundCounts && stdoutCounts.failed === 0) {
       ({ passed, failed, skipped, foundCounts } = stdoutCounts);
-    } else if (stderrCounts.foundCounts && stderrCounts.failed === 0) {
-      ({ passed, failed, skipped, foundCounts } = stderrCounts);
+    } else {
+      const stderrCounts = extractCounts(stderrLines);
+      if (stderrCounts.foundCounts && stderrCounts.failed === 0) {
+        ({ passed, failed, skipped, foundCounts } = stderrCounts);
+      }
     }
   }
 
@@ -748,7 +843,7 @@ function summarizeGeneric(stdout, stderr, exitCode) {
     const diagLines = [];
     for (const line of middle) {
       if (diagLines.length >= diagCap) break;
-      if (diagPattern.test(line)) {
+      if (diagPattern.test(line) || EXCEPTION_PATTERN.test(line)) {
         diagLines.push(line);
       }
     }
@@ -789,7 +884,7 @@ function summarizeGeneric(stdout, stderr, exitCode) {
 
   for (const line of middleSample.split('\n')) {
     if (diagLines.length >= diagCap) break;
-    if (diagPattern.test(line)) {
+    if (diagPattern.test(line) || EXCEPTION_PATTERN.test(line)) {
       diagLines.push(line);
     }
   }
@@ -816,7 +911,7 @@ function summarizeGeneric(stdout, stderr, exitCode) {
 // Smart Budget Truncation (generic output + explicit -l/-t)
 // ─────────────────────────────────────────────────────────────
 
-function scoreLine(line) {
+function scoreLine(line, opts = {}) {
   const t = line.trim();
   if (!t) return -1;
 
@@ -824,6 +919,8 @@ function scoreLine(line) {
 
   // Hard error keywords (+3)
   if (/\b(error|Error|ERROR|fatal|FATAL|panic|PANIC|exception|Exception|fail|Fail|FAIL|invalid|Invalid|INVALID)\b/.test(t)) s += 3;
+  // CamelCase exception classes (ReferenceError, TypeError, …) — see #35.
+  if (EXCEPTION_PATTERN.test(t)) s += 3;
 
   // Warning keywords (+2)
   if (/\b(warn|Warn|WARN|warning|Warning|WARNING)\b/.test(t)) s += 2;
@@ -858,9 +955,11 @@ function scoreLine(line) {
   // Source references with error context (+2)
   if (/[^\s]+:\d+/.test(t) && /\b(error|warn|fail)/i.test(t)) s += 2;
 
-  // Low-value lines (-1)
+  // Low-value lines (-1) — but not a stack frame sitting just after an
+  // exception match: that's the frame that actually pinpoints the crash, not
+  // noise (#35).
   if (/^\[DEBUG/.test(t)) s -= 1;
-  if (/^\s*(at |    at )/.test(line)) s -= 1;
+  if (/^\s*(at |    at )/.test(line) && !opts.nearFailureAnchor) s -= 1;
 
   return s;
 }
@@ -896,7 +995,16 @@ function smartBudgetGeneric(stdout, stderr, exitCode, budget) {
   // Score and select best middle lines, preserving original order
   let selectedMiddle = [];
   if (middleBudget > 0 && middle.length > 0) {
-    const scored = middle.map((line, idx) => ({ line, idx, score: scoreLine(line) }));
+    // Track how many lines it's been since an exception-class match, so
+    // scoreLine can stop penalizing the `at …` stack frames that immediately
+    // follow it — those frames are what pinpoints the crash site (#35).
+    let sinceException = Infinity;
+    const nearAnchor = middle.map((line) => {
+      if (EXCEPTION_PATTERN.test(line)) sinceException = 0;
+      else sinceException++;
+      return sinceException <= FAILURE_AFTER;
+    });
+    const scored = middle.map((line, idx) => ({ line, idx, score: scoreLine(line, { nearFailureAnchor: nearAnchor[idx] }) }));
     scored.sort((a, b) => b.score - a.score || a.idx - b.idx);
     const top = scored.slice(0, middleBudget);
     top.sort((a, b) => a.idx - b.idx); // restore original order
@@ -942,10 +1050,14 @@ function smartBudgetGeneric(stdout, stderr, exitCode, budget) {
 const FAILURE_ANCHOR = new RegExp([
   '\\(fail\\)',           // Bun (non-TTY reporter)
   '[✗✕✘×⨯✖]',             // unicode fail marks (jest / vitest / node:test)
-  '\\bFAILED?\\b',        // FAIL / FAILED
+  '\\bFAIL(?:ED)?\\b',    // FAIL / FAILED — was `FAILED?` (typo: never matched bare FAIL,
+                          // breaking Go `--- FAIL:` / `FAIL\tpkg` and jest `FAIL suite`)
   '^\\s*●\\s',            // jest failure bullet
   '\\berror\\b',          // error: / error TS1234 / error[E0001]
   '\\bAssertionError\\b',
+  '\\b\\w+(?:Error|Exception)\\b', // ReferenceError/TypeError/…Exception — \berror\b can't
+                                    // match inside these (no boundary before a mid-word capital)
+  '\\bUn(?:handled|caught)\\b',    // "Unhandled rejection" contains no error/fail token at all
   '\\bexpect\\(',         // expect(received)…
   '\\bExpected\\b',       // Expected: / - Expected
   '\\bReceived\\b',       // Received: / + Received
@@ -990,33 +1102,46 @@ function extractFailureRegions(stdout, stderr, budget) {
 
   // Render whole regions under budget. Failure blocks are the point, so we keep
   // each region intact and note any dropped rather than slicing one mid-assertion.
+  //
+  // The LAST region is reserved and always rendered in full, regardless of
+  // budget — stderr (where terminal crashes land) is concatenated after
+  // stdout, so without this the real crash was structurally the region most
+  // likely to be the one dropped as "N more region(s) omitted" (#35).
+  const lastRange = ranges[ranges.length - 1];
+  const lastSize = lastRange.end - lastRange.start + 1;
+  const reserveForLast = ranges.length > 1 ? lastSize + 1 : 0; // +1 for its own gap marker
+  const mainBudget = Math.max(0, budget - reserveForLast);
+
   const out = [];
   let used = 0;
   let prevEnd = -1;
   let droppedRegions = 0;
-  let renderedAny = false;
-  for (let r = 0; r < ranges.length; r++) {
+  for (let r = 0; r < ranges.length - 1; r++) {
     const { start, end } = ranges[r];
     const size = end - start + 1;
     const gapBefore = start - (prevEnd + 1);
     const cost = size + (gapBefore > 0 ? 1 : 0);
-    if (renderedAny && used + cost > budget) {
-      droppedRegions = ranges.length - r;
+    if (used + cost > mainBudget) {
+      droppedRegions = (ranges.length - 1) - r;
       break;
     }
     if (gapBefore > 0) { out.push(`... ${gapBefore} lines omitted ...`); used += 1; }
     for (let k = start; k <= end; k++) out.push(lines[k]);
     used += size;
     prevEnd = end;
-    renderedAny = true;
   }
 
   if (droppedRegions > 0) {
     out.push(`... ${droppedRegions} more failure region(s) omitted — rerun with --raw for the full log ...`);
-  } else {
-    const trailing = lines.length - 1 - prevEnd;
-    if (trailing > 0) out.push(`... ${trailing} lines omitted ...`);
   }
+
+  const gapBeforeLast = lastRange.start - (prevEnd + 1);
+  if (gapBeforeLast > 0) out.push(`... ${gapBeforeLast} lines omitted ...`);
+  for (let k = lastRange.start; k <= lastRange.end; k++) out.push(lines[k]);
+  prevEnd = lastRange.end;
+
+  const trailing = lines.length - 1 - prevEnd;
+  if (trailing > 0) out.push(`... ${trailing} lines omitted ...`);
 
   return { lines: out, summary: `${lines.length} total lines → failure regions` };
 }
@@ -1115,12 +1240,17 @@ function diffResults(prev, curr, type) {
 function buildSummary(command, stdout, stderr, exitCode, opts, typeArg) {
   const type = typeArg || detectType(command, stdout, stderr);
 
-  // For very large successful outputs, summarize from sampled text only.
-  // On failures we keep full output to preserve diagnostics.
+  // For very large outputs, extract counts from sampled text only — a
+  // multi-hundred-MB failing log is just as slow to line-scan as a passing
+  // one, and count/summary lines are almost always near the head or tail
+  // (previously this only kicked in on exit 0; #33). The rendered failure
+  // BODY still comes from the full raw stdout/stderr via failureDiagnosticLines
+  // in summaryToLines, so this only affects the parsed-counts header and the
+  // best-effort failures[]/errors[]/violations[] metadata.
   let summaryStdout = stdout;
   let summaryStderr = stderr;
   const totalOutputChars = stdout.length + stderr.length;
-  if (exitCode === 0 && totalOutputChars > ANALYSIS_CHAR_LIMIT && type !== 'generic') {
+  if (totalOutputChars > ANALYSIS_CHAR_LIMIT && type !== 'generic') {
     summaryStdout = sampleTextForAnalysis(stdout, Math.floor(ANALYSIS_CHAR_LIMIT * 0.8));
     summaryStderr = sampleTextForAnalysis(stderr, Math.floor(ANALYSIS_CHAR_LIMIT * 0.2));
   }
@@ -1129,6 +1259,17 @@ function buildSummary(command, stdout, stderr, exitCode, opts, typeArg) {
   switch (type) {
     case 'test':
       summary = summarizeTest(summaryStdout, summaryStderr, exitCode);
+      // A test-type detection false positive (e.g. `cat test.log`, `grep
+      // test x`) exits 0 with no recognizable runner counts — showing a
+      // confident "all passed" would hide the real output. Keep `type` as
+      // 'test' (detection stays driven by the command text, unchanged), but
+      // attach the raw content as a fallback so summaryToLines can render it
+      // instead of the misleading pass claim (#36). Only for auto-detected
+      // type — an explicit --type test trusts the caller.
+      if (!typeArg && exitCode === 0 && !summary.parsed) {
+        const fallback = genericSummary(stdout, stderr, exitCode, opts);
+        summary = { ...summary, summary: fallback.summary, lines: fallback.lines };
+      }
       break;
     case 'build':
       summary = summarizeBuild(summaryStdout, summaryStderr, exitCode);
@@ -1136,15 +1277,18 @@ function buildSummary(command, stdout, stderr, exitCode, opts, typeArg) {
     case 'lint':
       summary = summarizeLint(summaryStdout, summaryStderr, exitCode);
       break;
-    default: {
-      const lineBudget = computeLineBudget(opts);
-      summary = lineBudget < Infinity
-        ? smartBudgetGeneric(stdout, stderr, exitCode, lineBudget)
-        : summarizeGeneric(stdout, stderr, exitCode);
+    default:
+      summary = genericSummary(stdout, stderr, exitCode, opts);
       break;
-    }
   }
   return { type, summary };
+}
+
+function genericSummary(stdout, stderr, exitCode, opts) {
+  const lineBudget = computeLineBudget(opts);
+  return lineBudget < Infinity
+    ? smartBudgetGeneric(stdout, stderr, exitCode, lineBudget)
+    : summarizeGeneric(stdout, stderr, exitCode);
 }
 
 function failureDiagnosticLines(stdout, stderr, exitCode, opts = {}) {
@@ -1157,7 +1301,12 @@ function failureDiagnosticLines(stdout, stderr, exitCode, opts = {}) {
 
 // Turn a summary into renderable lines. Blank entries are preserved so callers
 // can reproduce the original spacing (and indent uniformly when needed).
-function summaryToLines(type, summary, exitCode, stdout, stderr, opts = {}) {
+//
+// `diagnostics` is the failure body for a non-zero-exit typed run, computed
+// ONCE by the caller via failureDiagnosticLines and passed in — callers also
+// need the same lines for JSON's `diagnostics`/`seg.diagnostics` field, and
+// computing it here too meant every failing run did the extraction twice (#33).
+function summaryToLines(type, summary, exitCode, diagnostics) {
   // FAILURE PATH — "compress success, pass through failure".
   //
   // The per-framework summarizers (summarizeTest/Build/Lint) parse pass/fail
@@ -1178,11 +1327,7 @@ function summaryToLines(type, summary, exitCode, stdout, stderr, opts = {}) {
   if (exitCode !== 0 && type !== 'generic') {
     const lines = [];
     if (summary.summary) lines.push(summary.summary);
-    // Prefer block-aware extraction so contiguous assertion blocks (error +
-    // Expected/Received + diff + stack + marker) survive whole; it returns null
-    // when the output fits or has no failure structure, falling back to scoring.
-    const diagnostics = failureDiagnosticLines(stdout, stderr, exitCode, opts);
-    if (diagnostics.length > 0) {
+    if (diagnostics && diagnostics.length > 0) {
       lines.push('');
       lines.push(...diagnostics);
     }
@@ -1192,7 +1337,15 @@ function summaryToLines(type, summary, exitCode, stdout, stderr, opts = {}) {
   // SUCCESS PATH — compress aggressively; this is where tl_run earns its keep.
   const lines = [];
 
-  if (type === 'test') {
+  if (type === 'test' && summary.lines) {
+    // Detection false-positive fallback (#36) — render the actual content
+    // instead of a pass/fail claim that isn't backed by any parsed counts.
+    if (summary.summary) {
+      lines.push(summary.summary);
+      lines.push('');
+    }
+    lines.push(...summary.lines);
+  } else if (type === 'test') {
     lines.push(summary.summary);
     if (summary.failures.length > 0) {
       lines.push('');
@@ -1290,14 +1443,19 @@ async function runSegmentedFlow(command, parsed, timeout, opts, diffMode) {
     }
 
     const { type, summary } = buildSummary(s.cmd, s.stdout, s.stderr, s.exitCode, opts, null);
+    const diagnostics = (s.exitCode !== 0 && type !== 'generic')
+      ? failureDiagnosticLines(s.stdout, s.stderr, s.exitCode, opts)
+      : null;
     out.add(`[${s.index + 1}] $ ${s.cmd}  -> exit ${s.exitCode} | ${type}`);
-    emitLines(out, summaryToLines(type, summary, s.exitCode, s.stdout, s.stderr, opts), '    ');
+    emitLines(out, summaryToLines(type, summary, s.exitCode, diagnostics), '    ');
     out.blank();
 
     const seg = { index: s.index, command: s.cmd, ran: true, exitCode: s.exitCode, type, summary: summary.summary };
-    if (s.exitCode !== 0 && type !== 'generic') seg.diagnostics = failureDiagnosticLines(s.stdout, s.stderr, s.exitCode, opts);
-    if (type === 'test') seg.failures = summary.failures;
-    else if (type === 'build') { seg.errors = summary.errors; seg.warningCount = summary.warningCount; }
+    if (diagnostics) seg.diagnostics = diagnostics;
+    if (type === 'test') {
+      seg.failures = summary.failures;
+      if (summary.lines) seg.lines = summary.lines; // detection false-positive fallback (#36)
+    } else if (type === 'build') { seg.errors = summary.errors; seg.warningCount = summary.warningCount; }
     else if (type === 'lint') seg.violations = summary.violations;
     jsonSegments.push(seg);
   }
@@ -1402,11 +1560,15 @@ async function main() {
     out.blank();
     out.add('Command timed out.');
 
-    if (result.stdout) {
+    // Run the partial output through the same failure-region extractor as a
+    // real failure, and include stderr — a hung command's actual problem
+    // (the last thing it printed before hanging) usually lives in stderr or
+    // near the tail, not in the last 20 lines of stdout alone (#39).
+    const partial = failureDiagnosticLines(result.stdout, result.stderr, 124, opts);
+    if (partial.length > 0) {
       out.blank();
-      out.add('Partial stdout:');
-      const partialLines = result.stdout.split('\n').slice(-20);
-      out.addLines(partialLines);
+      out.add('Partial output (stdout + stderr):');
+      out.addLines(partial);
     }
 
     if (opts.json) {
@@ -1416,6 +1578,7 @@ async function main() {
       out.setData('type', 'timeout');
       out.setData('summary', 'Command timed out');
       out.setData('timedOut', true);
+      out.setData('partialOutput', partial);
     }
 
     out.print();
@@ -1446,6 +1609,11 @@ async function main() {
 
   // Detect type + summarize
   const { type, summary } = buildSummary(command, result.stdout, result.stderr, result.exitCode, opts, typeArg);
+  // Computed once and reused for both the rendered body and JSON's
+  // `diagnostics` field, instead of running the extractor twice (#33).
+  const diagnostics = (result.exitCode !== 0 && type !== 'generic')
+    ? failureDiagnosticLines(result.stdout, result.stderr, result.exitCode, opts)
+    : null;
 
   // Format output
   const out = createOutput(opts);
@@ -1456,7 +1624,7 @@ async function main() {
     out.blank();
   }
 
-  emitLines(out, summaryToLines(type, summary, result.exitCode, result.stdout, result.stderr, opts));
+  emitLines(out, summaryToLines(type, summary, result.exitCode, diagnostics));
 
   // Diff mode: compare with previous run
   if (diffMode) {
@@ -1487,12 +1655,13 @@ async function main() {
     out.setData('elapsed', formatElapsed(result.elapsed));
     out.setData('type', type);
     out.setData('summary', summary.summary);
-    if (result.exitCode !== 0 && type !== 'generic') {
-      out.setData('diagnostics', failureDiagnosticLines(result.stdout, result.stderr, result.exitCode, opts));
+    if (diagnostics) {
+      out.setData('diagnostics', diagnostics);
     }
 
     if (type === 'test') {
       out.setData('failures', summary.failures);
+      if (summary.lines) out.setData('lines', summary.lines); // detection false-positive fallback (#36)
     } else if (type === 'build') {
       out.setData('errors', summary.errors);
       out.setData('warningCount', summary.warningCount);

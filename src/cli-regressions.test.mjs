@@ -2399,4 +2399,92 @@ describe('CLI regressions', () => {
     assert.notStrictEqual(parsed.type, 'segmented');
     assert.ok((parsed.lines || []).some(l => l.includes('grouped')), `expected grouped output: ${result.stdout}`);
   });
+
+  it('TLT-134: tl-run preserves an exception class + stack frame in failure output (#35, vent #214)', () => {
+    // Every keep-heuristic matched `\berror\b` with word boundaries, which can
+    // never match inside "ReferenceError" (the E is preceded by a letter, so
+    // there's no boundary before it) — the actionable line scored 0 and was
+    // cut while a useless standalone header survived. Pad with noise so
+    // budget-driven extraction actually has to choose what to keep.
+    const nodePath = JSON.stringify(process.execPath);
+    const script = [
+      "for (let i = 0; i < 80; i++) console.log('passing test ' + i);",
+      "console.log('# Unhandled error between tests');",
+      "console.log('------');",
+      "console.log('1 | import { afterEach } from \\\"bun:test\\\";');",
+      "console.log('ReferenceError: afterEach is not defined');",
+      "console.log('      at /x/setup.ts:5:1');",
+      "console.log(' 80 pass'); console.log(' 1 fail');",
+      "console.log('Ran 81 tests across 1 file. [10.00ms]'); process.exitCode = 1"
+    ].join(' ');
+    const command = `${nodePath} -e ${JSON.stringify(script)}`;
+
+    const result = runCli(['bin/tl-run.mjs', command, '--type', 'test', '-q', '-l', '20']);
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /ReferenceError: afterEach is not defined/, 'kept the exception line');
+    assert.match(result.stdout, /at \/x\/setup\.ts:5:1/, 'kept a stack frame');
+  });
+
+  it('TLT-135: tl-run preserves an "Unhandled rejection" block with no error/fail token (#35)', () => {
+    // "Unhandled rejection" contains no "error"/"fail" substring at all —
+    // 100% invisible to the old keep-heuristics.
+    const nodePath = JSON.stringify(process.execPath);
+    const script = [
+      "for (let i = 0; i < 60; i++) console.log('ok pass-' + i);",
+      "console.log('Unhandled rejection');",
+      "console.log('TypeError: Cannot read properties of undefined');",
+      "console.log('    at Object.<anonymous> (/x/app.js:10:5)');",
+      "for (let i = 0; i < 60; i++) console.log('ok pass-b-' + i);",
+      "console.log(' 120 pass'); console.log(' 1 fail'); process.exitCode = 1"
+    ].join(' ');
+    const command = `${nodePath} -e ${JSON.stringify(script)}`;
+
+    const result = runCli(['bin/tl-run.mjs', command, '--type', 'test', '-q', '-l', '20']);
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /Unhandled rejection/, 'kept the Unhandled rejection header');
+    assert.match(result.stdout, /TypeError: Cannot read properties of undefined/, 'kept the exception line');
+  });
+
+  it('TLT-136: tl-run anchors on a Go `--- FAIL:` / bare `FAIL` line (#35 typo fix)', () => {
+    // FAILURE_ANCHOR had `\bFAILED?\b`, which requires the literal chars
+    // "FAILE" or a `FAIL` immediately at a word boundary followed by nothing
+    // — but combined with the alternation order/typo it never anchored on a
+    // bare `FAIL` line, breaking Go's `--- FAIL:` / `FAIL\tpkg` output.
+    const nodePath = JSON.stringify(process.execPath);
+    const script = [
+      "for (let i = 0; i < 60; i++) console.log('ok pass-' + i);",
+      "console.log('--- FAIL: TestFoo (0.00s)');",
+      "console.log('    foo_test.go:10: expected 1 got 2');",
+      "console.log('FAIL');",
+      "console.log('FAIL\\texample.com/pkg\\t0.003s');",
+      "for (let i = 0; i < 60; i++) console.log('ok pass-b-' + i);",
+      "process.exitCode = 1"
+    ].join(' ');
+    const command = `${nodePath} -e ${JSON.stringify(script)}`;
+
+    const result = runCli(['bin/tl-run.mjs', command, '--type', 'test', '-q', '-l', '20']);
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /--- FAIL: TestFoo/, 'kept the Go failure header');
+    assert.match(result.stdout, /foo_test\.go:10: expected 1 got 2/, 'kept the failure detail');
+  });
+
+  it('TLT-137: tl-run does not collapse `cat test.log` to a false "all passed" (#36)', () => {
+    // "test" in CMD_PATTERNS matches anywhere in the command string (by
+    // design — `node --test foo.test.mjs` has no other signal, see TLT-063),
+    // so `cat test.log` still detects as type 'test'. What must NOT happen
+    // is a confident "all passed" hiding the file's real content just
+    // because no runner-style pass/fail counts were found on exit 0.
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-tl36-'));
+    const logFile = join(tempDir, 'test.log');
+    writeFileSync(logFile, 'this is definitely not a test summary\njust some log content\n');
+
+    try {
+      const result = runCli(['bin/tl-run.mjs', `cat ${logFile}`, '-q']);
+      assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+      assert.doesNotMatch(result.stdout, /all passed/, `swallowed real output: ${result.stdout}`);
+      assert.match(result.stdout, /just some log content/, `expected raw content: ${result.stdout}`);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
