@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { TOOLS, withCwdHint } from './mcp-tools.mjs';
+import { z } from 'zod';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { capRunResultText, TOOLS, registerTools, runArgs, runJobDir, withCwdHint } from './mcp-tools.mjs';
 
 describe('MCP tool definitions', () => {
   it('exposes context-governor tools', () => {
@@ -57,13 +60,79 @@ describe('MCP tool definitions', () => {
     }
   });
 
-  it('tl_run advertises command timeout aliases instead of generic timeout', () => {
+  it('tl_run advertises commandTimeoutMs/commandTimeoutSeconds plus a documented "timeout" alias', () => {
     const runTool = TOOLS.find(tool => tool.name === 'tl_run');
     const schemaKeys = new Set(Object.keys(runTool.schema));
 
     assert.ok(schemaKeys.has('commandTimeoutMs'));
     assert.ok(schemaKeys.has('commandTimeoutSeconds'));
-    assert.ok(!schemaKeys.has('timeout'));
+    assert.ok(schemaKeys.has('timeout'));
+  });
+
+  it('tl_run schema keeps "timeout" instead of silently stripping it as an unknown key', () => {
+    const runTool = TOOLS.find(tool => tool.name === 'tl_run');
+    const parsed = z.object(runTool.schema).parse({ command: 'echo hi', timeout: 5 });
+    assert.strictEqual(parsed.timeout, 5);
+  });
+
+  it('tl_run schema exposes limit/maxTokens/noSplit budget params', () => {
+    const runTool = TOOLS.find(tool => tool.name === 'tl_run');
+    for (const key of ['limit', 'maxTokens', 'noSplit']) {
+      assert.ok(runTool.schema[key], `schema should accept "${key}"`);
+    }
+  });
+
+  it('tl_run wires limit/maxTokens/noSplit through to the tl-run CLI flags (-l/-t/--no-split)', () => {
+    const args = runArgs({ command: 'echo hi', limit: 40, maxTokens: 2000, noSplit: true });
+    assert.deepStrictEqual(args, ['echo hi', '-l', '40', '-t', '2000', '--no-split', '-j']);
+  });
+
+  it('capRunResultText tails a huge stdout field instead of returning megabytes, keeping valid JSON', () => {
+    const huge = JSON.stringify({ command: 'echo hi', exitCode: 0, type: 'raw', stdout: 'x'.repeat(500_000), stderr: '' });
+    const capped = capRunResultText(huge);
+    assert.ok(capped.length < huge.length, `expected capped response, got ${capped.length} of ${huge.length} chars`);
+    const parsed = JSON.parse(capped);
+    assert.match(parsed.stdout, /truncated/);
+    assert.ok(parsed.stdout.length < 500_000);
+  });
+
+  it('capRunResultText also tails result.stdout for a completed async job payload', () => {
+    const huge = JSON.stringify({ jobId: 'x', status: 'completed', result: { stdout: 'y'.repeat(500_000) } });
+    const capped = capRunResultText(huge);
+    const parsed = JSON.parse(capped);
+    assert.match(parsed.result.stdout, /truncated/);
+    assert.ok(parsed.result.stdout.length < 500_000);
+  });
+
+  it('capRunResultText leaves small responses untouched', () => {
+    const small = JSON.stringify({ command: 'echo hi', exitCode: 0, stdout: 'ok' });
+    assert.strictEqual(capRunResultText(small), small);
+  });
+
+  it('tl_run marks an orphaned "running" async job as failed on poll (dead pid)', async () => {
+    const runTool = TOOLS.find(tool => tool.name === 'tl_run');
+    const jobId = randomUUID();
+    const dir = runJobDir(jobId);
+    mkdirSync(dir, { recursive: true });
+    const startedAt = new Date().toISOString();
+    try {
+      writeFileSync(join(dir, 'status.json'), JSON.stringify({
+        jobId,
+        status: 'running',
+        command: 'echo hi',
+        cwd: process.cwd(),
+        pid: 999999999,
+        startedAt,
+        updatedAt: startedAt,
+      }) + '\n', 'utf-8');
+
+      const result = await runTool.handler({ jobId, waitSeconds: 0 });
+      const payload = JSON.parse(result.content[0].text);
+      assert.strictEqual(payload.status, 'failed');
+      assert.match(payload.error, /orphan/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('tl_run treats small legacy MCP timeout values as seconds', async () => {
@@ -437,19 +506,181 @@ describe('MCP tool definitions', () => {
   });
 
   it('tl_gh tools expose owner + issue_number + number compatibility aliases in their schema', () => {
+    // tl_gh_* schemas are strict ZodObject instances (see withCwdStrict) rather
+    // than raw shapes, so field access goes through .shape.
     for (const name of ['tl_gh_issue_read', 'tl_gh_issue_close', 'tl_gh_issue_close_batch',
       'tl_gh_issue_label_batch', 'tl_gh_project_add_batch', 'tl_gh_issue_create_batch', 'tl_gh_issue_add_sub']) {
       const tool = TOOLS.find(t => t.name === name);
-      assert.ok(tool.schema.owner, `${name} should accept "owner"`);
+      assert.ok(tool.schema.shape.owner, `${name} should accept "owner"`);
     }
     // The issue-identifier tools also expose the "number" alias (add_sub maps it
     // to the parent identifier).
     for (const name of ['tl_gh_issue_read', 'tl_gh_issue_close', 'tl_gh_issue_close_batch',
       'tl_gh_issue_label_batch', 'tl_gh_project_add_batch', 'tl_gh_issue_add_sub']) {
       const tool = TOOLS.find(t => t.name === name);
-      assert.ok(tool.schema.number, `${name} should accept "number"`);
-      assert.ok(tool.schema.issue_number, `${name} should accept "issue_number"`);
+      assert.ok(tool.schema.shape.number, `${name} should accept "number"`);
+      assert.ok(tool.schema.shape.issue_number, `${name} should accept "issue_number"`);
     }
+  });
+
+  it('tl_gh_issue_add_sub accepts the "issue" parent alias and "sub" children alias', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-addsub-newalias-'));
+    const ghPath = join(tempDir, 'gh');
+    const logPath = join(tempDir, 'gh-calls.jsonl');
+    // A generic stub that resolves any issue-id lookup to the same fake node
+    // id, so tl-gh's add-sub flow gets past parent resolution to the child
+    // batch-id lookup (whose query text embeds the child numbers literally)
+    // instead of exiting early on "Could not resolve parent".
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'const fs = require("node:fs");',
+      'const argv = process.argv.slice(2);',
+      'fs.appendFileSync(process.env.GH_LOG, JSON.stringify(argv) + "\\n");',
+      'process.stdout.write(JSON.stringify({ data: { repository: { issue: { id: "FAKE_ISSUE_ID" } } } }) + "\\n");',
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    const originalPath = process.env.PATH;
+    const originalLog = process.env.GH_LOG;
+    try {
+      process.env.PATH = `${tempDir}:${originalPath}`;
+      process.env.GH_LOG = logPath;
+      const tool = TOOLS.find(t => t.name === 'tl_gh_issue_add_sub');
+      // "issue" (not "parent") for the parent, and "sub" (not "children") for
+      // the sub-issues — the exact confusion traced in vent #219.
+      await tool.handler({ repo: 'edimuj/app', issue: 20, sub: [21, 22] });
+      const args = readFileSync(logPath, 'utf-8').trim().split('\n').map(line => JSON.parse(line));
+      const flat = args.flat();
+      assert.ok(flat.some(a => /number: 20|number=20\b/.test(a)), '"issue" alias should route 20 as the parent identifier');
+      assert.ok(flat.some(a => /issue\(number: 21\)/.test(a)), '"sub" alias should route child 21');
+      assert.ok(flat.some(a => /issue\(number: 22\)/.test(a)), '"sub" alias should route child 22');
+    } finally {
+      process.env.PATH = originalPath;
+      if (originalLog === undefined) delete process.env.GH_LOG;
+      else process.env.GH_LOG = originalLog;
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('tl_gh_issue_add_sub validation errors print the full expected call shape and a literal example', async () => {
+    const tool = TOOLS.find(t => t.name === 'tl_gh_issue_add_sub');
+    await assert.rejects(
+      () => tool.handler({ repo: 'edimuj/app', children: [1, 2] }),
+      (err) => {
+        assert.match(err.message, /provide "parent"/i);
+        assert.match(err.message, /Expected shape/i);
+        // The literal, fillable example from the vent #219 fix.
+        assert.match(err.message, /"parent":123/);
+        assert.match(err.message, /"children":\[124,125\]/);
+        return true;
+      }
+    );
+  });
+
+  it('tl_gh_issue_close validation error also includes the full expected shape', async () => {
+    const tool = TOOLS.find(t => t.name === 'tl_gh_issue_close');
+    await assert.rejects(
+      () => tool.handler({ repo: 'edimuj/app' }),
+      (err) => {
+        // Backward-compatible substring preserved...
+        assert.match(err.message, /provide "issues" \(or "issue_number" \/ "number"\)/i);
+        // ...plus the new full-shape example.
+        assert.match(err.message, /Expected shape/i);
+        assert.match(err.message, /"repo":"owner\/repo"/);
+        return true;
+      }
+    );
+  });
+
+  it('tl_gh_issue_close accepts "not_planned" as a reason alias (GitHub-MCP convention)', () => {
+    const closeTool = TOOLS.find(t => t.name === 'tl_gh_issue_close');
+    const closeBatchTool = TOOLS.find(t => t.name === 'tl_gh_issue_close_batch');
+    const closeResult = closeTool.schema.safeParse({ repo: 'edimuj/app', issues: 1, reason: 'not_planned' });
+    assert.strictEqual(closeResult.success, true, JSON.stringify(closeResult.error?.issues));
+    const batchResult = closeBatchTool.schema.safeParse({ repo: 'edimuj/app', issues: [1], reason: 'not_planned' });
+    assert.strictEqual(batchResult.success, true, JSON.stringify(batchResult.error?.issues));
+  });
+
+  it('tl_gh_issue_read "issue" accepts an array for batch reads (matches its aliases)', () => {
+    const tool = TOOLS.find(t => t.name === 'tl_gh_issue_read');
+    const result = tool.schema.safeParse({ repo: 'edimuj/app', issue: [1, 2, 3] });
+    assert.strictEqual(result.success, true, JSON.stringify(result.error?.issues));
+  });
+
+  it('tl_gh_issue_create_batch accepts "specs"/"newIssues" aliases for the new-issue array', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-createbatch-alias-'));
+    const ghPath = join(tempDir, 'gh');
+    const logPath = join(tempDir, 'gh-calls.jsonl');
+    // tl-gh's create-batch reads the array from ITS OWN stdin (piped by
+    // dispatchToolWithStdin), then shells out to the real "gh" CLI per issue
+    // as `gh issue create ... --title <title>` — that's the boundary this
+    // stub fakes, logging argv and returning a fake issue URL.
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'const fs = require("node:fs");',
+      'const argv = process.argv.slice(2);',
+      'fs.appendFileSync(process.env.GH_LOG, JSON.stringify(argv) + "\\n");',
+      'process.stdout.write("https://github.com/edimuj/app/issues/999\\n");',
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    const originalPath = process.env.PATH;
+    const originalLog = process.env.GH_LOG;
+    try {
+      process.env.PATH = `${tempDir}:${originalPath}`;
+      process.env.GH_LOG = logPath;
+      const tool = TOOLS.find(t => t.name === 'tl_gh_issue_create_batch');
+      const result = await tool.handler({ repo: 'edimuj/app', specs: [{ title: 'Alias test' }] });
+      assert.strictEqual(result.isError, undefined, result.content?.[0]?.text);
+      const calls = readFileSync(logPath, 'utf-8').trim().split('\n').map(line => JSON.parse(line));
+      assert.ok(calls.some(argv => argv.includes('Alias test')), 'the "specs" alias should reach the created issue title');
+    } finally {
+      process.env.PATH = originalPath;
+      if (originalLog === undefined) delete process.env.GH_LOG;
+      else process.env.GH_LOG = originalLog;
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('ghResolveRepo (via tl_gh_issue_close) rejects a bare repo name with no owner', async () => {
+    const tool = TOOLS.find(t => t.name === 'tl_gh_issue_close');
+    await assert.rejects(
+      () => tool.handler({ repo: 'app', issues: 1 }),
+      /Invalid repo "app": expected "owner\/repo"/i
+    );
+  });
+
+  it('registerTools wires every tool through the real MCP SDK without throwing', () => {
+    const server = new McpServer({ name: 'tokenlean-test', version: '0.0.0' });
+    assert.doesNotThrow(() => registerTools(server));
+    for (const tool of TOOLS) {
+      assert.ok(server._registeredTools[tool.name], `${tool.name} should be registered`);
+    }
+  });
+
+  it('tl_gh_issue_add_sub schema rejects unknown keys end-to-end through the real MCP SDK (vent #219 class)', async () => {
+    const server = new McpServer({ name: 'tokenlean-test', version: '0.0.0' });
+    registerTools(server);
+    const addSub = server._registeredTools['tl_gh_issue_add_sub'];
+
+    await assert.rejects(
+      () => server.validateToolInput(addSub, { repo: 'edimuj/app', parent: 1, children: [2], bogusKey: true }, 'tl_gh_issue_add_sub'),
+      /bogusKey/i
+    );
+
+    // Valid args using the new aliases still parse and reach the handler.
+    const parsedGood = await server.validateToolInput(
+      addSub, { repo: 'edimuj/app', issue: 1, sub: [2, 3] }, 'tl_gh_issue_add_sub'
+    );
+    assert.strictEqual(parsedGood.issue, 1);
+    assert.deepStrictEqual(parsedGood.sub, [2, 3]);
+
+    // Non-gh tools intentionally keep default (non-strict) zod behavior —
+    // unknown keys are stripped, not errors. Strict mode is scoped to the gh
+    // family where the vent traced the actual problem.
+    const symbols = server._registeredTools['tl_symbols'];
+    const parsedSymbols = await server.validateToolInput(symbols, { files: 'a.js', bogusKey: true }, 'tl_symbols');
+    assert.strictEqual(parsedSymbols.bogusKey, undefined);
   });
 
   it('tl_gh_issue_add_sub resolves the parent from "number"/"issue_number" alias', async () => {
@@ -486,7 +717,7 @@ describe('MCP tool definitions', () => {
   it('tl_gh_issue_label_batch exposes add/remove plus addLabels/removeLabels aliases', () => {
     const tool = TOOLS.find(t => t.name === 'tl_gh_issue_label_batch');
     for (const key of ['add', 'remove', 'addLabels', 'removeLabels']) {
-      assert.ok(tool.schema[key], `schema should accept "${key}"`);
+      assert.ok(tool.schema.shape[key], `schema should accept "${key}"`);
     }
   });
 
@@ -496,6 +727,39 @@ describe('MCP tool definitions', () => {
       () => tool.handler({ repo: 'edimuj/app', issues: [1] }),
       /at least one of/i
     );
+  });
+
+  it('tl_pack debug errors when both command and target are given instead of silently dropping target', async () => {
+    const packTool = TOOLS.find(tool => tool.name === 'tl_pack');
+    await assert.rejects(
+      () => packTool.handler({ pack: 'debug', command: 'npm test', target: 'some extra context', cwd: process.cwd() }),
+      /provide either "command".*"target"|not both/i
+    );
+  });
+
+  it('tl_gh_issue_create_batch does not crash the process on a large stdin payload EPIPE (stub tl-gh exits immediately)', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-mcp-gh-epipe-'));
+    const ghPath = join(tempDir, 'gh');
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'process.exit(0);',
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    const originalPath = process.env.PATH;
+    try {
+      process.env.PATH = `${tempDir}:${originalPath}`;
+      const tool = TOOLS.find(t => t.name === 'tl_gh_issue_create_batch');
+      const bigIssues = Array.from({ length: 5000 }, (_, i) => ({ title: `Issue ${i}`, body: 'x'.repeat(2000) }));
+      // The important assertion is that this resolves at all — without the
+      // stdin error handler, an EPIPE here is an uncaught exception that
+      // crashes the whole MCP server process, not just this call.
+      const result = await tool.handler({ repo: 'edimuj/app', issues: bigIssues });
+      assert.ok(result && Array.isArray(result.content));
+    } finally {
+      process.env.PATH = originalPath;
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('tl_run reports a missing cwd clearly instead of "spawn node ENOENT"', async () => {
