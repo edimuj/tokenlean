@@ -7,7 +7,7 @@
  */
 
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { promisify } from 'node:util';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -191,6 +191,10 @@ async function runCliWithStdin(tool, args = [], stdinData = '', { timeout = 6000
     });
     child.stderr.on('data', chunk => { stderr += chunk; });
 
+    // Large stdin payloads (e.g. create_batch) can EPIPE if the child exits
+    // before consuming them. Without a handler this is an uncaught error that
+    // crashes the whole MCP server process, not just this call.
+    child.stdin.on('error', () => {});
     child.stdin.write(stdinData, 'utf-8');
     child.stdin.end();
 
@@ -229,18 +233,57 @@ export function withCwdHint(text, opts) {
 async function dispatchTool(tool, args, opts) {
   const { stdout, stderr, ok } = await runCli(tool, args, opts);
   if (!ok && !stdout) return textResult(withCwdHint(stderr || 'Tool failed with no output', opts), true);
-  // Return stdout; append stderr as note if present and tool succeeded
+  // Return stdout; append stderr as note if present and tool succeeded. Once the
+  // tool has produced output, trust it over withCwdHint's regex — a non-zero
+  // exit can still carry structured/JSON output whose *content* happens to
+  // mention "no such file" etc., and appending the hint would corrupt or
+  // mislead on top of already-structured output.
   const text = ok && stderr ? `${stdout}\n\n[stderr: ${stderr}]` : stdout;
-  return textResult(ok ? (text || '(no output)') : withCwdHint(text || '(no output)', opts), !ok);
+  return textResult(text || '(no output)', !ok);
 }
 
 function runJobsDir() {
   return join(homedir() || '/tmp', '.cache', 'tokenlean', 'mcp-run');
 }
 
-function runJobDir(jobId) {
+export function runJobDir(jobId) {
   if (!RUN_JOB_ID_RE.test(jobId || '')) return null;
   return join(runJobsDir(), jobId);
+}
+
+// Async job dirs accumulate under ~/.cache/tokenlean/mcp-run/ forever otherwise
+// (one per tl_run async:true call). Sweep anything older than the TTL once per
+// process start instead of tracking cleanup per-job.
+const RUN_JOB_TTL_MS = 24 * 60 * 60 * 1000;
+
+function sweepStaleRunJobs() {
+  const dir = runJobsDir();
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return; // dir doesn't exist yet — nothing to sweep
+  }
+  const cutoff = Date.now() - RUN_JOB_TTL_MS;
+  for (const entry of entries) {
+    const jobDir = join(dir, entry);
+    try {
+      if (statSync(jobDir).mtimeMs < cutoff) rmSync(jobDir, { recursive: true, force: true });
+    } catch {
+      // race with another process cleaning up the same dir — ignore
+    }
+  }
+}
+sweepStaleRunJobs();
+
+function isRunJobPidAlive(pid) {
+  if (!Number.isInteger(pid)) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM'; // process exists but we can't signal it — still alive
+  }
 }
 
 function readJsonFile(file) {
@@ -253,12 +296,46 @@ function tailText(text, maxLines = 40) {
   return lines.slice(Math.max(0, lines.length - maxLines)).join('\n');
 }
 
-function runArgs({ command, type, raw, timeoutMs, diff }) {
+const MAX_RUN_RESPONSE_CHARS = 200_000; // ~50k tokens — keep megabyte outputs from blowing up the MCP response
+
+// Cap any huge stdout/stderr/output fields inside a tl-run JSON payload,
+// tail-preferred, instead of dumping megabytes into the MCP response. Operates
+// on the JSON text so it re-serializes to still-valid JSON rather than
+// truncating raw bytes mid-structure.
+export function capRunResultText(text) {
+  if (!text || text.length <= MAX_RUN_RESPONSE_CHARS) return text;
+  const tailField = (obj, key) => {
+    const value = obj?.[key];
+    if (typeof value !== 'string' || value.length <= MAX_RUN_RESPONSE_CHARS) return;
+    const dropped = value.length - MAX_RUN_RESPONSE_CHARS;
+    obj[key] = `... [${dropped} chars truncated — showing tail; use limit/maxTokens instead of raw:true for smaller output] ...\n${value.slice(-MAX_RUN_RESPONSE_CHARS)}`;
+  };
+  try {
+    const parsed = JSON.parse(text);
+    tailField(parsed, 'stdout');
+    tailField(parsed, 'stderr');
+    tailField(parsed, 'output');
+    if (parsed.result) {
+      tailField(parsed.result, 'stdout');
+      tailField(parsed.result, 'stderr');
+      tailField(parsed.result, 'output');
+    }
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    const dropped = text.length - MAX_RUN_RESPONSE_CHARS;
+    return `... [${dropped} chars truncated — showing tail] ...\n${text.slice(-MAX_RUN_RESPONSE_CHARS)}`;
+  }
+}
+
+export function runArgs({ command, type, raw, timeoutMs, diff, limit, maxTokens, noSplit }) {
   const args = [command];
   if (type) args.push('--type', type);
   if (raw) args.push('--raw');
   if (timeoutMs) args.push('--timeout', String(timeoutMs));
   if (diff) args.push('--diff');
+  if (limit != null) args.push('-l', String(limit));
+  if (maxTokens != null) args.push('-t', String(maxTokens));
+  if (noSplit) args.push('--no-split');
   args.push('-j');
   return args;
 }
@@ -272,7 +349,25 @@ function resolveAsyncWaitSeconds(waitSeconds) {
 function readRunJobStatus(jobId) {
   const dir = runJobDir(jobId);
   if (!dir || !existsSync(dir)) return null;
-  return readJsonFile(join(dir, 'status.json'));
+  const statusFile = join(dir, 'status.json');
+  const status = readJsonFile(statusFile);
+  // A "running" job always has a pid; if that process is gone (runner crashed,
+  // host rebooted, ...) the job would otherwise poll as "running" forever.
+  if (status.status === 'running' && !isRunJobPidAlive(status.pid)) {
+    const orphaned = {
+      ...status,
+      status: 'failed',
+      error: 'Job process is no longer running (orphaned) — the runner exited without recording completion.',
+      completedAt: new Date().toISOString(),
+    };
+    try {
+      const tmp = `${statusFile}.tmp`;
+      writeFileSync(tmp, `${JSON.stringify(orphaned)}\n`, 'utf-8');
+      renameSync(tmp, statusFile);
+    } catch { /* best-effort — next poll retries the liveness check */ }
+    return orphaned;
+  }
+  return status;
 }
 
 async function waitForRunJob(jobId, waitSeconds) {
@@ -326,7 +421,7 @@ async function formatRunJobPoll(jobId, { tailLines, waitSeconds } = {}) {
       ...(status.error ? { error: status.error } : {}),
     };
     const isError = status.status === 'failed' || (Number.isInteger(payload.exitCode) && payload.exitCode !== 0);
-    return textResult(JSON.stringify(payload, null, 2), isError);
+    return textResult(capRunResultText(JSON.stringify(payload, null, 2)), isError);
   }
 
   return textResult(JSON.stringify({
@@ -347,7 +442,7 @@ async function formatRunJobPoll(jobId, { tailLines, waitSeconds } = {}) {
   }, null, 2));
 }
 
-async function startRunJob({ command, type, raw, timeoutMs, diff, cwd, tailLines, waitSeconds }) {
+async function startRunJob({ command, type, raw, timeoutMs, diff, limit, maxTokens, noSplit, cwd, tailLines, waitSeconds }) {
   const cwdError = checkCwd(cwd);
   if (cwdError) return textResult(cwdError, true);
 
@@ -357,7 +452,7 @@ async function startRunJob({ command, type, raw, timeoutMs, diff, cwd, tailLines
   mkdirSync(dir, { recursive: true, mode: 0o700 });
 
   const toolPath = join(binDir, 'tl-run.mjs');
-  const args = runArgs({ command, type, raw, timeoutMs, diff });
+  const args = runArgs({ command, type, raw, timeoutMs, diff, limit, maxTokens, noSplit });
   const statusFile = join(dir, 'status.json');
   const cfg = {
     jobId,
@@ -395,13 +490,24 @@ async function dispatchToolWithStdin(tool, args, stdinData, opts) {
   const { stdout, stderr, ok } = await runCliWithStdin(tool, args, stdinData, opts);
   if (!ok && !stdout) return textResult(withCwdHint(stderr || 'Tool failed with no output', opts), true);
   const text = ok && stderr ? `${stdout}\n\n[stderr: ${stderr}]` : stdout;
-  return textResult(ok ? (text || '(no output)') : withCwdHint(text || '(no output)', opts), !ok);
+  return textResult(text || '(no output)', !ok);
 }
 
 const cwdSchema = z.string().optional().describe("Working directory for the tool. The MCP server's default cwd may NOT match your session/project/worktree (a shared/global server runs from wherever it was launched). If your file paths are relative, set this to your project root — or pass absolute paths — to avoid \"Not found\" errors.");
 
 function withCwd(schema) {
   return { ...schema, cwd: cwdSchema };
+}
+
+// The tl_gh_* tools are where vent #219 traced parameter confusion to: an
+// unknown top-level key (e.g. a stray "issue" on a tool that only wired up
+// "parent") is silently stripped by zod's default object mode, so the agent
+// never sees why its alias didn't take effect. Compose these as an actual
+// strict ZodObject (not a raw shape) so unknown keys error with their name
+// instead of vanishing. Scoped to the gh family only — the rest of TOOLS stays
+// raw-shape/non-strict; see the registerTools() note for why both work.
+function withCwdStrict(shape) {
+  return z.strictObject({ ...shape, cwd: cwdSchema });
 }
 
 // ── GitHub-MCP compatibility ─────────────────────────────────
@@ -418,19 +524,48 @@ const ghIssueNumberAlias = {
     .describe('Alias for the issue identifier, GitHub-MCP style (number or array).'),
   number: z.union([z.number(), z.array(z.number())]).optional()
     .describe('Alias for the issue identifier — the bare GitHub field name (number or array). '
-      + 'Works on every tl_gh_issue_* tool, so one identifier name covers them all.'),
+      + 'Works on every tl_gh_issue_* tool that takes an existing-issue identifier (add_sub maps it '
+      + 'to the parent) — except tl_gh_issue_create_batch, whose "issues" is an array of new-issue '
+      + 'objects to create, not identifiers.'),
 };
 
-// Combine split owner+repo into the "owner/repo" form tl-gh expects.
+const ghIssueSpecSchema = z.object({
+  title: z.string().describe('Issue title'),
+  body: z.string().optional().describe('Issue body (markdown)'),
+  labels: z.array(z.string()).optional().describe('Labels to apply'),
+  assignee: z.string().optional().describe('Assignee username'),
+  milestone: z.string().optional().describe('Milestone name'),
+});
+
+// Combine split owner+repo into the "owner/repo" form tl-gh expects, and fail
+// fast with an actionable message if the result still isn't "owner/repo" —
+// otherwise this surfaces many calls deep inside the tl-gh CLI as a cryptic
+// GraphQL/lookup failure.
 function ghResolveRepo(repo, owner) {
-  if (owner && repo && !repo.includes('/')) return `${owner}/${repo}`;
-  return repo;
+  const resolved = (owner && repo && !repo.includes('/')) ? `${owner}/${repo}` : repo;
+  if (resolved && !resolved.includes('/')) {
+    throw new Error(
+      `Invalid repo "${resolved}": expected "owner/repo". Pass the combined form, or a bare repo `
+      + 'name together with "owner" — e.g. { repo: "owner/repo" } or { repo: "repo", owner: "owner" }.'
+    );
+  }
+  return resolved;
 }
 
 // Pick the first supplied issue identifier across all accepted aliases.
 function ghPickIssues(...candidates) {
   for (const c of candidates) if (c != null) return c;
   return null;
+}
+
+// Shared validation-error builder for the tl_gh_* handlers. The vent #219
+// trace showed the two-layer problem: zod reports one missing field at a
+// time (every alias is optional), then the handler-level throw names only
+// the next missing param — so an agent guesses field-by-field instead of
+// seeing the whole shape. Every throw below prints the complete expected
+// call shape plus a literal, fillable example.
+function ghParamError(tool, instruction, expected) {
+  return new Error(`${tool}: ${instruction} Expected shape, e.g.: ${JSON.stringify(expected)}`);
 }
 
 function ghIssueReadArgs(repo, issueNum, { full, noBody, bodyLines, comments } = {}) {
@@ -507,22 +642,28 @@ export const TOOLS = [
       async: z.boolean().optional().describe('Start command in a background job and long-poll for completion under the MCP client watchdog. Use for long-running test/build gates, e.g. { command: "npm test", async: true, commandTimeoutSeconds: 600, cwd: "/repo" }.'),
       jobId: z.string().optional().describe('Poll a background tl_run job previously started with async:true, e.g. { jobId: "...", waitSeconds: 90 }. Returns running status with tails, or the completed tl_run JSON result.'),
       waitSeconds: z.number().optional().describe('For async starts or jobId polls, wait this many seconds for completion before returning running status. Default: 90, max: 110, use 0 for immediate status. Prefer long waits over frequent polling to avoid quota churn.'),
-      tailLines: z.number().optional().describe('Lines of stdout/stderr tail to include while an async job is still running (default: 40).'),
+      tailLines: z.number().optional().describe('Lines of stdout/stderr tail captured so far while an async job is still running (default: 40). Note: tl-run computes its own summarized output only once the underlying command finishes, so tails from the command itself are often sparse or empty until completion.'),
       type: z.enum(['test', 'build', 'lint', 'generic']).optional().describe('Force output type (default: auto-detect)'),
       raw: z.boolean().optional().describe('Show full output, no summarization'),
       commandTimeoutMs: z.number().optional().describe('Child command runtime timeout in milliseconds. This does not extend the MCP client request watchdog; combine with async:true for commands that may run longer than the client allows. Default: 300000ms.'),
       commandTimeoutSeconds: z.number().optional().describe('Child command runtime timeout in seconds. This does not extend the MCP client request watchdog; combine with async:true for long-running gates such as typecheck/test. Default: 300s.'),
+      timeout: z.number().optional().describe('Alias for commandTimeoutMs/commandTimeoutSeconds (legacy MCP clients). Values >= 1000 are treated as milliseconds, smaller values as seconds. Prefer commandTimeoutMs or commandTimeoutSeconds for clarity.'),
       diff: z.boolean().optional().describe('Compare against previous run of same command'),
+      limit: z.number().optional().describe('Max output lines before truncating (passed to tl-run as -l/--limit). Prefer this over raw:true for large outputs.'),
+      maxTokens: z.number().optional().describe('Approximate max output tokens before truncating (passed to tl-run as -t/--max-tokens). Prefer this over raw:true for large outputs.'),
+      noSplit: z.boolean().optional().describe('Treat a chained command (e.g. "a && b") as one blob instead of analyzing each part separately (passed to tl-run as --no-split).'),
     }),
-    handler: async ({ command, async: asyncMode, jobId, waitSeconds, tailLines, type, raw, commandTimeoutMs, commandTimeoutSeconds, timeout, diff, cwd }) => {
+    handler: async ({ command, async: asyncMode, jobId, waitSeconds, tailLines, type, raw, commandTimeoutMs, commandTimeoutSeconds, timeout, diff, limit, maxTokens, noSplit, cwd }) => {
       if (jobId) return formatRunJobPoll(jobId, { tailLines, waitSeconds });
       if (!command) return textResult('tl_run requires command, or jobId when polling an async run.', true);
       const timeoutMs = resolveRunTimeoutMs({ commandTimeoutMs, commandTimeoutSeconds, timeout });
-      if (asyncMode) return startRunJob({ command, type, raw, timeoutMs, diff, cwd, tailLines, waitSeconds });
-      const args = runArgs({ command, type, raw, timeoutMs, diff });
+      if (asyncMode) return startRunJob({ command, type, raw, timeoutMs, diff, limit, maxTokens, noSplit, cwd, tailLines, waitSeconds });
+      const args = runArgs({ command, type, raw, timeoutMs, diff, limit, maxTokens, noSplit });
       // Outer (execFile) timeout is the inner command timeout plus a margin so
       // tl-run can emit its own timeout result before we hard-kill the wrapper.
-      return dispatchTool('run', args, { timeout: (timeoutMs || DEFAULT_RUN_TIMEOUT) + 10000, cwd });
+      const result = await dispatchTool('run', args, { timeout: (timeoutMs || DEFAULT_RUN_TIMEOUT) + 10000, cwd });
+      if (result.content?.[0]?.text) result.content[0].text = capRunResultText(result.content[0].text);
+      return result;
     },
   },
   {
@@ -673,6 +814,13 @@ export const TOOLS = [
       full: z.boolean().optional().describe('Include fuller underlying tool output where useful'),
     }),
     handler: async ({ pack, target, command, budget, full, cwd }) => {
+      if (pack === 'debug' && target && command) {
+        throw new Error(
+          'tl_pack: provide either "command" (to execute) or "target" (to keep as context), not both — '
+          + 'the tl-pack CLI takes a single positional argument for debug packs. '
+          + 'Expected: { pack: "debug", command: "npm test" } or { pack: "debug", target: "some context note" }.'
+        );
+      }
       const args = [pack];
       const effectiveTarget = pack === 'debug' && command ? command : target;
       if (effectiveTarget) args.push(effectiveTarget);
@@ -762,11 +910,12 @@ export const TOOLS = [
 
   {
     name: 'tl_gh_issue_read',
-    description: 'Read a GitHub issue with its direct sub-issues, labels, assignees, comment count, and optionally bodies. Pass comments:true to include comment bodies — use this instead of "gh issue view --comments", which prints nothing on a zero-comment issue.',
-    schema: withCwd({
+    description: 'Read a GitHub issue with its direct sub-issues, labels, assignees, comment count, and optionally bodies. Pass comments:true to include comment bodies — use this instead of "gh issue view --comments", which prints nothing on a zero-comment issue. "issue" accepts a single number or an array for batch reads.',
+    schema: withCwdStrict({
       repo: z.string().describe('Target repository (owner/repo, or bare name with "owner")'),
       ...ghOwnerAlias,
-      issue: z.number().optional().describe('Issue number to read'),
+      issue: z.union([z.number(), z.array(z.number())]).optional()
+        .describe('Issue number(s) to read — single number or array for batch reads.'),
       ...ghIssueNumberAlias,
       full: z.boolean().optional().describe('Show complete bodies instead of truncating'),
       noBody: z.boolean().optional().describe('Omit issue bodies for compact output'),
@@ -776,7 +925,10 @@ export const TOOLS = [
     handler: async ({ repo, owner, issue, issue_number, number, full, noBody, bodyLines, comments, cwd }) => {
       repo = ghResolveRepo(repo, owner);
       const raw = ghPickIssues(issue, issue_number, number);
-      if (raw == null) throw new Error('tl_gh_issue_read: provide "issue" (or "issue_number" / "number").');
+      if (raw == null) {
+        throw ghParamError('tl_gh_issue_read', 'provide "issue" (or "issue_number" / "number").',
+          { repo: 'owner/repo', issue: 123 });
+      }
       const issueNums = Array.isArray(raw) ? raw : [raw];
       if (issueNums.length === 1) {
         return dispatchTool('gh', ghIssueReadArgs(repo, issueNums[0], { full, noBody, bodyLines, comments }), { timeout: 120000, cwd });
@@ -790,7 +942,7 @@ export const TOOLS = [
           results.push({
             number: issueNum,
             status: 'failed',
-            error: withCwdHint(r.stderr || r.stdout || 'Tool failed with no output', { cwd }),
+            error: r.stdout || withCwdHint(r.stderr || 'Tool failed with no output', { cwd }),
           });
           continue;
         }
@@ -819,40 +971,60 @@ export const TOOLS = [
   },
   {
     name: 'tl_gh_issue_add_sub',
-    description: 'Link existing issues as sub-issues of a parent issue via GitHub GraphQL.',
-    schema: withCwd({
+    description: 'Link existing issues as sub-issues of a parent issue via GitHub GraphQL. '
+      + 'Example: { repo: "owner/repo", parent: 123, children: [124, 125] }.',
+    schema: withCwdStrict({
       repo: z.string().describe('Target repository (owner/repo, or bare name with "owner")'),
       ...ghOwnerAlias,
-      parent: z.number().optional().describe('Parent issue number (alias: number / issue_number)'),
+      parent: z.number().optional().describe('Parent issue number. Aliases: issue, number, issue_number.'),
+      issue: z.number().optional().describe('Alias for "parent" — the issue number acting as the sub-issue parent.'),
       ...ghIssueNumberAlias,
-      children: z.array(z.number()).describe('Child issue numbers to link as sub-issues'),
+      children: z.array(z.number()).optional().describe(
+        'Child issue numbers to link as sub-issues. Aliases: sub, sub_issues, subIssues. '
+        + 'Example: { repo: "owner/repo", parent: 123, children: [124, 125] }.'
+      ),
+      sub: z.array(z.number()).optional().describe('Alias for "children".'),
+      sub_issues: z.array(z.number()).optional().describe('Alias for "children".'),
+      subIssues: z.array(z.number()).optional().describe('Alias for "children".'),
     }),
-    handler: async ({ repo, owner, parent, issue_number, number, children, cwd }) => {
+    handler: async ({ repo, owner, parent, issue, issue_number, number, children, sub, sub_issues, subIssues, cwd }) => {
       repo = ghResolveRepo(repo, owner);
-      // Accept the same parent identifier under parent / number / issue_number so
-      // one identifier name works across every tl_gh_issue_* tool (vent #114 class).
-      const rawParent = ghPickIssues(parent, issue_number, number);
+      // Accept the same parent identifier under parent / issue / number / issue_number
+      // so one identifier name works across every tl_gh_issue_* tool (vent #114/#219 class).
+      const rawParent = ghPickIssues(parent, issue, issue_number, number);
       const parentNum = Array.isArray(rawParent) ? rawParent[0] : rawParent;
-      if (parentNum == null) throw new Error('tl_gh_issue_add_sub: provide "parent" (or "number" / "issue_number").');
-      const args = ['issue', 'add-sub', '-R', repo, '--parent', String(parentNum), ...children.map(String), '-j'];
+      const rawChildren = ghPickIssues(children, sub, sub_issues, subIssues);
+      if (parentNum == null) {
+        throw ghParamError('tl_gh_issue_add_sub', 'provide "parent" (or "issue" / "number" / "issue_number").',
+          { repo: 'owner/repo', parent: 123, children: [124, 125] });
+      }
+      if (!rawChildren || !rawChildren.length) {
+        throw ghParamError('tl_gh_issue_add_sub', 'provide "children" (or "sub" / "sub_issues" / "subIssues").',
+          { repo: 'owner/repo', parent: 123, children: [124, 125] });
+      }
+      const args = ['issue', 'add-sub', '-R', repo, '--parent', String(parentNum), ...rawChildren.map(String), '-j'];
       return dispatchTool('gh', args, { timeout: 120000, cwd });
     },
   },
   {
     name: 'tl_gh_issue_close',
     description: 'Close one or more GitHub issues with optional comment and close reason.',
-    schema: withCwd({
+    schema: withCwdStrict({
       repo: z.string().describe('Target repository (owner/repo, or bare name with "owner")'),
       ...ghOwnerAlias,
       issues: z.union([z.number(), z.array(z.number())]).optional().describe('Issue number or issue numbers to close'),
       ...ghIssueNumberAlias,
       comment: z.string().optional().describe('Comment to add when closing'),
-      reason: z.enum(['completed', 'not planned']).optional().describe('Close reason (default: completed)'),
+      reason: z.enum(['completed', 'not planned', 'not_planned']).optional()
+        .describe('Close reason: "completed" or "not planned" (also accepts "not_planned", the GitHub-MCP convention). Default: completed.'),
     }),
     handler: async ({ repo, owner, issues, issue_number, number, comment, reason, cwd }) => {
       repo = ghResolveRepo(repo, owner);
       const raw = ghPickIssues(issues, issue_number, number);
-      if (raw == null) throw new Error('tl_gh_issue_close: provide "issues" (or "issue_number" / "number").');
+      if (raw == null) {
+        throw ghParamError('tl_gh_issue_close', 'provide "issues" (or "issue_number" / "number").',
+          { repo: 'owner/repo', issues: 123 });
+      }
       const issueList = Array.isArray(raw) ? raw : [raw];
       const args = ['issue', 'close', '-R', repo, ...issueList.map(String)];
       if (comment) args.push('-c', comment);
@@ -864,19 +1036,23 @@ export const TOOLS = [
   {
     name: 'tl_gh_issue_close_batch',
     description: 'Close multiple issues at once with optional comment and reason. Alias-compatible with tl_gh_issue_close.',
-    schema: withCwd({
+    schema: withCwdStrict({
       repo: z.string().describe('Target repository (owner/repo, or bare name with "owner")'),
       ...ghOwnerAlias,
       issues: z.array(z.number()).optional().describe('Issue numbers to close'),
       ...ghIssueNumberAlias,
       comment: z.string().optional().describe('Comment to add when closing'),
-      reason: z.enum(['completed', 'not planned']).optional().describe('Close reason (default: completed)'),
+      reason: z.enum(['completed', 'not planned', 'not_planned']).optional()
+        .describe('Close reason: "completed" or "not planned" (also accepts "not_planned", the GitHub-MCP convention). Default: completed.'),
     }),
     handler: async ({ repo, owner, issues, issue_number, number, comment, reason, cwd }) => {
       repo = ghResolveRepo(repo, owner);
       const raw = ghPickIssues(issues, issue_number, number);
       const issueList = Array.isArray(raw) ? raw : (raw == null ? [] : [raw]);
-      if (!issueList.length) throw new Error('tl_gh_issue_close_batch: provide "issues" (or "issue_number" / "number").');
+      if (!issueList.length) {
+        throw ghParamError('tl_gh_issue_close_batch', 'provide "issues" (or "issue_number" / "number").',
+          { repo: 'owner/repo', issues: [123, 124] });
+      }
       const args = ['issue', 'close-batch', '-R', repo, ...issueList.map(String)];
       if (comment) args.push('-c', comment);
       if (reason) args.push('--reason', reason);
@@ -889,7 +1065,7 @@ export const TOOLS = [
     description: 'Add and/or remove the SAME labels across multiple issues at once. '
       + 'For different labels per issue, call this once per label set. '
       + 'Labels may be a comma-separated string ("P2,bug") or an array (["P2","bug"]).',
-    schema: withCwd({
+    schema: withCwdStrict({
       repo: z.string().describe('Target repository (owner/repo, or bare name with "owner")'),
       ...ghOwnerAlias,
       issues: z.array(z.number()).optional().describe('Issue numbers to update (same labels applied to all)'),
@@ -907,12 +1083,16 @@ export const TOOLS = [
       repo = ghResolveRepo(repo, owner);
       const rawIssues = ghPickIssues(issues, issue_number, number);
       const issueList = Array.isArray(rawIssues) ? rawIssues : (rawIssues == null ? [] : [rawIssues]);
-      if (!issueList.length) throw new Error('tl_gh_issue_label_batch: provide "issues" (or "issue_number" / "number").');
+      if (!issueList.length) {
+        throw ghParamError('tl_gh_issue_label_batch', 'provide "issues" (or "issue_number" / "number").',
+          { repo: 'owner/repo', issues: [123, 124], add: 'bug' });
+      }
       const toCsv = (v) => (Array.isArray(v) ? v.join(',') : v) || '';
       const addCsv = toCsv(add ?? addLabels);
       const removeCsv = toCsv(remove ?? removeLabels);
       if (!addCsv && !removeCsv) {
-        throw new Error('tl_gh_issue_label_batch: provide at least one of "add" / "remove" (comma-separated string or array of labels).');
+        throw ghParamError('tl_gh_issue_label_batch', 'provide at least one of "add" / "remove" (comma-separated string or array of labels).',
+          { repo: 'owner/repo', issues: [123], add: 'bug', remove: 'wontfix' });
       }
       const args = ['issue', 'label-batch', '-R', repo, ...issueList.map(String)];
       if (addCsv) args.push('--add', addCsv);
@@ -924,7 +1104,7 @@ export const TOOLS = [
   {
     name: 'tl_gh_project_add_batch',
     description: 'Add existing issues to a GitHub ProjectV2 board in bulk.',
-    schema: withCwd({
+    schema: withCwdStrict({
       repo: z.string().describe('Target repository (owner/repo, or bare name with "owner")'),
       ...ghOwnerAlias,
       project: z.string().describe('Project identifier (owner/number, e.g. "edimuj/1")'),
@@ -935,32 +1115,38 @@ export const TOOLS = [
       repo = ghResolveRepo(repo, owner);
       const raw = ghPickIssues(issues, issue_number, number);
       const issueList = Array.isArray(raw) ? raw : (raw == null ? [] : [raw]);
-      if (!issueList.length) throw new Error('tl_gh_project_add_batch: provide "issues" (or "issue_number" / "number").');
+      if (!issueList.length) {
+        throw ghParamError('tl_gh_project_add_batch', 'provide "issues" (or "issue_number" / "number").',
+          { repo: 'owner/repo', project: 'owner/1', issues: [123, 124] });
+      }
       const args = ['project', 'add-batch', '-R', repo, '--project', project, ...issueList.map(String), '-j'];
       return dispatchTool('gh', args, { timeout: 120000, cwd });
     },
   },
   {
     name: 'tl_gh_issue_create_batch',
-    description: 'Create multiple issues from a JSON array. Each object: { title, body?, labels?, assignee?, milestone? }.',
-    schema: withCwd({
+    description: 'Create multiple issues from a JSON array. Each object: { title, body?, labels?, assignee?, milestone? }. '
+      + 'Note: unlike other tl_gh_issue_* tools, "issues" here is an array of NEW issue objects to create, not '
+      + 'identifiers of existing issues. Aliases: specs, newIssues.',
+    schema: withCwdStrict({
       repo: z.string().describe('Target repository (owner/repo, or bare name with "owner")'),
       ...ghOwnerAlias,
-      issues: z.array(z.object({
-        title: z.string().describe('Issue title'),
-        body: z.string().optional().describe('Issue body (markdown)'),
-        labels: z.array(z.string()).optional().describe('Labels to apply'),
-        assignee: z.string().optional().describe('Assignee username'),
-        milestone: z.string().optional().describe('Milestone name'),
-      })).describe('Array of issue objects to create'),
+      issues: z.array(ghIssueSpecSchema).optional().describe('Array of issue objects to create. Aliases: specs, newIssues.'),
+      specs: z.array(ghIssueSpecSchema).optional().describe('Alias for "issues".'),
+      newIssues: z.array(ghIssueSpecSchema).optional().describe('Alias for "issues".'),
       project: z.string().optional().describe('Add created issues to project (owner/number, e.g. "edimuj/1")'),
     }),
-    handler: async ({ repo, owner, issues, project, cwd }) => {
+    handler: async ({ repo, owner, issues, specs, newIssues, project, cwd }) => {
       repo = ghResolveRepo(repo, owner);
+      const issueSpecs = issues ?? specs ?? newIssues;
+      if (!issueSpecs || !issueSpecs.length) {
+        throw ghParamError('tl_gh_issue_create_batch', 'provide "issues" (or "specs" / "newIssues") — an array of issue objects to create.',
+          { repo: 'owner/repo', issues: [{ title: 'Bug: crash on save' }, { title: 'Feature: dark mode' }] });
+      }
       const args = ['issue', 'create-batch', '-R', repo];
       if (project) args.push('--project', project);
       args.push('-j');
-      return dispatchToolWithStdin('gh', args, JSON.stringify(issues), { timeout: 120000, cwd });
+      return dispatchToolWithStdin('gh', args, JSON.stringify(issueSpecs), { timeout: 120000, cwd });
     },
   },
 ];
@@ -971,6 +1157,11 @@ export const TOOLS = [
 
 export function registerTools(server) {
   for (const tool of TOOLS) {
-    server.tool(tool.name, tool.description, tool.schema, tool.handler);
+    // registerTool()'s config form accepts either a raw shape (most tools) or
+    // an actual Zod schema instance (the strict tl_gh_* schemas) as
+    // inputSchema — the legacy server.tool(name, description, schema, cb)
+    // argument-sniffing form only recognizes raw shapes, so a real ZodObject
+    // there gets misread as an annotations object.
+    server.registerTool(tool.name, { description: tool.description, inputSchema: tool.schema }, tool.handler);
   }
 }
