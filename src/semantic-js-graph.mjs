@@ -77,9 +77,22 @@ function getGraphCacheFile(projectRoot) {
 }
 
 function getProjectCompilerConfig(projectRoot) {
+  // Intentionally bounded to projectRoot itself — do NOT use ts.findConfigFile,
+  // which walks upward to the filesystem root. When the analyzed file lives
+  // outside any real repo (no package.json/.git found), projectRoot falls back
+  // to the file's own directory, and an unbounded upward walk can pick up an
+  // unrelated tsconfig.json far above it (e.g. under /tmp). TypeScript then
+  // expands that config's default `include` via a full recursive directory
+  // scan rooted at the config's own directory, which can hang for minutes on
+  // large/unrelated trees. Every real project's tsconfig/jsconfig lives next
+  // to the package.json/.git marker that defines projectRoot, so restricting
+  // the lookup to projectRoot itself is safe and avoids the runaway scan.
+  const tsconfigPath = join(projectRoot, 'tsconfig.json');
+  const jsconfigPath = join(projectRoot, 'jsconfig.json');
   const configPath =
-    ts.findConfigFile(projectRoot, ts.sys.fileExists, 'tsconfig.json') ||
-    ts.findConfigFile(projectRoot, ts.sys.fileExists, 'jsconfig.json');
+    (ts.sys.fileExists(tsconfigPath) && tsconfigPath) ||
+    (ts.sys.fileExists(jsconfigPath) && jsconfigPath) ||
+    undefined;
 
   let configKey = 'default';
   if (configPath) {
