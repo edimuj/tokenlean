@@ -266,6 +266,10 @@ if (totalEntries === 0) {
   out.add('\n  No entry points found.');
 }
 
+out.setData('path', searchPath);
+out.setData('entryPoints', results);
+out.setData('totalEntries', totalEntries);
+
 out.add('');
 out.stats(`Found ${totalEntries} entry points`);
 out.add('');

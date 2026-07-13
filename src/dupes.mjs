@@ -57,6 +57,37 @@ const NOT_A_METHOD = new Set([
 ]);
 
 const hash = s => createHash('sha1').update(s).digest('hex').slice(0, 12);
+const MAX_BODY_FEATURES = 20_000;
+const bodyFeatureCache = new Map();
+
+function getBodyFeatures(body, fam) {
+  let byFamily = bodyFeatureCache.get(body);
+  if (byFamily?.has(fam)) {
+    // Refresh the body-level LRU entry.
+    bodyFeatureCache.delete(body);
+    bodyFeatureCache.set(body, byFamily);
+    return byFamily.get(fam);
+  }
+
+  const norm = normalizeBody(body, fam);
+  const structural = structuralBody(body, fam);
+  const features = {
+    norm,
+    normHash: hash(norm),
+    structural,
+    structHash: hash(structural),
+    tok: tokenCount(body, fam),
+    shingleSet: null,
+  };
+  if (!byFamily) byFamily = new Map();
+  byFamily.set(fam, features);
+  bodyFeatureCache.delete(body);
+  bodyFeatureCache.set(body, byFamily);
+  while (bodyFeatureCache.size > MAX_BODY_FEATURES) {
+    bodyFeatureCache.delete(bodyFeatureCache.keys().next().value);
+  }
+  return features;
+}
 
 // ── Brace matching (string/comment aware) ──────────────────────
 // Find the index of the } matching the { at `open` in `src`.
@@ -102,14 +133,30 @@ const BRACE_STARTERS = [
   /^[ \t]*(?:(?:public|private|protected|static|async|readonly|override|final|get|set|\*)\s+)*([A-Za-z_$][\w$]*)\s*\([^{};]*?\)\s*(?::\s*[^{};=]+?)?\{/gm,
 ];
 
-function lineOf(src, idx) {
-  let line = 1;
-  for (let i = 0; i < idx && i < src.length; i++) if (src[i] === '\n') line++;
-  return line;
+function buildLineStarts(src) {
+  const starts = [0];
+  for (let i = 0; i < src.length; i++) {
+    if (src.charCodeAt(i) === 10) starts.push(i + 1);
+  }
+  return starts;
+}
+
+function lineOf(lineStarts, idx) {
+  // Number of line starts at or before idx, found in O(log lines) instead of
+  // rescanning from the beginning for every function start and end.
+  let lo = 0;
+  let hi = lineStarts.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (lineStarts[mid] <= idx) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
 }
 
 function extractBrace(src) {
   const byStart = new Map(); // body-open index → fn (dedupe across patterns)
+  const lineStarts = buildLineStarts(src);
   for (const re of BRACE_STARTERS) {
     re.lastIndex = 0;
     let m;
@@ -124,8 +171,8 @@ function extractBrace(src) {
       byStart.set(braceIdx, {
         name,
         signature,
-        line: lineOf(src, m.index + (m[0].startsWith('\n') ? 1 : 0)),
-        endLine: lineOf(src, end),
+        line: lineOf(lineStarts, m.index + (m[0].startsWith('\n') ? 1 : 0)),
+        endLine: lineOf(lineStarts, end),
         body: src.slice(braceIdx + 1, end)
       });
     }
@@ -240,15 +287,18 @@ function groupBy(items, keyFn) {
 export function findDuplicates(functions, opts = {}) {
   const { minTokens = 12, names = true, structural = true, near = 0 } = opts;
 
-  // Enrich
-  for (const f of functions) {
-    f.fam = langFamily(f.lang);
-    f.norm = normalizeBody(f.body, f.fam);
-    f.normHash = hash(f.norm);
-    f.structHash = hash(structuralBody(f.body, f.fam));
-    f.tok = tokenCount(f.body, f.fam);
-  }
-  const meaty = functions.filter(f => f.tok >= minTokens);
+  // Enrich copies rather than mutating the shared in-process function index.
+  const enriched = functions.map((fn) => {
+    const fam = langFamily(fn.lang);
+    const features = getBodyFeatures(fn.body, fam);
+    return {
+      ...fn,
+      fam,
+      ...features,
+      _features: features,
+    };
+  });
+  const meaty = enriched.filter(f => f.tok >= minTokens);
 
   const fmt = g => g.map(f => ({ name: f.name, file: f.file, line: f.line }));
 
@@ -273,30 +323,57 @@ export function findDuplicates(functions, opts = {}) {
       ...exact.flatMap(g => g.members.map(m => `${m.file}:${m.line}`)),
       ...structuralGroups.flatMap(g => g.members.map(m => `${m.file}:${m.line}`)),
     ]);
-    const cand = meaty.filter(f => !seen.has(`${f.file}:${f.line}`));
-    for (const f of cand) f._sh = shingles(structuralBody(f.body, f.fam));
+    const cand = meaty
+      .filter(f => !seen.has(`${f.file}:${f.line}`))
+      .map((f) => {
+        f._features.shingleSet ||= shingles(f.structural);
+        return { ...f, shingleSet: f._features.shingleSet };
+      });
     cand.sort((a, b) => a.tok - b.tok);
-    for (let i = 0; i < cand.length; i++) {
-      for (let j = i + 1; j < cand.length; j++) {
-        if (cand[j].tok > cand[i].tok * 1.25) break; // token-band prefilter
-        if (overlaps(cand[i], cand[j])) continue;     // skip nested (parent ⊇ child)
-        const sim = jaccard(cand[i]._sh, cand[j]._sh);
+    const postings = new Map();
+    for (let j = 0; j < cand.length; j++) {
+      const current = cand[j];
+      const sharedCounts = new Map();
+      for (const shingle of current.shingleSet) {
+        const prior = postings.get(shingle);
+        if (prior) {
+          for (const i of prior) sharedCounts.set(i, (sharedCounts.get(i) || 0) + 1);
+        } else {
+          postings.set(shingle, []);
+        }
+        postings.get(shingle).push(j);
+      }
+
+      // Only functions sharing a shingle can have positive Jaccard similarity.
+      // Sorting restores the previous deterministic pair order for equal scores.
+      for (const i of [...sharedCounts.keys()].sort((a, b) => a - b)) {
+        const candidate = cand[i];
+        if (current.tok > candidate.tok * 1.25) continue; // token-band prefilter
+        if (overlaps(candidate, current)) continue;       // skip nested (parent ⊇ child)
+        const requiredIntersection = Math.ceil(
+          near * (candidate.shingleSet.size + current.shingleSet.size) / (1 + near)
+        );
+        if (sharedCounts.get(i) < requiredIntersection) continue;
+        const sim = jaccard(candidate.shingleSet, current.shingleSet);
         if (sim >= near) {
           nearPairs.push({
+            _i: i,
+            _j: j,
             similarity: Math.round(sim * 100) / 100,
-            tokens: cand[i].tok,
-            members: fmt([cand[i], cand[j]]),
+            tokens: candidate.tok,
+            members: fmt([candidate, current]),
           });
         }
       }
     }
-    nearPairs.sort((a, b) => b.similarity - a.similarity);
+    nearPairs.sort((a, b) => b.similarity - a.similarity || a._i - b._i || a._j - b._j);
+    nearPairs = nearPairs.map(({ _i, _j, ...pair }) => pair);
   }
 
   // Names: same name in ≥2 places (awareness); skip intentional per-file names.
   let nameGroups = [];
   if (names) {
-    nameGroups = groupBy(functions, f => f.name)
+    nameGroups = groupBy(enriched, f => f.name)
       .filter(g => !IGNORE_NAMES.has(g[0].name))
       .map(g => ({
         name: g[0].name,
@@ -313,6 +390,6 @@ export function findDuplicates(functions, opts = {}) {
     near: nearPairs,
     names: nameGroups,
     scanned: meaty.length,
-    total: functions.length,
+    total: enriched.length,
   };
 }

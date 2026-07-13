@@ -75,10 +75,22 @@ async function runSubToolAsync(toolName, filePath) {
       maxBuffer: 5 * 1024 * 1024,
       timeout: 15000
     });
-    return JSON.parse(stdout);
-  } catch {
-    return null;
+    try {
+      return { status: 'success', data: JSON.parse(stdout) };
+    } catch (err) {
+      return { status: 'error', error: `Invalid ${toolName} JSON: ${err.message}` };
+    }
+  } catch (err) {
+    const stderr = String(err?.stderr || '').trim();
+    const message = stderr || (err?.killed
+      ? `${toolName} timed out after 15000ms`
+      : err?.message || String(err));
+    return { status: 'error', error: message };
   }
+}
+
+function skippedSection() {
+  return Promise.resolve({ status: 'skipped' });
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -343,13 +355,30 @@ const out = createOutput(options);
 
 // Run sub-tools concurrently and extract highlights.
 // Promise.all preserves index order so destructuring is deterministic.
-const [symbolsData, depsData, impactData, complexityData, relatedData] = await Promise.all([
-  !skipSymbols   ? runSubToolAsync('symbols',    filePath) : null,
-  !skipDeps      ? runSubToolAsync('deps',       filePath) : null,
-  !skipImpact    ? runSubToolAsync('impact',     filePath) : null,
-  !skipComplexity ? runSubToolAsync('complexity', filePath) : null,
-  !skipRelated   ? runSubToolAsync('related',    filePath) : null,
+const [symbolsRun, depsRun, impactRun, complexityRun, relatedRun] = await Promise.all([
+  !skipSymbols    ? runSubToolAsync('symbols',    filePath) : skippedSection(),
+  !skipDeps       ? runSubToolAsync('deps',       filePath) : skippedSection(),
+  !skipImpact     ? runSubToolAsync('impact',     filePath) : skippedSection(),
+  !skipComplexity ? runSubToolAsync('complexity', filePath) : skippedSection(),
+  !skipRelated    ? runSubToolAsync('related',    filePath) : skippedSection(),
 ]);
+
+const sectionRuns = {
+  symbols: symbolsRun,
+  deps: depsRun,
+  impact: impactRun,
+  complexity: complexityRun,
+  related: relatedRun,
+};
+const symbolsData = symbolsRun.data || null;
+const depsData = depsRun.data || null;
+const impactData = impactRun.data || null;
+const complexityData = complexityRun.data || null;
+const relatedData = relatedRun.data || null;
+const failedSections = Object.entries(sectionRuns)
+  .filter(([, run]) => run.status === 'error')
+  .map(([name, run]) => ({ name, error: run.error }));
+const partialFailure = failedSections.length > 0;
 
 const symbols = extractSymbols(symbolsData, full);
 const deps = extractDeps(depsData, full);
@@ -364,19 +393,54 @@ const exportStr = exportCount ? `, ${exportCount} exports` : '';
 // Set JSON data
 out.setData('file', relPath);
 out.setData('tokens', tokens);
+out.setData('sections', Object.fromEntries(
+  Object.entries(sectionRuns).map(([name, run]) => [name, {
+    status: run.status,
+    ...(run.status === 'error' ? { error: run.error } : {}),
+  }])
+));
+out.setData('partial', partialFailure);
+out.setData('partialFailure', partialFailure);
+if (partialFailure) out.setData('errors', failedSections);
 if (symbols) out.setData('symbols', symbolsData?.symbols || {});
 if (deps) out.setData('deps', depsData?.imports || {});
-if (impact) out.setData('impact', impactData?.importers || {});
+// Keep the established result shapes while preserving the small metadata that
+// composite callers need to render these sections without launching them again.
+if (impact) {
+  out.setData('impact', impactData?.importers || {});
+  out.setData('impactSummary', {
+    totalFiles: impactData?.totalFiles || 0,
+    totalTokens: impactData?.totalTokens || 0,
+    backend: impactData?.backend || null,
+  });
+}
 if (complexity) out.setData('complexity', complexityData?.functions || []);
-if (related) out.setData('related', {
-  tests: relatedData?.tests || [],
-  importers: relatedData?.importers || [],
-  siblings: relatedData?.siblings || []
-});
+if (related) {
+  out.setData('related', {
+    tests: relatedData?.tests || [],
+    types: relatedData?.types || [],
+    importers: relatedData?.importers || [],
+    siblings: relatedData?.siblings || []
+  });
+  out.setData('relatedSummary', {
+    totalFiles: relatedData?.totalFiles || 0,
+    totalTokens: relatedData?.totalTokens || 0,
+    totalImporters: relatedData?.totalImporters || 0,
+    backend: relatedData?.backend || null,
+  });
+}
 
 // Build text output
 out.header(`\n\ud83d\udccb ${relPath} (~${formatTokens(tokens)} tokens${exportStr})`);
 out.blank();
+
+if (partialFailure) {
+  out.add(`  Partial analysis: ${failedSections.length} section(s) failed`);
+  for (const failure of failedSections) {
+    out.add(`    ${failure.name}: ${failure.error}`);
+  }
+  out.blank();
+}
 
 if (symbols) formatSymbolsSection(out, symbols);
 if (deps) formatDepsSection(out, deps);

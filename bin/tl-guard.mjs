@@ -127,6 +127,18 @@ function limitDetails(result) {
 // Sub-tool Runner (tl-analyze pattern)
 // ─────────────────────────────────────────────────────────────
 
+function checkError(message) {
+  return { status: 'error', count: 0, details: [], error: message };
+}
+
+function processFailure(toolName, proc) {
+  const stderr = String(proc.stderr || '').trim();
+  const reason = proc.error?.code ||
+    (proc.status !== null ? `exit ${proc.status}` : proc.signal ? `signal ${proc.signal}` : 'unknown failure');
+  const detail = stderr || proc.error?.message || String(proc.stdout || '').trim();
+  return `${toolName} could not run (${reason})${detail ? `: ${detail}` : ''}`;
+}
+
 function runSubTool(toolName, args = []) {
   const toolPath = join(__dirname, `tl-${toolName}.mjs`);
   const proc = spawnSync(process.execPath, [toolPath, ...args, '--json'], {
@@ -136,19 +148,32 @@ function runSubTool(toolName, args = []) {
     stdio: ['pipe', 'pipe', 'pipe']
   });
   // tl-secrets exits 1 on high-severity findings but still produces valid JSON
-  if (proc.error || (proc.status !== 0 && !proc.stdout)) return null;
-  try { return JSON.parse(proc.stdout); } catch { return null; }
+  if (proc.error || !proc.stdout) {
+    return { ok: false, error: processFailure(`tl-${toolName}`, proc) };
+  }
+  try {
+    return { ok: true, data: JSON.parse(proc.stdout) };
+  } catch {
+    return { ok: false, error: processFailure(`tl-${toolName}`, proc) };
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
 // Check 1: Secrets in staged files
 // ─────────────────────────────────────────────────────────────
 
-function checkSecrets() {
-  const data = runSubTool('secrets', ['--staged']);
-  if (!data) {
-    return { status: 'pass', count: 0, details: [], note: 'no staged files or tool unavailable' };
+function checkSecrets(stagedFiles, gitApplicable, hasGitStagedList) {
+  if (!gitApplicable) {
+    return { status: 'pass', count: 0, details: [], note: 'not applicable outside a git repository' };
   }
+  if (!hasGitStagedList) return checkError('Secrets check could not read the staged file list from git');
+  if (stagedFiles.length === 0) {
+    return { status: 'pass', count: 0, details: [], note: 'no staged files' };
+  }
+
+  const result = runSubTool('secrets', ['--staged']);
+  if (!result.ok) return checkError(result.error);
+  const data = result.data;
 
   const findings = data.findings || [];
   if (findings.length === 0) {
@@ -172,9 +197,13 @@ function checkSecrets() {
 // Check 2: New TODOs/FIXMEs in staged diff
 // ─────────────────────────────────────────────────────────────
 
-function checkTodos() {
-  const diff = gitCommand(['diff', '--cached', '-U0']);
-  if (diff === null || diff === '') {
+function checkTodos(projectRoot, gitApplicable) {
+  if (!gitApplicable) {
+    return { status: 'pass', count: 0, details: [], note: 'not applicable outside a git repository' };
+  }
+  const diff = gitCommand(['diff', '--cached', '-U0'], { cwd: projectRoot });
+  if (diff === null) return checkError('TODO check could not read the staged diff from git');
+  if (diff === '') {
     return { status: 'pass', count: 0, details: [], note: 'no staged changes' };
   }
 
@@ -251,10 +280,9 @@ function checkUnused(projectRoot, stagedFiles, hasGitStagedList) {
     args.push('--target', file);
   }
 
-  const data = runSubTool('unused', args);
-  if (!data) {
-    return { status: 'pass', count: 0, details: [], note: 'tool unavailable' };
-  }
+  const result = runSubTool('unused', args);
+  if (!result.ok) return checkError(result.error);
+  const data = result.data;
 
   const unused = data.unusedExports || [];
   const suppressed = (data.suppressedExports || []).length;
@@ -475,10 +503,13 @@ const BINARY_EXTENSIONS = new Set([
 
 const MAX_SCAN_BYTES = 5 * 1024 * 1024; // skip files larger than this
 
-function checkControlBytes(projectRoot) {
+function checkControlBytes(projectRoot, gitApplicable) {
+  if (!gitApplicable) {
+    return { status: 'pass', count: 0, details: [], note: 'not applicable outside a git repository' };
+  }
   const tracked = gitCommand(['ls-files'], { cwd: projectRoot });
   if (tracked === null) {
-    return { status: 'pass', count: 0, details: [], note: 'not a git repo or no tracked files' };
+    return checkError('Control-byte check could not list tracked files from git');
   }
   const files = tracked.split('\n').filter(Boolean);
   if (files.length === 0) {
@@ -486,6 +517,7 @@ function checkControlBytes(projectRoot) {
   }
 
   const findings = [];
+  const readErrors = [];
   for (const rel of files) {
     if (BINARY_EXTENSIONS.has(extname(rel).toLowerCase())) continue;
 
@@ -493,8 +525,11 @@ function checkControlBytes(projectRoot) {
     let buf;
     try {
       buf = readFileSync(absPath);
-    } catch {
-      continue; // deleted/staged-removed or unreadable
+    } catch (err) {
+      // A deleted/staged-removed path is expected. An existing unreadable file
+      // means this enabled check was incomplete and must not report a pass.
+      if (existsSync(absPath)) readErrors.push(`${rel}: ${err.code || err.message}`);
+      continue;
     }
     if (buf.length === 0 || buf.length > MAX_SCAN_BYTES) continue;
 
@@ -517,6 +552,10 @@ function checkControlBytes(projectRoot) {
 
     const firstByte = buf[firstOffset];
     findings.push({ file: rel, offset: firstOffset, byte: firstByte, name: byteName(firstByte) });
+  }
+
+  if (readErrors.length > 0) {
+    return checkError(`Control-byte check could not read ${readErrors.length} tracked file(s): ${readErrors.slice(0, 3).join('; ')}`);
   }
 
   if (findings.length === 0) {
@@ -573,38 +612,54 @@ function autoFix(projectRoot, stagedFiles) {
 const projectRoot = findProjectRoot();
 
 // Get staged file count for display
-const stagedRaw = gitCommand(['diff', '--cached', '--name-only'], { cwd: projectRoot });
+const gitTopLevel = gitCommand(['rev-parse', '--show-toplevel'], { cwd: projectRoot });
+// A .git marker means this check is expected to work even when the git process
+// itself failed (missing binary, permission issue, corrupt repository). With no
+// marker and no rev-parse result, Git-only checks are simply not applicable.
+const gitApplicable = gitTopLevel !== null || existsSync(join(projectRoot, '.git'));
+const stagedRaw = gitApplicable
+  ? gitCommand(['diff', '--cached', '--name-only'], { cwd: projectRoot })
+  : null;
 const stagedFiles = stagedRaw ? stagedRaw.split('\n').filter(Boolean) : [];
 
 // Run enabled checks
 const checks = {};
 
+function runEnabledCheck(fn) {
+  try {
+    return limitDetails(fn());
+  } catch (err) {
+    return checkError(err?.message || String(err));
+  }
+}
+
 if (!skipChecks.secrets) {
-  checks.secrets = limitDetails(checkSecrets());
+  checks.secrets = runEnabledCheck(() => checkSecrets(stagedFiles, gitApplicable, stagedRaw !== null));
 }
 
 if (!skipChecks.todos) {
-  checks.todos = limitDetails(checkTodos());
+  checks.todos = runEnabledCheck(() => checkTodos(projectRoot, gitApplicable));
 }
 
 if (!skipChecks.unused) {
-  checks.unused = limitDetails(checkUnused(projectRoot, stagedFiles, stagedRaw !== null));
+  checks.unused = runEnabledCheck(() => checkUnused(projectRoot, stagedFiles, stagedRaw !== null));
 }
 
 if (!skipChecks.circular) {
-  checks.circular = limitDetails(checkCircular(projectRoot));
+  checks.circular = runEnabledCheck(() => checkCircular(projectRoot));
 }
 
 if (!skipChecks.ctrlbytes) {
-  checks.ctrlbytes = limitDetails(checkControlBytes(projectRoot));
+  checks.ctrlbytes = runEnabledCheck(() => checkControlBytes(projectRoot, gitApplicable));
 }
 
 // Compute summary
-let passed = 0, warnings = 0, failed = 0;
+let passed = 0, warnings = 0, failed = 0, errors = 0;
 for (const result of Object.values(checks)) {
   if (result.status === 'pass') passed++;
   else if (result.status === 'warn') warnings++;
   else if (result.status === 'fail') failed++;
+  else if (result.status === 'error') errors++;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -613,7 +668,7 @@ for (const result of Object.values(checks)) {
 
 const out = createOutput({ maxLines, maxTokens, json, quiet });
 
-const STATUS_ICON = { pass: '\u2713', warn: '\u26A0', fail: '\u2717' };
+const STATUS_ICON = { pass: '\u2713', warn: '\u26A0', fail: '\u2717', error: '!' };
 const CHECK_LABELS = {
   secrets: 'Secrets',
   todos: 'TODOs',
@@ -639,6 +694,8 @@ for (const [name, result] of Object.entries(checks)) {
   if (result.status === 'pass') {
     const msg = result.note || CHECK_PASS_MSG[name];
     out.add(`  ${icon} ${label} ${msg}`);
+  } else if (result.status === 'error') {
+    out.add(`  ${icon} ${label} ERROR: ${result.error}`);
   } else {
     // Fail or warn — show count and details
     const verb = result.status === 'fail' ? 'found' : 'detected';
@@ -682,12 +739,12 @@ if (fix) {
 }
 
 out.blank();
-out.stats(`${passed} passed, ${warnings} warning(s), ${failed} failed`);
+out.stats(`${passed} passed, ${warnings} warning(s), ${failed} failed, ${errors} error(s)`);
 
 // JSON data
 out.setData('checks', checks);
 out.setData('stagedFiles', stagedFiles.length);
-out.setData('summary', { passed, warnings, failed });
+out.setData('summary', { passed, warnings, failed, errors });
 if (fixResult) out.setData('fixed', fixResult);
 
 // Quiet mode override
@@ -704,5 +761,5 @@ if (quiet && !json) {
 }
 
 // Exit code
-const hasFailed = failed > 0 || (strict && warnings > 0);
+const hasFailed = failed > 0 || errors > 0 || (strict && warnings > 0);
 process.exit(hasFailed ? 1 : 0);

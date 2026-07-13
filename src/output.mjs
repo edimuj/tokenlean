@@ -23,6 +23,184 @@ export function formatTokens(tokens) {
   return String(tokens);
 }
 
+// Structured output must have a hard ceiling even when callers do not pass an
+// explicit token budget. MCP clients commonly request JSON and the old JSON
+// path ignored maxLines/maxTokens entirely, allowing a single response to grow
+// to tens of megabytes before the subprocess buffer stopped it.
+export const DEFAULT_MAX_STRUCTURED_CHARS = 250_000;
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function consume(state, chars) {
+  if (chars > state.remainingChars) return false;
+  state.remainingChars -= chars;
+  return true;
+}
+
+function boundedString(value, state) {
+  let candidate = value;
+
+  if (Number.isFinite(state.remainingItems) && candidate.includes('\n')) {
+    const keep = Math.max(0, state.remainingItems);
+    let end = 0;
+    let linesSeen = 1;
+    while (linesSeen <= keep) {
+      const newline = candidate.indexOf('\n', end);
+      if (newline === -1) break;
+      end = newline + 1;
+      linesSeen++;
+    }
+    if (linesSeen > keep || (keep === 0 && candidate.length > 0)) {
+      candidate = `${candidate.slice(0, keep === 0 ? 0 : end)}... [truncated]`;
+      state.remainingItems = 0;
+      state.truncated = true;
+    } else {
+      state.remainingItems -= linesSeen;
+    }
+  }
+
+  const suffix = '\n... [truncated]';
+  // Avoid stringifying an unbounded original value just to learn that it is
+  // too large. Start with a raw prefix no larger than the remaining budget,
+  // then account for JSON escaping exactly.
+  if (candidate.length > state.remainingChars) {
+    candidate = `${candidate.slice(0, Math.max(0, state.remainingChars - suffix.length - 2))}${suffix}`;
+    state.truncated = true;
+  }
+
+  let encoded = JSON.stringify(candidate);
+  while (encoded.length > state.remainingChars && candidate.length > suffix.length) {
+    const excess = encoded.length - state.remainingChars;
+    const keep = Math.max(0, candidate.length - suffix.length - excess - 1);
+    candidate = `${candidate.slice(0, keep)}${suffix}`;
+    state.truncated = true;
+    encoded = JSON.stringify(candidate);
+  }
+
+  if (!consume(state, encoded.length)) {
+    state.truncated = true;
+    return undefined;
+  }
+  return candidate;
+}
+
+function boundValue(value, state) {
+  if (typeof value === 'string') return boundedString(value, state);
+
+  if (value === null || typeof value === 'number' || typeof value === 'boolean') {
+    const encoded = JSON.stringify(value);
+    if (!consume(state, encoded.length)) {
+      state.truncated = true;
+      return undefined;
+    }
+    return value;
+  }
+
+  if (typeof value === 'bigint') {
+    return boundedString(String(value), state);
+  }
+
+  if (Array.isArray(value)) {
+    if (!consume(state, 2)) {
+      state.truncated = true;
+      return undefined;
+    }
+    const result = [];
+    for (const item of value) {
+      if (Number.isFinite(state.remainingItems)) {
+        if (state.remainingItems <= 0) {
+          state.truncated = true;
+          break;
+        }
+        state.remainingItems--;
+      }
+      if (result.length > 0 && !consume(state, 1)) {
+        state.truncated = true;
+        break;
+      }
+      const bounded = boundValue(item, state);
+      if (bounded === undefined) {
+        state.truncated = true;
+        break;
+      }
+      result.push(bounded);
+    }
+    if (result.length < value.length) state.truncated = true;
+    return result;
+  }
+
+  if (isPlainObject(value)) {
+    if (!consume(state, 2)) {
+      state.truncated = true;
+      return undefined;
+    }
+    const result = {};
+    const entries = Object.entries(value);
+    let resultSize = 0;
+    for (const [key, item] of entries) {
+      if (item === undefined || typeof item === 'function' || typeof item === 'symbol') continue;
+      const prefixSize = (resultSize > 0 ? 1 : 0) + JSON.stringify(key).length + 1;
+      if (!consume(state, prefixSize)) {
+        state.truncated = true;
+        break;
+      }
+      const bounded = boundValue(item, state);
+      if (bounded === undefined) {
+        state.truncated = true;
+        break;
+      }
+      result[key] = bounded;
+      resultSize++;
+    }
+    if (resultSize < entries.filter(([, item]) => item !== undefined && typeof item !== 'function' && typeof item !== 'symbol').length) {
+      state.truncated = true;
+    }
+    return result;
+  }
+
+  // Match JSON.stringify's treatment of unsupported top-level values without
+  // retaining arbitrary class instances or invoking a large custom toJSON.
+  state.truncated = true;
+  return null;
+}
+
+/**
+ * Serialize a structured value under an aggregate character/item budget.
+ * The value is bounded first, so the final JSON.stringify never receives an
+ * unbounded clone. When possible a top-level object gets `truncated: true`.
+ */
+export function stringifyBoundedJson(value, {
+  maxChars = DEFAULT_MAX_STRUCTURED_CHARS,
+  maxItems = Infinity,
+  pretty = true
+} = {}) {
+  const normalizedMaxChars = Number.isFinite(maxChars)
+    ? Math.max(64, Math.floor(maxChars))
+    : DEFAULT_MAX_STRUCTURED_CHARS;
+  const state = {
+    // Reserve room for the truncation marker and container punctuation without
+    // consuming the entire budget when callers intentionally request a very
+    // small structured response.
+    remainingChars: Math.max(0, normalizedMaxChars - Math.min(128, Math.floor(normalizedMaxChars / 3))),
+    remainingItems: Number.isFinite(maxItems) ? Math.max(0, Math.floor(maxItems)) : Infinity,
+    truncated: false
+  };
+
+  let bounded = boundValue(value, state);
+  if (bounded === undefined) bounded = isPlainObject(value) ? {} : null;
+  if (state.truncated && isPlainObject(bounded)) bounded.truncated = true;
+
+  const compact = JSON.stringify(bounded);
+  const formatted = pretty ? JSON.stringify(bounded, null, 2) : compact;
+  return {
+    text: formatted.length <= normalizedMaxChars ? formatted : compact,
+    value: bounded,
+    truncated: state.truncated
+  };
+}
+
 // ─────────────────────────────────────────────────────────────
 // Argument Parsing
 // ─────────────────────────────────────────────────────────────
@@ -174,11 +352,20 @@ export class Output {
   // Render the output
   render() {
     if (this.options.json) {
-      return JSON.stringify({
+      const maxChars = Math.min(
+        DEFAULT_MAX_STRUCTURED_CHARS,
+        Number.isFinite(this.options.maxTokens) ? Math.max(64, this.options.maxTokens * 4) : Infinity
+      );
+      const bounded = stringifyBoundedJson({
         ...this.data,
         truncated: this.truncated,
         totalItems: this.totalLines
-      }, null, 2);
+      }, {
+        maxChars,
+        maxItems: this.options.maxLines
+      });
+
+      return bounded.text;
     }
 
     let output = this.lines.join('\n');

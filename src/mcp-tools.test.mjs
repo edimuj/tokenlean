@@ -1,13 +1,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { capRunResultText, TOOLS, registerTools, runArgs, runJobDir, withCwdHint } from './mcp-tools.mjs';
+import { capRunResultText, IN_PROCESS_TOOL_NAMES, TOOLS, registerTools, runArgs, runJobDir, withCwdHint } from './mcp-tools.mjs';
 
 describe('MCP tool definitions', () => {
   it('exposes context-governor tools', () => {
@@ -38,6 +40,84 @@ describe('MCP tool definitions', () => {
       const parsed = JSON.parse(result.content[0].text);
       assert.strictEqual(parsed.symbols.functions[0], 'export function spacedName()');
     } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('tl-mcp --tools registers a selected strict GitHub schema through the real process entrypoint', () => {
+    const binPath = fileURLToPath(new URL('../bin/tl-mcp.mjs', import.meta.url));
+    const result = spawnSync(process.execPath, [binPath, '--tools', 'gh_issue_close'], {
+      input: '',
+      encoding: 'utf-8',
+      timeout: 5000,
+    });
+
+    assert.strictEqual(result.status, 0, result.stderr);
+    assert.strictEqual(result.stderr, '');
+  });
+
+  it('keeps successful and failing CLI stderr separate from parseable JSON stdout', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-mcp-stderr-'));
+    const hookPath = join(tempDir, 'warning.cjs');
+    const sourcePath = join(tempDir, 'api.js');
+    const originalNodeOptions = process.env.NODE_OPTIONS;
+
+    writeFileSync(hookPath, "process.stderr.write('wrapper warning\\n');\n", 'utf-8');
+    writeFileSync(sourcePath, 'export function api() { return 1; }\n', 'utf-8');
+
+    try {
+      process.env.NODE_OPTIONS = `--require=${hookPath}`;
+
+      const contextTool = TOOLS.find(tool => tool.name === 'tl_context');
+      const success = await contextTool.handler({ path: sourcePath });
+      assert.strictEqual(success.isError, undefined);
+      assert.doesNotThrow(() => JSON.parse(success.content[0].text));
+      assert.match(success.content[1].text, /^\[stderr\]\nwrapper warning/);
+
+      const runTool = TOOLS.find(tool => tool.name === 'tl_run');
+      const failure = await runTool.handler({ command: 'false', raw: true, cwd: tempDir });
+      assert.strictEqual(failure.isError, true);
+      const failurePayload = JSON.parse(failure.content[0].text);
+      assert.strictEqual(failurePayload.exitCode, 1);
+      assert.match(failure.content[1].text, /^\[stderr\]\nwrapper warning/);
+    } finally {
+      if (originalNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+      else process.env.NODE_OPTIONS = originalNodeOptions;
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('runs hot read-only tools in-process instead of launching Node CLI children', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-mcp-in-process-'));
+    const sourcePath = join(tempDir, 'api.js');
+    const hookPath = join(tempDir, 'forbid-node-child.cjs');
+    const originalNodeOptions = process.env.NODE_OPTIONS;
+
+    writeFileSync(sourcePath, 'export function api() { return 1; }\n', 'utf-8');
+    writeFileSync(hookPath, 'process.exit(73);\n', 'utf-8');
+
+    const calls = {
+      tl_structure: { path: tempDir, depth: 1, cwd: tempDir },
+      tl_snippet: { name: 'api', file: sourcePath, cwd: tempDir },
+      tl_symbols: { files: [sourcePath], cwd: tempDir },
+      tl_related: { file: sourcePath, cwd: tempDir },
+      tl_deps: { file: sourcePath, cwd: tempDir },
+      tl_impact: { file: sourcePath, cwd: tempDir },
+      tl_lookup: { query: 'api', path: tempDir, cwd: tempDir },
+      tl_dupes: { path: tempDir, exactOnly: true, cwd: tempDir },
+    };
+
+    try {
+      process.env.NODE_OPTIONS = `--require=${hookPath}`;
+      assert.deepEqual(new Set(IN_PROCESS_TOOL_NAMES), new Set(Object.keys(calls)));
+      for (const [name, input] of Object.entries(calls)) {
+        const result = await TOOLS.find(tool => tool.name === name).handler(input);
+        assert.equal(result.isError, undefined, `${name}: ${result.content?.[0]?.text}`);
+        assert.doesNotThrow(() => JSON.parse(result.content[0].text), name);
+      }
+    } finally {
+      if (originalNodeOptions === undefined) delete process.env.NODE_OPTIONS;
+      else process.env.NODE_OPTIONS = originalNodeOptions;
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
@@ -102,6 +182,20 @@ describe('MCP tool definitions', () => {
     const parsed = JSON.parse(capped);
     assert.match(parsed.result.stdout, /truncated/);
     assert.ok(parsed.result.stdout.length < 500_000);
+  });
+
+  it('capRunResultText enforces one aggregate budget across every large output field', () => {
+    const field = 'z'.repeat(190_000);
+    const huge = JSON.stringify({
+      stdout: field,
+      stderr: field,
+      output: field,
+      result: { stdout: field, stderr: field, output: field },
+    });
+    const capped = capRunResultText(huge);
+
+    assert.ok(capped.length <= 200_000, `aggregate response was ${capped.length} chars`);
+    assert.doesNotThrow(() => JSON.parse(capped));
   });
 
   it('capRunResultText leaves small responses untouched', () => {
@@ -248,6 +342,28 @@ describe('MCP tool definitions', () => {
     assert.strictEqual(pollPayload.result.stdout, 'async-later');
   });
 
+  it('tl_run async stores an aggregate-capped result instead of an unbounded job file', async () => {
+    const runTool = TOOLS.find(tool => tool.name === 'tl_run');
+    const command = `${JSON.stringify(process.execPath)} -e "process.stdout.write('x'.repeat(900000))"`;
+
+    const result = await runTool.handler({
+      command,
+      raw: true,
+      async: true,
+      commandTimeoutMs: 3000,
+      waitSeconds: 5,
+      cwd: process.cwd(),
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    assert.strictEqual(payload.status, 'completed');
+    assert.strictEqual(payload.result.truncated, true);
+    assert.ok(result.content[0].text.length <= 200_000);
+    const stored = statSync(join(runJobDir(payload.jobId), 'stdout.json')).size;
+    assert.ok(stored < 600_000, `stored async output was ${stored} bytes`);
+    rmSync(runJobDir(payload.jobId), { recursive: true, force: true });
+  });
+
   it('tl_run reports unknown async job ids clearly', async () => {
     const runTool = TOOLS.find(tool => tool.name === 'tl_run');
     const result = await runTool.handler({ jobId: '00000000-0000-4000-8000-000000000000' });
@@ -358,6 +474,50 @@ describe('MCP tool definitions', () => {
     }
   });
 
+  it('tl_gh_issue_read JSON honors noBody and bodyLines for issues, sub-issues, and comments', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-mcp-gh-bodies-'));
+    const ghPath = join(tempDir, 'gh');
+    const readTool = TOOLS.find(tool => tool.name === 'tl_gh_issue_read');
+    const originalPath = process.env.PATH;
+
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'process.stdout.write(JSON.stringify({ data: { repository: { issue: {',
+      '  number: 10, title: "Parent", state: "OPEN", body: "parent one\\nparent two", url: "https://example.test/10",',
+      '  createdAt: "2026-01-01T00:00:00Z", closedAt: null, author: { login: "edimuj" },',
+      '  assignees: { nodes: [] }, labels: { nodes: [] },',
+      '  comments: { totalCount: 1, nodes: [{ author: { login: "reviewer" }, createdAt: "2026-01-02T00:00:00Z", body: "comment one\\ncomment two" }] },',
+      '  subIssues: { totalCount: 1, nodes: [{',
+      '    number: 11, title: "Child", state: "OPEN", body: "child one\\nchild two", url: "https://example.test/11",',
+      '    labels: { nodes: [] }, assignees: { nodes: [] }, comments: { totalCount: 0 }',
+      '  }] }',
+      '} } } }) + "\\n");',
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    try {
+      process.env.PATH = `${tempDir}:${originalPath}`;
+
+      const omittedResult = await readTool.handler({ repo: 'edimuj/app', issue: 10, comments: true, noBody: true });
+      const omitted = JSON.parse(omittedResult.content[0].text).issue;
+      assert.strictEqual(Object.hasOwn(omitted, 'body'), false);
+      assert.strictEqual(Object.hasOwn(omitted.subIssues[0], 'body'), false);
+      assert.strictEqual(Object.hasOwn(omitted.comments.nodes[0], 'body'), false);
+
+      const limitedResult = await readTool.handler({ repo: 'edimuj/app', issue: 10, comments: true, bodyLines: 1 });
+      const limited = JSON.parse(limitedResult.content[0].text).issue;
+      assert.match(limited.body, /^parent one\n.*1 more line/);
+      assert.match(limited.subIssues[0].body, /^child one\n.*1 more line/);
+      assert.match(limited.comments.nodes[0].body, /^comment one\n.*1 more line/);
+      assert.doesNotMatch(limited.body, /parent two/);
+      assert.doesNotMatch(limited.subIssues[0].body, /child two/);
+      assert.doesNotMatch(limited.comments.nodes[0].body, /comment two/);
+    } finally {
+      process.env.PATH = originalPath;
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('tl_gh_issue_read reads every issue when identifier aliases are arrays', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-mcp-gh-read-batch-'));
     const ghPath = join(tempDir, 'gh');
@@ -417,8 +577,13 @@ describe('MCP tool definitions', () => {
     writeFileSync(ghPath, [
       '#!/usr/bin/env node',
       'const fs = require("node:fs");',
-      'fs.appendFileSync(process.env.GH_LOG, JSON.stringify(process.argv.slice(2)) + "\\n");',
-      'process.stdout.write("{}\\n");',
+      'const argv = process.argv.slice(2);',
+      'fs.appendFileSync(process.env.GH_LOG, JSON.stringify(argv) + "\\n");',
+      'if (argv.join(" ").includes("closeIssue")) {',
+      '  process.stdout.write(JSON.stringify({ data: { close79: { issue: { number: 79 } } } }) + "\\n");',
+      '} else {',
+      '  process.stdout.write(JSON.stringify({ data: { repository: { issue79: { id: "ISSUE_79" } } } }) + "\\n");',
+      '}',
     ].join('\n') + '\n', 'utf-8');
     chmodSync(ghPath, 0o755);
 
@@ -638,6 +803,82 @@ describe('MCP tool definitions', () => {
       process.env.PATH = originalPath;
       if (originalLog === undefined) delete process.env.GH_LOG;
       else process.env.GH_LOG = originalLog;
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('GitHub batch mutation tools return aggregate failure counts and MCP errors when none succeed', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-mcp-gh-all-fail-'));
+    const ghPath = join(tempDir, 'gh');
+    const originalPath = process.env.PATH;
+
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'const argv = process.argv.slice(2);',
+      'if (argv.join(" ").includes("projectV2")) {',
+      '  process.stdout.write(JSON.stringify({ data: { user: { projectV2: { id: "PROJECT_1" } } } }) + "\\n");',
+      '} else {',
+      '  process.stderr.write("simulated GitHub failure\\n");',
+      '  process.exit(1);',
+      '}',
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    const cases = [
+      { name: 'tl_gh_issue_create_batch', args: { repo: 'edimuj/app', issues: [{ title: 'A' }, { title: 'B' }] } },
+      { name: 'tl_gh_issue_close_batch', args: { repo: 'edimuj/app', issues: [1, 2] } },
+      { name: 'tl_gh_issue_label_batch', args: { repo: 'edimuj/app', issues: [1, 2], add: 'bug' } },
+      { name: 'tl_gh_project_add_batch', args: { repo: 'edimuj/app', project: 'edimuj/1', issues: [1, 2] } },
+    ];
+
+    try {
+      process.env.PATH = `${tempDir}:${originalPath}`;
+      for (const { name, args } of cases) {
+        const tool = TOOLS.find(t => t.name === name);
+        const result = await tool.handler(args);
+        assert.strictEqual(result.isError, true, `${name} should be an MCP error when every item fails`);
+        const payload = JSON.parse(result.content[0].text);
+        assert.strictEqual(payload.requestedCount, 2, name);
+        assert.strictEqual(payload.succeededCount, 0, name);
+        assert.strictEqual(payload.failedCount, 2, name);
+        assert.strictEqual(payload.failed, true, name);
+        assert.strictEqual(payload.partialFailure, false, name);
+        assert.strictEqual(payload.results.length, 2, name);
+      }
+    } finally {
+      process.env.PATH = originalPath;
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('GitHub batch mutation tools expose partial success without discarding successful results', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'tokenlean-mcp-gh-partial-'));
+    const ghPath = join(tempDir, 'gh');
+    const originalPath = process.env.PATH;
+
+    writeFileSync(ghPath, [
+      '#!/usr/bin/env node',
+      'const issue = process.argv[4];',
+      'if (issue === "1") process.exit(0);',
+      'process.stderr.write("simulated update failure\\n");',
+      'process.exit(1);',
+    ].join('\n') + '\n', 'utf-8');
+    chmodSync(ghPath, 0o755);
+
+    try {
+      process.env.PATH = `${tempDir}:${originalPath}`;
+      const tool = TOOLS.find(t => t.name === 'tl_gh_issue_label_batch');
+      const result = await tool.handler({ repo: 'edimuj/app', issues: [1, 2], add: 'bug' });
+      assert.strictEqual(result.isError, undefined, result.content[0].text);
+      const payload = JSON.parse(result.content[0].text);
+      assert.strictEqual(payload.requestedCount, 2);
+      assert.strictEqual(payload.succeededCount, 1);
+      assert.strictEqual(payload.failedCount, 1);
+      assert.strictEqual(payload.failed, true);
+      assert.strictEqual(payload.partialFailure, true);
+      assert.deepStrictEqual(payload.results.map(r => r.status), ['updated', 'failed']);
+    } finally {
+      process.env.PATH = originalPath;
       rmSync(tempDir, { recursive: true, force: true });
     }
   });

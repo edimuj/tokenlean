@@ -17,7 +17,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createRequire } from 'node:module';
-import { TOOLS, registerTools } from '../src/mcp-tools.mjs';
+import { TOOLS, registerToolDefinition, registerTools } from '../src/mcp-tools.mjs';
 
 const require = createRequire(import.meta.url);
 const { version } = require('../package.json');
@@ -42,7 +42,7 @@ if (selectedTools) {
     process.exit(1);
   }
   for (const tool of filtered) {
-    server.tool(tool.name, tool.description, tool.schema, tool.handler);
+    registerToolDefinition(server, tool);
   }
 } else {
   registerTools(server);

@@ -87,6 +87,7 @@ describe('getGitState', () => {
     assert.ok(state.head, 'should have head commit');
     assert.match(state.head, /^[0-9a-f]{40}$/, 'head should be 40-char hex');
     assert.ok(Array.isArray(state.dirtyFiles));
+    assert.match(state.worktreeFingerprint, /^[0-9a-f]{64}$/);
   });
 
   it('returns null for non-git directories', () => {
@@ -179,6 +180,52 @@ describe('setCached / getCached', () => {
     // Cache should be invalidated
     assert.equal(getCached(key, tmpDir), null, 'should be invalidated after new commit');
   });
+
+  it('invalidates when an already-dirty file changes content again', () => {
+    const key = { op: 'test', id: 'dirty-content-invalidation' };
+    const file = join(tmpDir, 'test.txt');
+
+    try {
+      writeFileSync(file, 'dirty version one\n');
+      setCached(key, 'computed from version one', tmpDir);
+      assert.equal(getCached(key, tmpDir), 'computed from version one');
+
+      // The dirty filename and HEAD are unchanged; only its content changes.
+      writeFileSync(file, 'dirty version two\n');
+      assert.equal(getCached(key, tmpDir), null, 'second dirty edit must invalidate cached source analysis');
+    } finally {
+      writeFileSync(file, 'hello\n');
+    }
+  });
+
+  it('invalidates when an untracked file changes content', () => {
+    const key = { op: 'test', id: 'untracked-content-invalidation' };
+    const file = join(tmpDir, 'untracked-source.mjs');
+
+    try {
+      writeFileSync(file, 'export const value = 1;\n');
+      setCached(key, 'first', tmpDir);
+      writeFileSync(file, 'export const value = 2;\n');
+      assert.equal(getCached(key, tmpDir), null);
+    } finally {
+      rmSync(file, { force: true });
+    }
+  });
+
+  it('bypasses cache when a repository state cannot be evaluated', () => {
+    const key = { op: 'test', id: 'git-state-failure' };
+    const originalPath = process.env.PATH;
+    setCached(key, 'must not be served on state failure', tmpDir);
+
+    try {
+      process.env.PATH = '';
+      const state = getGitState(tmpDir);
+      assert.equal(state.invalid, true);
+      assert.equal(getCached(key, tmpDir), null);
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -208,6 +255,15 @@ describe('withCache', () => {
     );
     assert.equal(called, true);
     assert.equal(result, 'computed');
+  });
+
+  it('does not cache failed computations', () => {
+    const key = { op: 'failed-search-must-not-cache' };
+    assert.throws(
+      () => withCache(key, () => { throw new Error('search failed'); }, { projectRoot: tmpDir }),
+      /search failed/
+    );
+    assert.equal(getCached(key, tmpDir), null);
   });
 });
 

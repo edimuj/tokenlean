@@ -255,6 +255,30 @@ function graphQlCloseReason(reason) {
   return reason === 'not_planned' ? 'NOT_PLANNED' : 'COMPLETED';
 }
 
+function setBatchOutcome(out, results, isSuccess) {
+  const requestedCount = results.length;
+  const succeededCount = results.filter(isSuccess).length;
+  const failedCount = requestedCount - succeededCount;
+  const failed = failedCount > 0;
+  const partialFailure = failed && succeededCount > 0;
+
+  out.setData('results', results);
+  out.setData('requestedCount', requestedCount);
+  out.setData('succeededCount', succeededCount);
+  out.setData('failedCount', failedCount);
+  out.setData('failed', failed);
+  out.setData('partialFailure', partialFailure);
+
+  return { requestedCount, succeededCount, failedCount, failed, partialFailure };
+}
+
+function failProcessWhenNoneSucceeded(outcome) {
+  // Set exitCode instead of calling process.exit() so the JSON payload is fully
+  // flushed to stdout. The MCP adapter retains that payload and marks the tool
+  // result as an error from the non-zero process status.
+  if (outcome.failedCount > 0 && outcome.succeededCount === 0) process.exitCode = 1;
+}
+
 function issueAlias(prefix, number) {
   return `${prefix}${number}`;
 }
@@ -559,10 +583,18 @@ async function issueView(args) {
 
   out.setData('issue', {
     ...issue,
+    body: noBody ? undefined : truncateBody(issue.body || '', full ? Infinity : bodyLines),
     labels,
     assignees,
     comments: withComments
-      ? { totalCount: issue.comments?.totalCount || 0, nodes: commentNodes.map(c => ({ author: c.author?.login || null, createdAt: c.createdAt, body: c.body })) }
+      ? {
+          totalCount: issue.comments?.totalCount || 0,
+          nodes: commentNodes.map(c => ({
+            author: c.author?.login || null,
+            createdAt: c.createdAt,
+            body: noBody ? undefined : truncateBody(c.body || '', full ? Infinity : bodyLines),
+          })),
+        }
       : { totalCount: issue.comments?.totalCount || 0 },
     subIssues: subs.map(s => ({
       number: s.number,
@@ -571,7 +603,7 @@ async function issueView(args) {
       labels: s.labels?.nodes?.map(l => l.name) || [],
       assignees: s.assignees?.nodes?.map(a => a.login) || [],
       comments: s.comments?.totalCount || 0,
-      body: s.body,
+      body: noBody ? undefined : truncateBody(s.body || '', full ? Infinity : bodyLines),
     })),
   });
   out.print();
@@ -653,8 +685,9 @@ async function issueCreateBatch(args) {
 
   const projNote = projFailed.length ? `, ${projFailed.length} project-add failed` : '';
   out.stats(`${created.length} created, ${failed.length} failed${projNote}`);
-  out.setData('results', results);
+  const outcome = setBatchOutcome(out, results, r => r.status === 'created');
   out.print();
+  failProcessWhenNoneSucceeded(outcome);
 }
 
 async function issueAddSub(args) {
@@ -1168,8 +1201,9 @@ async function issueCloseBatch(args) {
   const failed = results.filter(r => r.status === 'failed').length;
   const warnings = results.filter(r => r.warning).length;
   out.stats(`${closed} closed, ${failed} failed${warnings ? `, ${warnings} warning(s)` : ''}`);
-  out.setData('results', results);
+  const outcome = setBatchOutcome(out, results, r => r.status === 'closed');
   out.print();
+  failProcessWhenNoneSucceeded(outcome);
 }
 
 async function issueLabelBatch(args) {
@@ -1218,8 +1252,9 @@ async function issueLabelBatch(args) {
   const updated = results.filter(r => r.status === 'updated').length;
   const failed = results.filter(r => r.status === 'failed').length;
   out.stats(`${updated} updated, ${failed} failed`);
-  out.setData('results', results);
+  const outcome = setBatchOutcome(out, results, r => r.status === 'updated');
   out.print();
+  failProcessWhenNoneSucceeded(outcome);
 }
 
 async function prLand(args) {
@@ -1559,8 +1594,9 @@ async function projectAddBatch(args) {
   const added = results.filter(r => r.status === 'added').length;
   const failed = results.filter(r => r.status === 'failed').length;
   out.stats(`${added} added, ${failed} failed`);
-  out.setData('results', results);
+  const outcome = setBatchOutcome(out, results, r => r.status === 'added');
   out.print();
+  failProcessWhenNoneSucceeded(outcome);
 }
 
 // ── Main ─────────────────────────────────────────────────────────────

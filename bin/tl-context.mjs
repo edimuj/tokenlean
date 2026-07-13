@@ -119,7 +119,7 @@ if (stat.isFile()) {
   out.blank();
 
   // File list
-  const displayResults = topN ? validFiles.slice(0, topN) : validFiles;
+  const displayResults = topN === null ? validFiles : validFiles.slice(0, topN);
 
   if (displayResults.length > 0) {
     if (topN) {
@@ -162,7 +162,10 @@ if (stat.isFile()) {
   out.addLines(formatTable(dirRows, { indent: '  ', separator: '  ' }));
 
   out.setData('byDirectory', Object.fromEntries(sortedDirs));
-  out.setData('files', validFiles.slice(0, 100).map(r => ({
+  // Keep structured output aligned with the requested view. MCP always uses
+  // JSON, so serializing an unrelated fixed top-100 list made --top and --all
+  // ineffective for agents even though the text renderer honored them.
+  out.setData('files', displayResults.map(r => ({
     path: r.relativePath || relative(targetPath, r.path),
     tokens: r.tokens || 0,
     size: r.size || 0

@@ -21,6 +21,7 @@ if (process.argv.includes('--prompt')) {
 }
 
 import { readFileSync, existsSync, statSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import {
   createOutput,
   parseCommonArgs,
@@ -38,6 +39,7 @@ Options:
   --staged             Show staged changes only
   --stat-only          Show just the summary (no file list)
   --breaking           Detect breaking changes (removed/renamed exports)
+  --file PATH          Limit the diff to one path
 ${COMMON_OPTIONS_HELP}
 
 Examples:
@@ -48,28 +50,76 @@ Examples:
   tl-diff -j                  # JSON output
 `;
 
-function run(args) {
-  return gitCommand(args) || '';
+function runGit(args) {
+  const proc = spawnSync('git', args, {
+    encoding: 'utf-8',
+    maxBuffer: 10 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  if (proc.error || proc.status !== 0) {
+    return {
+      ok: false,
+      stdout: (proc.stdout || '').trim(),
+      stderr: (proc.stderr || proc.error?.message || '').trim(),
+      status: proc.status ?? 1,
+      args,
+    };
+  }
+  return { ok: true, stdout: proc.stdout || '', stderr: '', status: 0, args };
 }
 
-function parseDiffStat(stat) {
-  const lines = stat.trim().split('\n');
+function parseNumstat(raw) {
+  const records = raw.split('\0');
+  if (records[records.length - 1] === '') records.pop();
   const files = [];
 
-  for (const line of lines) {
-    // Match: " src/file.ts | 42 +++---"
-    const match = line.match(/^\s*(.+?)\s*\|\s*(\d+)\s*(\+*)(-*)/);
-    if (match) {
-      files.push({
-        path: match[1].trim(),
-        changes: parseInt(match[2]),
-        additions: match[3].length,
-        deletions: match[4].length
-      });
+  for (let i = 0; i < records.length; i++) {
+    const fields = records[i].split('\t');
+    if (fields.length < 3) continue;
+
+    const [addedRaw, deletedRaw] = fields;
+    let path = fields.slice(2).join('\t');
+    let oldPath = null;
+
+    // With -z, renames/copies are encoded as an empty pathname followed by
+    // separate old/new NUL-terminated paths. Keep the destination as `path`
+    // while retaining the source for breaking-change comparisons.
+    if (path === '' && i + 2 < records.length) {
+      oldPath = records[++i];
+      path = records[++i];
     }
+
+    const binary = addedRaw === '-' || deletedRaw === '-';
+    const additions = binary ? 0 : Number.parseInt(addedRaw, 10);
+    const deletions = binary ? 0 : Number.parseInt(deletedRaw, 10);
+    if (!path || !Number.isInteger(additions) || !Number.isInteger(deletions)) continue;
+
+    files.push({
+      path,
+      ...(oldPath ? { oldPath, renamed: true } : {}),
+      changes: additions + deletions,
+      additions,
+      deletions,
+      ...(binary ? { binary: true } : {}),
+    });
   }
 
   return files;
+}
+
+function failGit(options, result) {
+  const command = ['git', ...result.args].join(' ');
+  const message = result.stderr || result.stdout || `git exited ${result.status}`;
+  if (options.json) {
+    const out = createOutput(options);
+    out.setData('ok', false);
+    out.setData('error', { command, message, exitCode: result.status });
+    out.print();
+  } else {
+    console.error(`Error: ${message}`);
+    console.error(`Command: ${command}`);
+  }
+  process.exit(result.status || 1);
 }
 
 function categorizeChanges(files) {
@@ -169,7 +219,7 @@ function detectBreakingChanges(files, ref, staged) {
     if (!CODE_EXTS.has(ext)) continue;
 
     // Get old file content from git
-    const oldContent = gitCommand(['show', `${baseRef}:${file.path}`]);
+    const oldContent = gitCommand(['show', `${baseRef}:${file.oldPath || file.path}`]);
     if (oldContent === null) continue; // new file, no breaking changes possible
 
     // Get current file content
@@ -213,18 +263,36 @@ const options = parseCommonArgs(args);
 
 // Parse tool-specific options
 let ref = '';
+let fileFilter = null;
 let staged = false;
 let statOnly = false;
 
 let breaking = false;
-for (const arg of options.remaining) {
+for (let i = 0; i < options.remaining.length; i++) {
+  const arg = options.remaining[i];
   if (arg === '--staged') {
     staged = true;
   } else if (arg === '--stat-only') {
     statOnly = true;
   } else if (arg === '--breaking') {
     breaking = true;
+  } else if (arg === '--full') {
+    // Accepted for tl-pack review --full compatibility. JSON is already
+    // complete; the text renderer currently has no additional detail tier.
+  } else if (arg === '--file') {
+    if (i + 1 >= options.remaining.length) {
+      console.error('Error: --file requires a path');
+      process.exit(2);
+    }
+    fileFilter = options.remaining[++i];
+  } else if (arg.startsWith('-')) {
+    console.error(`Error: unknown argument: ${arg}`);
+    process.exit(2);
   } else if (!arg.startsWith('-')) {
+    if (ref) {
+      console.error(`Error: multiple git refs provided: ${ref}, ${arg}`);
+      process.exit(2);
+    }
     ref = arg;
   }
 }
@@ -234,20 +302,27 @@ if (options.help) {
   process.exit(0);
 }
 
-// Build git diff args
-const diffArgs = ['diff'];
+if (staged && ref) {
+  console.error('Error: provide either a ref or --staged, not both');
+  process.exit(2);
+}
+
+// Use NUL-delimited numstat for exact line counts and unambiguous filenames.
+// Keep the path after `--` so leading-dash paths can never become git options.
+const diffArgs = ['diff', '--numstat', '-z'];
 if (staged) {
   diffArgs.push('--cached');
 } else if (ref) {
   diffArgs.push(ref);
 }
-diffArgs.push('--stat=200');
+if (fileFilter) diffArgs.push('--', fileFilter);
 
-const stat = run(diffArgs);
+const diffResult = runGit(diffArgs);
+if (!diffResult.ok) failGit(options, diffResult);
 
 const out = createOutput(options);
 
-const files = parseDiffStat(stat);
+const files = parseNumstat(diffResult.stdout);
 
 // Count lines in a brand-new file (git diff never shows untracked files, so we
 // surface them ourselves). Returns 0 for binary or oversized files.
@@ -271,8 +346,11 @@ function countNewFileLines(path) {
 // files — git diff only knows tracked paths. Surface them as new files so they
 // aren't dropped from the summary (and from commits that rely on it).
 if (!staged && !ref) {
-  const untracked = run(['ls-files', '--others', '--exclude-standard'])
-    .split('\n').map(s => s.trim()).filter(Boolean);
+  const untrackedArgs = ['ls-files', '--others', '--exclude-standard'];
+  if (fileFilter) untrackedArgs.push('--', fileFilter);
+  const untrackedResult = runGit(untrackedArgs);
+  if (!untrackedResult.ok) failGit(options, untrackedResult);
+  const untracked = untrackedResult.stdout.split('\n').map(s => s.trim()).filter(Boolean);
   const known = new Set(files.map(f => f.path));
   let counted = 0;
   for (const path of untracked) {
@@ -288,6 +366,13 @@ if (!staged && !ref) {
 }
 
 if (files.length === 0) {
+  out.setData('files', []);
+  out.setData('categories', categorizeChanges([]));
+  out.setData('totalFiles', 0);
+  out.setData('totalChanges', 0);
+  out.setData('totalAdditions', 0);
+  out.setData('totalDeletions', 0);
+  out.setData('estimatedTokens', 0);
   out.header('No changes detected');
   out.print();
   process.exit(0);
@@ -304,6 +389,8 @@ out.setData('files', files);
 out.setData('categories', categories);
 out.setData('totalFiles', files.length);
 out.setData('totalChanges', totalChanges);
+out.setData('totalAdditions', totalAdditions);
+out.setData('totalDeletions', totalDeletions);
 out.setData('estimatedTokens', totalChanges * 4);
 
 // Summary header

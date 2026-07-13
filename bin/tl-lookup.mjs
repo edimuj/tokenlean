@@ -11,7 +11,7 @@
  */
 
 // Prompt info for tl-prompt
-if (process.argv.includes('--prompt')) {
+if (isMainModule(import.meta.url) && process.argv.includes('--prompt')) {
   console.log(JSON.stringify({
     name: 'tl-lookup',
     desc: 'Find an existing function by name/intent before writing a new one',
@@ -28,6 +28,7 @@ import {
 } from '../src/output.mjs';
 import { buildFunctionIndex } from '../src/walk.mjs';
 import { searchFunctions } from '../src/lookup.mjs';
+import { isMainModule } from '../src/in-process-cli.mjs';
 
 const HELP = `
 tl-lookup - Find existing functions before writing a new one
@@ -55,7 +56,7 @@ Examples:
   tl-lookup parseConfig -j             # JSON for tooling
 `;
 
-const rawArgs = process.argv.slice(2);
+export function runLookupCli(rawArgs = process.argv.slice(2)) {
 const options = parseCommonArgs(rawArgs);
 
 if (options.help) {
@@ -125,3 +126,6 @@ out.setData('scanned', functions.length);
 out.setData('matches', matches);
 
 out.print();
+}
+
+if (isMainModule(import.meta.url)) runLookupCli();

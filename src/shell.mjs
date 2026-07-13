@@ -17,7 +17,7 @@ import { spawnSync } from 'node:child_process';
  * @returns {string|null} stdout trimmed, or null on error
  */
 export function gitCommand(args, opts = {}) {
-  const { cwd, maxBuffer = 10 * 1024 * 1024, timeout } = opts;
+  const { cwd, maxBuffer = 10 * 1024 * 1024, timeout, trim = true } = opts;
 
   const spawnOpts = { encoding: 'utf-8', maxBuffer };
   if (cwd) spawnOpts.cwd = cwd;
@@ -29,7 +29,33 @@ export function gitCommand(args, opts = {}) {
     return null;
   }
 
-  return (proc.stdout || '').trim();
+  const stdout = proc.stdout || '';
+  return trim ? stdout.trim() : stdout;
+}
+
+/**
+ * A ripgrep invocation failed to run to completion. Exit code 1 (no matches)
+ * is intentionally not an error and is still represented by an empty string.
+ */
+export class SearchCommandError extends Error {
+  constructor(command, args, proc, opts = {}) {
+    const stderr = String(proc?.stderr || '').trim();
+    const causeMessage = proc?.error?.message || '';
+    const status = proc?.status;
+    const signal = proc?.signal;
+    const reason = proc?.error?.code ||
+      (status !== null && status !== undefined ? `exit ${status}` : signal ? `signal ${signal}` : 'unknown failure');
+    const detail = stderr || causeMessage;
+    super(`${command} search failed (${reason})${detail ? `: ${detail}` : ''}`);
+    this.name = 'SearchCommandError';
+    this.code = proc?.error?.code || 'SEARCH_COMMAND_FAILED';
+    this.command = command;
+    this.args = [...args];
+    this.cwd = opts.cwd || process.cwd();
+    this.status = status ?? null;
+    this.signal = signal ?? null;
+    this.stderr = stderr;
+  }
 }
 
 /**
@@ -40,7 +66,8 @@ export function gitCommand(args, opts = {}) {
  * @param {string}  [opts.cwd]
  * @param {number}  [opts.maxBuffer=10*1024*1024]
  * @param {number}  [opts.timeout]
- * @returns {string|null} stdout trimmed, or null on error (exit >= 2)
+ * @returns {string} stdout trimmed; empty string means no matches
+ * @throws {SearchCommandError} when ripgrep cannot run to completion
  */
 export function rgCommand(args, opts = {}) {
   const { cwd, maxBuffer = 10 * 1024 * 1024, timeout } = opts;
@@ -48,16 +75,18 @@ export function rgCommand(args, opts = {}) {
   const spawnOpts = {
     encoding: 'utf-8',
     maxBuffer,
-    stdio: ['pipe', 'pipe', 'ignore']
+    stdio: ['pipe', 'pipe', 'pipe']
   };
   if (cwd) spawnOpts.cwd = cwd;
   if (timeout) spawnOpts.timeout = timeout;
 
   const proc = spawnSync('rg', args, spawnOpts);
 
-  // Exit 1 = no matches (success), exit 2+ = error
-  if (proc.error || (proc.status !== null && proc.status >= 2)) {
-    return null;
+  // Exit 1 = no matches (success), exit 2+ / spawn failure = explicit error.
+  // Throwing is intentional: callers often cache search results, and returning
+  // null here made ENOBUFS/timeouts indistinguishable from a clean empty search.
+  if (proc.error || (proc.status !== 0 && proc.status !== 1)) {
+    throw new SearchCommandError('rg', args, proc, spawnOpts);
   }
 
   // Exit 1 (no matches) -> return empty string

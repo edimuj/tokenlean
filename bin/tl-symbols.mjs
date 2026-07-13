@@ -11,7 +11,7 @@
  */
 
 // Prompt info for tl-prompt
-if (process.argv.includes('--prompt')) {
+if (isMainModule(import.meta.url) && process.argv.includes('--prompt')) {
   console.log(JSON.stringify({
     name: 'tl-symbols',
     desc: 'Function/class signatures without bodies',
@@ -45,6 +45,7 @@ import {
   applySymbolFilter,
   tryFastFunctionFilterNames
 } from '../src/symbols-format.mjs';
+import { isMainModule } from '../src/in-process-cli.mjs';
 
 const HELP = `
 tl-symbols - Extract function/class/type signatures without bodies
@@ -225,7 +226,7 @@ function runMultiFileMode(files, baseDir, exportsOnly, filterType, options) {
 // Main
 // ─────────────────────────────────────────────────────────────
 
-const args = process.argv.slice(2);
+export function runSymbolsCli(args = process.argv.slice(2)) {
 const options = parseCommonArgs(args);
 const exportsOnly = options.remaining.includes('--exports-only') || options.remaining.includes('-e');
 
@@ -345,3 +346,6 @@ out.blank();
 formatSymbols(symbols, isGeneric ? 'generic' : lang, out);
 
 out.print();
+}
+
+if (isMainModule(import.meta.url)) runSymbolsCli();

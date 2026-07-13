@@ -1,6 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { estimateTokens, formatTokens, parseCommonArgs, Output, formatTable } from './output.mjs';
+import {
+  DEFAULT_MAX_STRUCTURED_CHARS,
+  estimateTokens,
+  formatTokens,
+  parseCommonArgs,
+  Output,
+  formatTable,
+  stringifyBoundedJson
+} from './output.mjs';
 
 // ─────────────────────────────────────────────────────────────
 // estimateTokens
@@ -193,6 +201,44 @@ describe('Output', () => {
     assert.deepStrictEqual(result.files, ['a.js']);
     assert.strictEqual(result.truncated, false);
     assert.strictEqual(result.totalItems, 1);
+  });
+
+  it('applies maxLines to structured arrays instead of bypassing it', () => {
+    const out = new Output({ json: true, maxLines: 2 });
+    out.setData('files', ['a.js', 'b.js', 'c.js']);
+    const result = JSON.parse(out.render());
+    assert.deepStrictEqual(result.files, ['a.js', 'b.js']);
+    assert.strictEqual(result.truncated, true);
+  });
+
+  it('applies maxTokens to multiline structured strings', () => {
+    const out = new Output({ json: true, maxTokens: 30 });
+    out.setData('markdown', 'line\n'.repeat(1000));
+    const rendered = out.render();
+    const result = JSON.parse(rendered);
+    assert.ok(rendered.length <= 120);
+    assert.strictEqual(result.truncated, true);
+    assert.ok(result.markdown.length < 1000);
+  });
+
+  it('hard-caps aggregate JSON when no explicit budget is supplied', () => {
+    const out = new Output({ json: true });
+    for (let i = 0; i < 6; i++) out.setData(`field${i}`, 'x'.repeat(190_000));
+    const rendered = out.render();
+    const result = JSON.parse(rendered);
+    assert.ok(rendered.length <= DEFAULT_MAX_STRUCTURED_CHARS);
+    assert.strictEqual(result.truncated, true);
+  });
+
+  it('bounds a structured value before producing valid JSON', () => {
+    const bounded = stringifyBoundedJson({ values: Array.from({ length: 100 }, (_, i) => ({ i })) }, {
+      maxChars: 500,
+      maxItems: 3
+    });
+    const parsed = JSON.parse(bounded.text);
+    assert.deepStrictEqual(parsed.values, [{ i: 0 }, { i: 1 }, { i: 2 }]);
+    assert.strictEqual(parsed.truncated, true);
+    assert.ok(bounded.text.length <= 500);
   });
 
   it('section adds title and formatted items', () => {

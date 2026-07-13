@@ -10,7 +10,7 @@
  */
 
 // Prompt info for tl-prompt
-if (process.argv.includes('--prompt')) {
+if (isMainModule(import.meta.url) && process.argv.includes('--prompt')) {
   console.log(JSON.stringify({
     name: 'tl-snippet',
     desc: 'Extract function/class body by name',
@@ -39,6 +39,7 @@ import {
 } from '../src/semantic-js.mjs';
 import { rgCommand } from '../src/shell.mjs';
 import { countBraces } from '../src/text-util.mjs';
+import { isMainModule } from '../src/in-process-cli.mjs';
 
 const HELP = `
 tl-snippet - Extract a function/class body by name
@@ -423,7 +424,7 @@ function extractExactBody(filePath, def, contextLines = 0, fileLinesCache = null
 // Main
 // ─────────────────────────────────────────────────────────────
 
-const args = process.argv.slice(2);
+export function runSnippetCli(args = process.argv.slice(2)) {
 const options = parseCommonArgs(args);
 
 if (options.help) {
@@ -703,7 +704,10 @@ for (let ni = 0; ni < nameList.length; ni++) {
       const enclosing = findEnclosingClass(def.file, def.line, fileLinesCache);
       return enclosing === className;
     });
-    if (filtered.length > 0) defs = filtered;
+    // A qualified lookup must never fall back to a same-named method from a
+    // different class. An empty scoped result is a real no-match, not a reason
+    // to retain the unfiltered project-wide definitions.
+    defs = filtered;
   }
 
   // Deduplicate by file:line
@@ -797,3 +801,6 @@ out.setData('totalDefinitions', allResults.length);
 
 out.print();
 if (hadErrors) process.exit(1);
+}
+
+if (isMainModule(import.meta.url)) runSnippetCli();

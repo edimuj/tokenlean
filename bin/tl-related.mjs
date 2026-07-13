@@ -10,7 +10,7 @@
  */
 
 // Prompt info for tl-prompt
-if (process.argv.includes('--prompt')) {
+if (isMainModule(import.meta.url) && process.argv.includes('--prompt')) {
   console.log(JSON.stringify({
     name: 'tl-related',
     desc: 'Find tests, types, and importers of a file',
@@ -35,6 +35,7 @@ import { ensureRipgrep } from '../src/traverse.mjs';
 import { rgCommand } from '../src/shell.mjs';
 import { isJsTsFile } from '../src/semantic-js.mjs';
 import { getJsTsGraphImporters } from '../src/semantic-js-graph.mjs';
+import { isMainModule } from '../src/in-process-cli.mjs';
 
 const HELP = `
 tl-related - Find related files (tests, types, usages)
@@ -228,7 +229,7 @@ function getFileInfo(filePath) {
 }
 
 // Main
-const args = process.argv.slice(2);
+export function runRelatedCli(args = process.argv.slice(2)) {
 const options = parseCommonArgs(args);
 const targetFile = options.remaining.find(a => !a.startsWith('-'));
 
@@ -317,3 +318,6 @@ if (importers.length > 10) {
 }
 
 out.print();
+}
+
+if (isMainModule(import.meta.url)) runRelatedCli();

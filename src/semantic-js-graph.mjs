@@ -31,6 +31,14 @@ const DEFAULT_COMPILER_OPTIONS = {
 };
 
 const compilerOptionsCache = new Map();
+const graphMemoryCache = new Map();
+const MAX_MEMORY_GRAPHS = 4;
+const graphMemoryStats = {
+  hits: 0,
+  incrementalUpdates: 0,
+  diskHits: 0,
+  fullBuilds: 0
+};
 
 function trimText(text) {
   return text
@@ -62,7 +70,13 @@ function metadataMatches(a = [], b = []) {
 
 function gitStateMatches(a, b) {
   if (!a || !b) return false;
+  if (a.invalid || b.invalid) return false;
   if (a.head !== b.head) return false;
+  // Dirty filenames alone are insufficient: editing the same already-dirty
+  // importer again must invalidate the graph. Older cache entries without the
+  // content fingerprint intentionally miss once and are rewritten.
+  if (!a.worktreeFingerprint || !b.worktreeFingerprint) return false;
+  if (a.worktreeFingerprint !== b.worktreeFingerprint) return false;
   const aDirty = Array.isArray(a.dirtyFiles) ? a.dirtyFiles : [];
   const bDirty = Array.isArray(b.dirtyFiles) ? b.dirtyFiles : [];
   if (aDirty.length !== bDirty.length) return false;
@@ -763,6 +777,80 @@ function buildGraph(projectRoot, metadata) {
   };
 }
 
+function buildReverseImports(files) {
+  const reverseImports = {};
+  for (const node of Object.values(files)) {
+    for (const imp of node.imports) {
+      if (!imp.resolvedPath) continue;
+      if (!reverseImports[imp.resolvedPath]) reverseImports[imp.resolvedPath] = [];
+      reverseImports[imp.resolvedPath].push({
+        importer: node.path,
+        spec: imp.spec,
+        line: imp.line,
+        importType: imp.importType,
+        isTypeOnly: !!imp.isTypeOnly,
+        statement: imp.statement,
+        bindings: imp.bindings,
+        moduleType: imp.moduleType,
+        resolvedPath: imp.resolvedPath
+      });
+    }
+  }
+
+  for (const edges of Object.values(reverseImports)) {
+    edges.sort((a, b) => a.line - b.line || a.importer.localeCompare(b.importer));
+  }
+  return reverseImports;
+}
+
+function updateGraphIncrementally(projectRoot, previous, metadata, gitState) {
+  const previousMetadata = new Map(previous.metadata.map(item => [item.relPath, item]));
+  const currentPaths = new Set(metadata.map(item => item.relPath));
+  const dirtyPaths = new Set(gitState?.dirtyFiles || []);
+  const files = { ...previous.data.files };
+
+  for (const relPath of Object.keys(files)) {
+    if (!currentPaths.has(relPath)) delete files[relPath];
+  }
+
+  for (const file of metadata) {
+    const old = previousMetadata.get(file.relPath);
+    if (!old || !sameMetadata(old, file) || dirtyPaths.has(file.relPath)) {
+      const node = buildFileGraph(file.path, projectRoot);
+      files[node.path] = node;
+    }
+  }
+
+  return {
+    parser: GRAPH_PARSER_VERSION,
+    files,
+    reverseImports: buildReverseImports(files)
+  };
+}
+
+function rememberGraph(projectRoot, configKey, gitState, metadata, data) {
+  // Map insertion order doubles as a tiny LRU. Project graphs can be large, so
+  // a global MCP server must not retain every worktree it ever sees.
+  graphMemoryCache.delete(projectRoot);
+  graphMemoryCache.set(projectRoot, { configKey, gitState, metadata, data });
+  while (graphMemoryCache.size > MAX_MEMORY_GRAPHS) {
+    graphMemoryCache.delete(graphMemoryCache.keys().next().value);
+  }
+}
+
+/** Process-local diagnostics used by MCP regression/performance tests. */
+export function getJsTsGraphMemoryStats() {
+  return { ...graphMemoryStats, projects: graphMemoryCache.size };
+}
+
+export function clearJsTsGraphMemoryCache() {
+  graphMemoryCache.clear();
+  graphMemoryStats.hits = 0;
+  graphMemoryStats.incrementalUpdates = 0;
+  graphMemoryStats.diskHits = 0;
+  graphMemoryStats.fullBuilds = 0;
+}
+
 function readCachedGraph(projectRoot, configKey, gitState, metadata = null) {
   const config = getCacheConfig();
   if (!config.enabled) return null;
@@ -812,15 +900,59 @@ export function getJsTsProjectGraph(targetPath, options = {}) {
   const projectRoot = getProjectRootForPath(targetPath, options.projectRoot);
   const { configKey } = getProjectCompilerConfig(projectRoot);
   const gitState = getGitState(projectRoot);
-  const cached = readCachedGraph(projectRoot, configKey, gitState);
-  if (cached) return { projectRoot, ...cached };
+  const memory = graphMemoryCache.get(projectRoot);
 
-  const metadata = getProjectFileMetadata(projectRoot);
+  // Git repositories have a content fingerprint for every dirty/untracked
+  // path. This makes the common unchanged request O(git status) and avoids
+  // reparsing or deserializing the project graph entirely.
+  if (memory && memory.configKey === configKey && gitState && gitStateMatches(memory.gitState, gitState)) {
+    rememberGraph(projectRoot, configKey, gitState, memory.metadata, memory.data);
+    graphMemoryStats.hits++;
+    return { projectRoot, ...memory.data };
+  }
+
+  let metadata = getProjectFileMetadata(projectRoot);
+
+  // Outside Git, metadata is the best available invalidation signal.
+  if (memory && memory.configKey === configKey && !gitState && metadataMatches(memory.metadata, metadata)) {
+    rememberGraph(projectRoot, configKey, gitState, metadata, memory.data);
+    graphMemoryStats.hits++;
+    return { projectRoot, ...memory.data };
+  }
+
+  // When HEAD/config are stable, only dirty, added, removed, or metadata-
+  // changed files need AST work. Reverse edges are cheap to reconstruct from
+  // the retained nodes and guarantee deleted/renamed edges cannot survive.
+  const sameSourceBase = memory && memory.configKey === configKey && (
+    (!memory.gitState && !gitState) ||
+    (memory.gitState && gitState && !memory.gitState.invalid && !gitState.invalid && memory.gitState.head === gitState.head)
+  );
+  if (sameSourceBase) {
+    const data = updateGraphIncrementally(projectRoot, memory, metadata, gitState);
+    rememberGraph(projectRoot, configKey, gitState, metadata, data);
+    writeCachedGraph(projectRoot, metadata, data, configKey, gitState);
+    graphMemoryStats.incrementalUpdates++;
+    return { projectRoot, ...data };
+  }
+
+  const cached = readCachedGraph(projectRoot, configKey, gitState);
+  if (cached) {
+    rememberGraph(projectRoot, configKey, gitState, metadata, cached);
+    graphMemoryStats.diskHits++;
+    return { projectRoot, ...cached };
+  }
+
   const cachedWithMetadata = readCachedGraph(projectRoot, configKey, gitState, metadata);
-  if (cachedWithMetadata) return { projectRoot, ...cachedWithMetadata };
+  if (cachedWithMetadata) {
+    rememberGraph(projectRoot, configKey, gitState, metadata, cachedWithMetadata);
+    graphMemoryStats.diskHits++;
+    return { projectRoot, ...cachedWithMetadata };
+  }
 
   const data = buildGraph(projectRoot, metadata);
   writeCachedGraph(projectRoot, metadata, data, configKey, gitState);
+  rememberGraph(projectRoot, configKey, gitState, metadata, data);
+  graphMemoryStats.fullBuilds++;
   return { projectRoot, ...data };
 }
 

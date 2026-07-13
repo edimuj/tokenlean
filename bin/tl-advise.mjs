@@ -168,12 +168,23 @@ function isCodePath(path) {
 function extractIssueNumbers(goal) {
   const numbers = [];
   const seen = new Set();
-  for (const match of goal.matchAll(/(?:#|\bissue\s+|\bissues\s+|\b)(\d+)\b/gi)) {
-    const value = match[1];
-    if (seen.has(value)) continue;
+
+  function add(value) {
+    if (seen.has(value)) return;
     seen.add(value);
     numbers.push(value);
   }
+
+  // Explicit #N references are unambiguous wherever they appear.
+  for (const match of goal.matchAll(/#(\d+)\b/g)) add(match[1]);
+
+  // Accept a grammatical issue list, but stop before unrelated numbers such
+  // as test counts, dates, or version numbers later in the sentence.
+  const issueListRe = /\bissues?\s+((?:#?\d+\b)(?:\s*(?:,\s*(?:and\s+)?|and\s+|&\s*)#?\d+\b)*)/gi;
+  for (const listMatch of goal.matchAll(issueListRe)) {
+    for (const numberMatch of listMatch[1].matchAll(/#?(\d+)\b/g)) add(numberMatch[1]);
+  }
+
   return numbers;
 }
 

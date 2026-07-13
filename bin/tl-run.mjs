@@ -90,6 +90,16 @@ const KILL_GRACE_MS = 2000;
 // we finish anyway once this elapses rather than hang forever. See runCommand.
 const CLOSE_GRACE_MS = 1000;
 
+// Flush the complete rendered payload before a deliberate process.exit().
+// Waiting for the write callback prevents large JSON from being truncated on
+// pipes, while the subsequent explicit exit still closes escaped-grandchild
+// handles that can otherwise keep this wrapper alive indefinitely.
+function printOutput(out) {
+  return new Promise((resolve, reject) => {
+    process.stdout.write(`${out.render()}\n`, error => error ? reject(error) : resolve());
+  });
+}
+
 // Accumulates streamed chunks up to maxBytes, keeping both the head and a
 // sliding tail window instead of dropping everything past the cap. See #39.
 function createCappedSink(maxBytes) {
@@ -1482,7 +1492,7 @@ async function runSegmentedFlow(command, parsed, timeout, opts, diffMode) {
     out.setData('segments', jsonSegments);
   }
 
-  out.print();
+  await printOutput(out);
   process.exit(r.timedOut ? 124 : r.exitCode);
 }
 
@@ -1581,7 +1591,7 @@ async function main() {
       out.setData('partialOutput', partial);
     }
 
-    out.print();
+    await printOutput(out);
     process.exit(124);
   }
 
@@ -1599,7 +1609,7 @@ async function main() {
       out.setData('stdout', result.stdout);
       out.setData('stderr', result.stderr);
       out.setData('output', combined);
-      out.print();
+      await printOutput(out);
     } else {
       if (result.stdout) process.stdout.write(result.stdout);
       if (result.stderr) process.stderr.write(result.stderr);
@@ -1672,7 +1682,7 @@ async function main() {
     }
   }
 
-  out.print();
+  await printOutput(out);
   process.exit(result.exitCode);
 }
 

@@ -1195,6 +1195,22 @@ describe('CLI regressions', () => {
     assert.strictEqual(parsed.sections[0].command, 'tl analyze src/cache.mjs');
   });
 
+  it('tl-pack reuses analyze results for file impact and related sections', () => {
+    const result = runCli(['bin/tl-pack.mjs', 'review', 'src/cache.mjs', '--budget', '4000', '-j']);
+    assert.strictEqual(result.status, 0, result.stdout || result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    const profile = parsed.sections.find(section => section.title === 'File profile');
+    const impact = parsed.sections.find(section => section.title === 'Blast radius');
+    const related = parsed.sections.find(section => section.title === 'Related files');
+
+    assert.ok(profile);
+    assert.equal(profile.reusedFrom, undefined);
+    assert.equal(impact.reusedFrom, 'tl analyze src/cache.mjs');
+    assert.equal(related.reusedFrom, 'tl analyze src/cache.mjs');
+    assert.match(impact.output.join('\n'), /importer/);
+    assert.match(related.output.join('\n'), /related file/);
+  });
+
   it('TLT-133: tl-pack onboard treats natural-language targets as project queries', () => {
     const target = 'provider quota orchestrator server runner';
     const result = runCli(['bin/tl-pack.mjs', 'onboard', target, '--budget', '900', '-j']);

@@ -1,13 +1,14 @@
 /**
  * MCP tool definitions for tokenlean.
  *
- * Each tool shells out to its CLI counterpart with -j for JSON output.
- * v1: subprocess dispatch (same code path as CLI, zero duplication).
- * v2: hot-path tools move to in-process for speed.
+ * Mutating and isolation-sensitive tools shell out to their CLI counterparts.
+ * Hot read-only analysis tools reuse synchronous CLI entry points in-process,
+ * retaining parser state and incremental caches across MCP requests.
  */
 
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { access, open as openFile, rename as renameAsync, writeFile as writeFileAsync } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { promisify } from 'node:util';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -15,6 +16,16 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { stringifyBoundedJson } from './output.mjs';
+import { invokeInProcessCli } from './in-process-cli.mjs';
+import { runStructureCli } from '../bin/tl-structure.mjs';
+import { runSnippetCli } from '../bin/tl-snippet.mjs';
+import { runSymbolsCli } from '../bin/tl-symbols.mjs';
+import { runRelatedCli } from '../bin/tl-related.mjs';
+import { runDepsCli } from '../bin/tl-deps.mjs';
+import { runImpactCli } from '../bin/tl-impact.mjs';
+import { runLookupCli } from '../bin/tl-lookup.mjs';
+import { runDupesCli } from '../bin/tl-dupes.mjs';
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -22,12 +33,90 @@ const binDir = join(__dirname, '..', 'bin');
 const RUN_JOB_ID_RE = /^[a-f0-9-]{36}$/i;
 const DEFAULT_ASYNC_WAIT_SECONDS = 90;
 const MAX_ASYNC_WAIT_SECONDS = 110;
+const MAX_MCP_CAPTURE_BYTES = 2 * 1024 * 1024;
+const MAX_MCP_RESPONSE_CHARS = 250_000;
+const MAX_ASYNC_CAPTURE_BYTES = 512 * 1024;
+const MAX_JOB_STATUS_BYTES = 64 * 1024;
+const MAX_POLL_TAIL_BYTES = 64 * 1024;
+
+const IN_PROCESS_READ_TOOLS = new Map([
+  ['structure', runStructureCli],
+  ['snippet', runSnippetCli],
+  ['symbols', runSymbolsCli],
+  ['related', runRelatedCli],
+  ['deps', runDepsCli],
+  ['impact', runImpactCli],
+  ['lookup', runLookupCli],
+  ['dupes', runDupesCli],
+]);
+
+export const IN_PROCESS_TOOL_NAMES = Object.freeze(
+  [...IN_PROCESS_READ_TOOLS.keys()].map(name => `tl_${name}`)
+);
 
 const asyncRunWorker = String.raw`
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 
 const cfg = JSON.parse(process.argv[1]);
+
+function createCappedCapture(maxBytes, jsonFallback = false) {
+  const headCap = Math.floor(maxBytes / 2);
+  const tailCap = maxBytes - headCap;
+  const head = [];
+  let headBytes = 0;
+  let tail = Buffer.alloc(0);
+  let totalBytes = 0;
+
+  return {
+    write(chunk) {
+      chunk = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += chunk.length;
+      if (headBytes < headCap) {
+        const take = Math.min(headCap - headBytes, chunk.length);
+        if (take) {
+          head.push(chunk.subarray(0, take));
+          headBytes += take;
+          chunk = chunk.subarray(take);
+        }
+      }
+      if (!chunk.length) return;
+      tail = tail.length ? Buffer.concat([tail, chunk]) : Buffer.from(chunk);
+      if (tail.length > tailCap) tail = tail.subarray(tail.length - tailCap);
+    },
+    snapshot() {
+      const headBuffer = Buffer.concat(head, headBytes);
+      if (totalBytes <= maxBytes) return Buffer.concat([headBuffer, tail]);
+      if (jsonFallback) {
+        let outputHead = headBuffer.toString('utf8');
+        let outputTail = tail.toString('utf8');
+        const render = () => Buffer.from(JSON.stringify({
+          truncated: true,
+          originalBytes: totalBytes,
+          message: 'Async result exceeded the stored-output cap; showing bounded head and tail.',
+          outputHead,
+          outputTail,
+        }) + '\n');
+        let rendered = render();
+        while (rendered.length > maxBytes && (outputHead.length || outputTail.length)) {
+          const ratio = Math.max(0, (maxBytes - 512) / rendered.length);
+          outputHead = outputHead.slice(0, Math.floor(outputHead.length * ratio));
+          outputTail = outputTail.slice(-Math.floor(outputTail.length * ratio));
+          rendered = render();
+        }
+        return rendered;
+      }
+      const marker = Buffer.from('\n... [' + (totalBytes - maxBytes) + ' bytes omitted; showing head and tail] ...\n');
+      return Buffer.concat([headBuffer, marker, tail]);
+    },
+  };
+}
+
+function writeCapture(file, capture) {
+  const tmp = file + '.tmp';
+  fs.writeFileSync(tmp, capture.snapshot());
+  fs.renameSync(tmp, file);
+}
 
 function writeStatus(next) {
   const status = { ...next, updatedAt: new Date().toISOString() };
@@ -45,18 +134,24 @@ writeStatus({
   startedAt: cfg.startedAt,
 });
 
-let outFd;
-let errFd;
 try {
-  outFd = fs.openSync(cfg.stdoutFile, 'a');
-  errFd = fs.openSync(cfg.stderrFile, 'a');
+  const stdoutCapture = createCappedCapture(cfg.maxCaptureBytes, true);
+  const stderrCapture = createCappedCapture(cfg.maxCaptureBytes, false);
+  let terminal = false;
   const child = spawn(process.execPath, [cfg.toolPath, ...cfg.args], {
     cwd: cfg.cwd,
     env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
-    stdio: ['ignore', outFd, errFd],
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
-  fs.closeSync(outFd);
-  fs.closeSync(errFd);
+  child.stdout.on('data', chunk => stdoutCapture.write(chunk));
+  child.stderr.on('data', chunk => stderrCapture.write(chunk));
+
+  // Running polls can observe bounded snapshots without ever reading the
+  // unbounded command stream. Atomic replacement avoids partial JSON reads.
+  const snapshotTimer = setInterval(() => {
+    try { writeCapture(cfg.stdoutFile, stdoutCapture); } catch {}
+    try { writeCapture(cfg.stderrFile, stderrCapture); } catch {}
+  }, 500);
 
   writeStatus({
     jobId: cfg.jobId,
@@ -69,7 +164,12 @@ try {
   });
 
   child.on('error', (err) => {
-    try { fs.appendFileSync(cfg.stderrFile, err.message + '\n', 'utf-8'); } catch {}
+    if (terminal) return;
+    terminal = true;
+    clearInterval(snapshotTimer);
+    stderrCapture.write(Buffer.from(err.message + '\n'));
+    try { writeCapture(cfg.stdoutFile, stdoutCapture); } catch {}
+    try { writeCapture(cfg.stderrFile, stderrCapture); } catch {}
     writeStatus({
       jobId: cfg.jobId,
       status: 'failed',
@@ -84,6 +184,11 @@ try {
   });
 
   child.on('close', (code, signal) => {
+    if (terminal) return;
+    terminal = true;
+    clearInterval(snapshotTimer);
+    try { writeCapture(cfg.stdoutFile, stdoutCapture); } catch {}
+    try { writeCapture(cfg.stderrFile, stderrCapture); } catch {}
     writeStatus({
       jobId: cfg.jobId,
       status: 'completed',
@@ -98,11 +203,7 @@ try {
     });
   });
 } catch (err) {
-  try {
-    if (outFd) fs.closeSync(outFd);
-    if (errFd) fs.closeSync(errFd);
-    fs.appendFileSync(cfg.stderrFile, err.message + '\n', 'utf-8');
-  } catch {}
+  try { fs.writeFileSync(cfg.stderrFile, err.message + '\n', 'utf-8'); } catch {}
   writeStatus({
     jobId: cfg.jobId,
     status: 'failed',
@@ -137,7 +238,7 @@ function checkCwd(cwd) {
 // Subprocess dispatch
 // ─────────────────────────────────────────────────────────────
 
-async function runCli(tool, args = [], { timeout = 60000, maxBuffer = 50 * 1024 * 1024, cwd } = {}) {
+async function runCli(tool, args = [], { timeout = 60000, maxBuffer = MAX_MCP_CAPTURE_BYTES, cwd } = {}) {
   const toolPath = join(binDir, `tl-${tool}.mjs`);
   const cwdError = checkCwd(cwd);
   if (cwdError) return { stdout: '', stderr: cwdError, ok: false };
@@ -159,14 +260,34 @@ async function runCli(tool, args = [], { timeout = 60000, maxBuffer = 50 * 1024 
   }
 }
 
-function textResult(text, isError = false) {
+function capMcpText(text, maxChars) {
+  if (maxChars <= 0) return '';
+  if (!text || text.length <= maxChars) return text;
+  if (maxChars < 64) return text.slice(0, maxChars);
+  try {
+    return stringifyBoundedJson(JSON.parse(text), { maxChars }).text;
+  } catch {
+    const suffix = '\n... [MCP response truncated]';
+    return `${text.slice(0, Math.max(0, maxChars - suffix.length))}${suffix}`;
+  }
+}
+
+function textResult(text, isError = false, diagnostics = '') {
+  const diagnosticPrefix = diagnostics ? '[stderr]\n' : '';
+  const diagnosticReserve = Math.min(64 * 1024, diagnosticPrefix.length + diagnostics.length);
+  const boundedText = capMcpText(String(text), MAX_MCP_RESPONSE_CHARS - diagnosticReserve);
+  const remaining = Math.max(0, MAX_MCP_RESPONSE_CHARS - boundedText.length - diagnosticPrefix.length);
+  const boundedDiagnostics = diagnostics ? capMcpText(String(diagnostics), remaining) : '';
   return {
-    content: [{ type: 'text', text }],
+    content: [
+      { type: 'text', text: boundedText },
+      ...(boundedDiagnostics ? [{ type: 'text', text: `${diagnosticPrefix}${boundedDiagnostics}` }] : []),
+    ],
     ...(isError && { isError: true }),
   };
 }
 
-async function runCliWithStdin(tool, args = [], stdinData = '', { timeout = 60000, maxBuffer = 50 * 1024 * 1024, cwd } = {}) {
+async function runCliWithStdin(tool, args = [], stdinData = '', { timeout = 60000, maxBuffer = MAX_MCP_CAPTURE_BYTES, cwd } = {}) {
   const toolPath = join(binDir, `tl-${tool}.mjs`);
   const cwdError = checkCwd(cwd);
   if (cwdError) return { stdout: '', stderr: cwdError, ok: false };
@@ -181,15 +302,20 @@ async function runCliWithStdin(tool, args = [], stdinData = '', { timeout = 6000
     let stdout = '';
     let stderr = '';
     let truncated = false;
+    let captured = 0;
+
+    const appendBounded = (current, chunk) => {
+      const text = String(chunk);
+      const remaining = Math.max(0, maxBuffer - captured);
+      captured += Math.min(remaining, text.length);
+      if (text.length > remaining) truncated = true;
+      return current + text.slice(0, remaining);
+    };
 
     child.stdout.on('data', chunk => {
-      if (stdout.length < maxBuffer) {
-        stdout += chunk;
-      } else {
-        truncated = true;
-      }
+      stdout = appendBounded(stdout, chunk);
     });
-    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.stderr.on('data', chunk => { stderr = appendBounded(stderr, chunk); });
 
     // Large stdin payloads (e.g. create_batch) can EPIPE if the child exits
     // before consuming them. Without a handler this is an uncaught error that
@@ -231,15 +357,20 @@ export function withCwdHint(text, opts) {
 }
 
 async function dispatchTool(tool, args, opts) {
-  const { stdout, stderr, ok } = await runCli(tool, args, opts);
+  const inProcessRunner = IN_PROCESS_READ_TOOLS.get(tool);
+  const cwdError = inProcessRunner ? checkCwd(opts?.cwd) : null;
+  const result = cwdError
+    ? { stdout: '', stderr: cwdError, ok: false }
+    : inProcessRunner
+      ? invokeInProcessCli(inProcessRunner, args, opts)
+      : await runCli(tool, args, opts);
+  const { stdout, stderr, ok } = result;
   if (!ok && !stdout) return textResult(withCwdHint(stderr || 'Tool failed with no output', opts), true);
-  // Return stdout; append stderr as note if present and tool succeeded. Once the
-  // tool has produced output, trust it over withCwdHint's regex — a non-zero
-  // exit can still carry structured/JSON output whose *content* happens to
-  // mention "no such file" etc., and appending the hint would corrupt or
-  // mislead on top of already-structured output.
-  const text = ok && stderr ? `${stdout}\n\n[stderr: ${stderr}]` : stdout;
-  return textResult(text || '(no output)', !ok);
+  // Keep stdout byte-for-byte parseable. Runtime warnings and diagnostics on
+  // stderr are a separate MCP content block; appending them to JSON corrupts
+  // the structured CLI payload. Preserve stderr on failures too, where it can
+  // contain the root cause even when the CLI also emitted a JSON result.
+  return textResult(stdout || '(no output)', !ok, stderr);
 }
 
 function runJobsDir() {
@@ -286,10 +417,6 @@ function isRunJobPidAlive(pid) {
   }
 }
 
-function readJsonFile(file) {
-  return JSON.parse(readFileSync(file, 'utf-8'));
-}
-
 function tailText(text, maxLines = 40) {
   if (!text) return '';
   const lines = text.split('\n');
@@ -304,27 +431,120 @@ const MAX_RUN_RESPONSE_CHARS = 200_000; // ~50k tokens — keep megabyte outputs
 // truncating raw bytes mid-structure.
 export function capRunResultText(text) {
   if (!text || text.length <= MAX_RUN_RESPONSE_CHARS) return text;
+  const outputKeys = ['stderr', 'stdout', 'output', 'outputHead', 'outputTail'];
+  let remaining = MAX_RUN_RESPONSE_CHARS;
   const tailField = (obj, key) => {
     const value = obj?.[key];
-    if (typeof value !== 'string' || value.length <= MAX_RUN_RESPONSE_CHARS) return;
-    const dropped = value.length - MAX_RUN_RESPONSE_CHARS;
-    obj[key] = `... [${dropped} chars truncated — showing tail; use limit/maxTokens instead of raw:true for smaller output] ...\n${value.slice(-MAX_RUN_RESPONSE_CHARS)}`;
+    if (typeof value !== 'string') return;
+    const allowance = Math.max(0, Math.min(value.length, remaining));
+    remaining -= allowance;
+    if (allowance === value.length) return;
+    const marker = `... [${value.length - allowance} chars truncated — showing tail; use limit/maxTokens instead of raw:true for smaller output] ...\n`;
+    obj[key] = allowance > marker.length
+      ? `${marker}${value.slice(-(allowance - marker.length))}`
+      : marker.slice(0, allowance);
   };
   try {
     const parsed = JSON.parse(text);
-    tailField(parsed, 'stdout');
+    // Charge non-output metadata first so the aggregate, not each individual
+    // field, fits the response budget. Large nested fields are then assigned a
+    // shared tail budget in diagnostic priority order.
+    const shell = structuredClone(parsed);
+    for (const key of outputKeys) delete shell[key];
+    if (shell.result) {
+      shell.result = { ...shell.result };
+      for (const key of outputKeys) delete shell.result[key];
+    }
+    remaining = Math.max(0, MAX_RUN_RESPONSE_CHARS - JSON.stringify(shell).length - 1024);
     tailField(parsed, 'stderr');
+    tailField(parsed, 'stdout');
     tailField(parsed, 'output');
     if (parsed.result) {
-      tailField(parsed.result, 'stdout');
       tailField(parsed.result, 'stderr');
+      tailField(parsed.result, 'stdout');
       tailField(parsed.result, 'output');
+      tailField(parsed.result, 'outputHead');
+      tailField(parsed.result, 'outputTail');
     }
-    return JSON.stringify(parsed, null, 2);
+    let rendered = JSON.stringify(parsed, null, 2);
+    if (rendered.length <= MAX_RUN_RESPONSE_CHARS) return rendered;
+
+    // Escaping and indentation add some overhead. Tighten the last populated
+    // fields until the serialized aggregate is within the hard cap.
+    const containers = [parsed.result, parsed].filter(Boolean);
+    for (const container of containers) {
+      for (const key of ['outputTail', 'outputHead', 'output', 'stdout', 'stderr']) {
+        if (rendered.length <= MAX_RUN_RESPONSE_CHARS) break;
+        if (typeof container[key] !== 'string') continue;
+        const excess = rendered.length - MAX_RUN_RESPONSE_CHARS;
+        container[key] = container[key].slice(Math.min(container[key].length, excess + 64));
+        rendered = JSON.stringify(parsed, null, 2);
+      }
+    }
+    return rendered.length <= MAX_RUN_RESPONSE_CHARS
+      ? rendered
+      : JSON.stringify({
+        truncated: true,
+        message: 'tl_run metadata exceeded the aggregate MCP response cap.',
+      }, null, 2);
   } catch {
     const dropped = text.length - MAX_RUN_RESPONSE_CHARS;
-    return `... [${dropped} chars truncated — showing tail] ...\n${text.slice(-MAX_RUN_RESPONSE_CHARS)}`;
+    const marker = `... [${dropped} chars truncated — showing tail] ...\n`;
+    return `${marker}${text.slice(-(MAX_RUN_RESPONSE_CHARS - marker.length))}`;
   }
+}
+
+async function pathExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Read at most maxBytes from a job artifact. Polling must not synchronously
+// load or parse an arbitrarily large file written by an older worker.
+async function readBoundedJobFile(path, maxBytes, { tailOnly = false } = {}) {
+  let handle;
+  try {
+    handle = await openFile(path, 'r');
+    const { size } = await handle.stat();
+    if (size === 0) return '';
+    if (size <= maxBytes) {
+      const buffer = Buffer.alloc(size);
+      await handle.read(buffer, 0, size, 0);
+      return buffer.toString('utf8');
+    }
+
+    if (tailOnly) {
+      const buffer = Buffer.alloc(maxBytes);
+      await handle.read(buffer, 0, maxBytes, size - maxBytes);
+      return buffer.toString('utf8');
+    }
+
+    const headBytes = Math.floor(maxBytes / 2);
+    const tailBytes = maxBytes - headBytes;
+    const head = Buffer.alloc(headBytes);
+    const tail = Buffer.alloc(tailBytes);
+    await handle.read(head, 0, headBytes, 0);
+    await handle.read(tail, 0, tailBytes, size - tailBytes);
+    return `${head.toString('utf8')}\n... [${size - maxBytes} bytes omitted from stored job output] ...\n${tail.toString('utf8')}`;
+  } catch (err) {
+    if (err?.code === 'ENOENT') return '';
+    throw err;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+async function readRunJobStatusFile(statusFile) {
+  const text = await readBoundedJobFile(statusFile, MAX_JOB_STATUS_BYTES);
+  if (!text) return null;
+  if (Buffer.byteLength(text) >= MAX_JOB_STATUS_BYTES && !text.trimEnd().endsWith('}')) {
+    throw new Error('Async job status exceeded the status-file limit');
+  }
+  return JSON.parse(text);
 }
 
 export function runArgs({ command, type, raw, timeoutMs, diff, limit, maxTokens, noSplit }) {
@@ -346,11 +566,12 @@ function resolveAsyncWaitSeconds(waitSeconds) {
   return Math.min(Math.round(waitSeconds), MAX_ASYNC_WAIT_SECONDS);
 }
 
-function readRunJobStatus(jobId) {
+async function readRunJobStatus(jobId) {
   const dir = runJobDir(jobId);
-  if (!dir || !existsSync(dir)) return null;
+  if (!dir || !(await pathExists(dir))) return null;
   const statusFile = join(dir, 'status.json');
-  const status = readJsonFile(statusFile);
+  const status = await readRunJobStatusFile(statusFile);
+  if (!status) return null;
   // A "running" job always has a pid; if that process is gone (runner crashed,
   // host rebooted, ...) the job would otherwise poll as "running" forever.
   if (status.status === 'running' && !isRunJobPidAlive(status.pid)) {
@@ -362,8 +583,8 @@ function readRunJobStatus(jobId) {
     };
     try {
       const tmp = `${statusFile}.tmp`;
-      writeFileSync(tmp, `${JSON.stringify(orphaned)}\n`, 'utf-8');
-      renameSync(tmp, statusFile);
+      await writeFileAsync(tmp, `${JSON.stringify(orphaned)}\n`, 'utf-8');
+      await renameAsync(tmp, statusFile);
     } catch { /* best-effort — next poll retries the liveness check */ }
     return orphaned;
   }
@@ -374,7 +595,7 @@ async function waitForRunJob(jobId, waitSeconds) {
   const deadline = Date.now() + (resolveAsyncWaitSeconds(waitSeconds) * 1000);
   while (Date.now() < deadline) {
     try {
-      const status = readRunJobStatus(jobId);
+      const status = await readRunJobStatus(jobId);
       if (status?.status === 'completed' || status?.status === 'failed') return;
     } catch { /* status may be mid-rename; retry */ }
     await sleep(Math.min(250, Math.max(0, deadline - Date.now())));
@@ -383,7 +604,7 @@ async function waitForRunJob(jobId, waitSeconds) {
 
 async function formatRunJobPoll(jobId, { tailLines, waitSeconds } = {}) {
   const dir = runJobDir(jobId);
-  if (!dir || !existsSync(dir)) {
+  if (!dir || !(await pathExists(dir))) {
     return textResult(`Unknown tl_run jobId: ${jobId}`, true);
   }
 
@@ -391,15 +612,20 @@ async function formatRunJobPoll(jobId, { tailLines, waitSeconds } = {}) {
 
   let status;
   try {
-    status = readRunJobStatus(jobId);
+    status = await readRunJobStatus(jobId);
   } catch {
     return textResult(`tl_run job ${jobId} has no readable status yet`, true);
   }
 
   const stdoutFile = join(dir, 'stdout.json');
   const stderrFile = join(dir, 'stderr.log');
-  const stdout = existsSync(stdoutFile) ? readFileSync(stdoutFile, 'utf-8').trim() : '';
-  const stderr = existsSync(stderrFile) ? readFileSync(stderrFile, 'utf-8').trim() : '';
+  const terminal = status.status === 'completed' || status.status === 'failed';
+  const stdout = (await readBoundedJobFile(stdoutFile,
+    terminal ? MAX_ASYNC_CAPTURE_BYTES + 4096 : MAX_POLL_TAIL_BYTES,
+    { tailOnly: !terminal })).trim();
+  const stderr = (await readBoundedJobFile(stderrFile,
+    terminal ? MAX_ASYNC_CAPTURE_BYTES + 4096 : MAX_POLL_TAIL_BYTES,
+    { tailOnly: !terminal })).trim();
 
   if (status.status === 'completed' || status.status === 'failed') {
     let result = null;
@@ -463,6 +689,7 @@ async function startRunJob({ command, type, raw, timeoutMs, diff, limit, maxToke
     statusFile,
     stdoutFile: join(dir, 'stdout.json'),
     stderrFile: join(dir, 'stderr.log'),
+    maxCaptureBytes: MAX_ASYNC_CAPTURE_BYTES,
     startedAt,
   };
 
@@ -489,8 +716,7 @@ async function startRunJob({ command, type, raw, timeoutMs, diff, limit, maxToke
 async function dispatchToolWithStdin(tool, args, stdinData, opts) {
   const { stdout, stderr, ok } = await runCliWithStdin(tool, args, stdinData, opts);
   if (!ok && !stdout) return textResult(withCwdHint(stderr || 'Tool failed with no output', opts), true);
-  const text = ok && stderr ? `${stdout}\n\n[stderr: ${stderr}]` : stdout;
-  return textResult(text || '(no output)', !ok);
+  return textResult(stdout || '(no output)', !ok, stderr);
 }
 
 const cwdSchema = z.string().optional().describe("Working directory for the tool. The MCP server's default cwd may NOT match your session/project/worktree (a shared/global server runs from wherever it was launched). If your file paths are relative, set this to your project root — or pass absolute paths — to avoid \"Not found\" errors.");
@@ -674,6 +900,24 @@ export const TOOLS = [
     }),
     handler: async ({ file, cwd }) => {
       return dispatchTool('impact', [file, '-j'], { cwd });
+    },
+  },
+  {
+    name: 'tl_deps',
+    description: 'Show imports and dependencies for a file, categorized by package, local file, built-in, asset, and dynamic import.',
+    schema: withCwd({
+      file: z.string().describe('File to analyze dependencies for'),
+      resolve: z.boolean().optional().describe('Show resolved paths for local imports'),
+      tree: z.boolean().optional().describe('Show a local dependency tree'),
+      depth: z.number().optional().describe('Maximum dependency tree depth (default: 2)'),
+    }),
+    handler: async ({ file, resolve, tree, depth, cwd }) => {
+      const args = [file];
+      if (resolve) args.push('--resolve');
+      if (tree) args.push('--tree');
+      if (depth !== undefined) args.push('--depth', String(depth));
+      args.push('-j');
+      return dispatchTool('deps', args, { cwd });
     },
   },
   {
@@ -1155,13 +1399,14 @@ export const TOOLS = [
 // Registration
 // ─────────────────────────────────────────────────────────────
 
+export function registerToolDefinition(server, tool) {
+  // registerTool()'s config form accepts either a raw shape (most tools) or an
+  // actual Zod schema instance (the strict tl_gh_* schemas). Always use this
+  // path, including selective registration in tl-mcp --tools: the legacy
+  // server.tool() overload misreads a real ZodObject as annotations.
+  server.registerTool(tool.name, { description: tool.description, inputSchema: tool.schema }, tool.handler);
+}
+
 export function registerTools(server) {
-  for (const tool of TOOLS) {
-    // registerTool()'s config form accepts either a raw shape (most tools) or
-    // an actual Zod schema instance (the strict tl_gh_* schemas) as
-    // inputSchema — the legacy server.tool(name, description, schema, cb)
-    // argument-sniffing form only recognizes raw shapes, so a real ZodObject
-    // there gets misread as an annotations object.
-    server.registerTool(tool.name, { description: tool.description, inputSchema: tool.schema }, tool.handler);
-  }
+  for (const tool of TOOLS) registerToolDefinition(server, tool);
 }

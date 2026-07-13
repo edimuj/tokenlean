@@ -18,11 +18,7 @@ if (process.argv.includes('--prompt')) {
 }
 
 import {
-  closeSync,
   existsSync,
-  openSync,
-  readFileSync,
-  readSync,
   statSync,
   unwatchFile,
   watchFile
@@ -34,6 +30,7 @@ import {
   COMMON_OPTIONS_HELP
 } from '../src/output.mjs';
 import { stripAnsi } from '../src/text-util.mjs';
+import { readFileRangeChunks, readTailFile, readTailStream } from '../src/tail-reader.mjs';
 
 const HELP = `
 tl-tail - Token-efficient log tailing and summarization
@@ -59,6 +56,7 @@ const DEFAULT_TAIL_LINES = 600;
 const TOP_LIMIT = 8;
 const RECENT_LIMIT = 10;
 const MAX_LINE_PREVIEW = 200;
+const MAX_PENDING_LINE_CHARS = 256 * 1024;
 
 const ERROR_RE = /\b(error|err\b|fatal|panic|exception|traceback|uncaught|failed|failure|critical|segfault)\b/i;
 const WARN_RE = /\b(warn|warning|deprecated|retry|slow)\b/i;
@@ -131,32 +129,6 @@ function splitLines(text) {
 function takeTail(lines, count) {
   if (!Number.isFinite(count) || count <= 0) return lines;
   return lines.length > count ? lines.slice(-count) : lines;
-}
-
-function readStdin() {
-  return new Promise((resolvePromise, rejectPromise) => {
-    let content = '';
-    process.stdin.setEncoding('utf-8');
-    process.stdin.on('data', chunk => {
-      content += chunk;
-    });
-    process.stdin.on('end', () => resolvePromise(content));
-    process.stdin.on('error', rejectPromise);
-  });
-}
-
-function readFileRange(path, start, end) {
-  const length = Math.max(0, end - start);
-  if (length === 0) return '';
-
-  const fd = openSync(path, 'r');
-  try {
-    const buffer = Buffer.alloc(length);
-    const bytesRead = readSync(fd, buffer, 0, length, start);
-    return buffer.subarray(0, bytesRead).toString('utf-8');
-  } finally {
-    closeSync(fd);
-  }
 }
 
 function shortenLine(line, maxLength = MAX_LINE_PREVIEW) {
@@ -327,6 +299,9 @@ function emitSnapshot(options, snapshot, context) {
     if (context.addedLines != null) {
       out.setData('addedLines', context.addedLines);
     }
+    if (context.inputTruncated) {
+      out.setData('inputTruncated', true);
+    }
     out.setData('totals', {
       lines: snapshot.totalLines,
       clusters: snapshot.uniqueClusters,
@@ -345,19 +320,23 @@ function emitSnapshot(options, snapshot, context) {
 function splitChunkWithRemainder(text, pending) {
   const merged = normalizeNewlines(pending + text);
   const lines = merged.split('\n');
-  const remainder = lines.pop() || '';
+  let remainder = lines.pop() || '';
+  if (remainder.length > MAX_PENDING_LINE_CHARS) {
+    remainder = `${remainder.slice(0, MAX_PENDING_LINE_CHARS)}... [line truncated]`;
+  }
   return { lines, remainder };
 }
 
 async function summarizeSnapshot(filePath, sourceLabel, tailLines, options) {
-  const content = readFileSync(filePath, 'utf-8');
-  const lines = takeTail(splitLines(content), tailLines);
+  const input = readTailFile(filePath, tailLines);
+  const lines = takeTail(splitLines(input.text), tailLines);
   const reducer = new LogReducer();
   const addedLines = reducer.ingest(lines);
   emitSnapshot(options, reducer.snapshot(), {
     source: sourceLabel,
     follow: false,
-    addedLines
+    addedLines,
+    inputTruncated: input.inputTruncated
   });
 }
 
@@ -368,14 +347,15 @@ async function followFile(filePath, sourceLabel, tailLines, options) {
   let polling = false;
   let stopped = false;
 
-  const initialContent = readFileSync(filePath, 'utf-8');
-  offset = Buffer.byteLength(initialContent, 'utf8');
-  const initialLines = takeTail(splitLines(initialContent), tailLines);
+  const initialInput = readTailFile(filePath, tailLines);
+  offset = initialInput.totalBytes;
+  const initialLines = takeTail(splitLines(initialInput.text), tailLines);
   const initialAdded = reducer.ingest(initialLines);
   emitSnapshot(options, reducer.snapshot(), {
     source: sourceLabel,
     follow: true,
-    addedLines: initialAdded
+    addedLines: initialAdded,
+    inputTruncated: initialInput.inputTruncated
   });
 
   const stop = (code = 0) => {
@@ -407,12 +387,13 @@ async function followFile(filePath, sourceLabel, tailLines, options) {
         return;
       }
 
-      const chunk = readFileRange(filePath, offset, stats.size);
+      let addedLines = 0;
+      readFileRangeChunks(filePath, offset, stats.size, chunk => {
+        const parsed = splitChunkWithRemainder(chunk, pending);
+        pending = parsed.remainder;
+        addedLines += reducer.ingest(parsed.lines);
+      });
       offset = stats.size;
-
-      const parsed = splitChunkWithRemainder(chunk, pending);
-      pending = parsed.remainder;
-      const addedLines = reducer.ingest(parsed.lines);
 
       if (addedLines > 0) {
         emitSnapshot(options, reducer.snapshot(), {
@@ -473,8 +454,7 @@ async function main() {
     process.exit(2);
   }
 
-  const stdinContent = await readStdin();
-  const lines = takeTail(splitLines(stdinContent), tailLines);
+  const lines = await readTailStream(process.stdin, tailLines);
   const reducer = new LogReducer();
   const addedLines = reducer.ingest(lines);
   emitSnapshot(options, reducer.snapshot(), {

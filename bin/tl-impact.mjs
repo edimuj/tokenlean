@@ -10,7 +10,7 @@
  */
 
 // Prompt info for tl-prompt
-if (process.argv.includes('--prompt')) {
+if (isMainModule(import.meta.url) && process.argv.includes('--prompt')) {
   console.log(JSON.stringify({
     name: 'tl-impact',
     desc: 'Blast radius - what depends on this file',
@@ -33,6 +33,7 @@ import { findProjectRoot, categorizeFile, detectLanguage } from '../src/project.
 import { withCache } from '../src/cache.mjs';
 import { listFiles } from '../src/traverse.mjs';
 import { formatImportBindings, getJsTsProjectGraph } from '../src/semantic-js-graph.mjs';
+import { isMainModule } from '../src/in-process-cli.mjs';
 
 const HELP = `
 tl-impact - Analyze the blast radius of changing a file
@@ -371,7 +372,7 @@ function printCategory(out, title, files, emoji, showWhy) {
 // Main
 // ─────────────────────────────────────────────────────────────
 
-const args = process.argv.slice(2);
+export function runImpactCli(args = process.argv.slice(2)) {
 const options = parseCommonArgs(args);
 
 // Parse tool-specific options
@@ -430,7 +431,7 @@ if (useJsTsGraph) {
   const reverseMap = withCache(
     { op: 'reverse-import-map' },
     () => buildReverseImportMap(projectRoot),
-    { projectRoot, headOnly: true }
+    { projectRoot }
   );
 
   const directImporters = findDirectImporters(resolvedPath, reverseMap);
@@ -505,3 +506,6 @@ out.stats(`   Changing ${basename(resolvedPath)} may affect all listed files.`);
 out.blank();
 
 out.print();
+}
+
+if (isMainModule(import.meta.url)) runImpactCli();
