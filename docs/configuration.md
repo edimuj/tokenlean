@@ -60,6 +60,31 @@ Create in your project root or `~/.tokenleanrc.json` globally.
 
 Config values extend built-in defaults (they don't replace them).
 
+### Output budgets
+
+`output.maxLines` and `output.maxTokens` are production defaults for every CLI
+that uses tokenlean's common output options. Command-line flags still override
+them for a one-off call:
+
+```bash
+tl symbols src --max-lines 200 --max-tokens 12000
+```
+
+JSON output observes the same limits. When its primary result collection is
+larger than `maxLines`, the response remains valid JSON and includes
+`pagination` plus a `continuation` object. Continue a CLI page with the emitted
+`continuation.cliArguments`, or an MCP page with
+`continuation.arguments` (`offset` and `maxItems`). Nested arrays inside a
+returned item are kept intact; pagination applies to one primary collection.
+
+MCP calls default to 100 items and approximately 8,000 aggregate response
+tokens when no tighter project/global output limit or request budget is
+supplied. Read-only MCP callers can set `maxItems`, `maxTokens`, and `offset`;
+configured limits act as ceilings, and continuations preserve the original
+arguments so they can be invoked directly. Commands and mutations are
+token-bounded but non-pageable, so a continuation can never replay a side
+effect. The aggregate ceiling includes diagnostics and compatibility content.
+
 `externalContractFiles` are project-relative paths copied/generated verbatim into another tool (so they can't import from your source). Their duplicate helpers are by-design, so `tl dupes`, `tl unused`, and `tl lookup` exclude them from their indexes by default. `tl dupes --include-contracts` opts them back in.
 
 ### Suppressing intentional unused exports (`unused`)

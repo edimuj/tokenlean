@@ -112,8 +112,16 @@ function failGit(options, result) {
   const message = result.stderr || result.stdout || `git exited ${result.status}`;
   if (options.json) {
     const out = createOutput(options);
+    const effectiveCwd = process.cwd();
     out.setData('ok', false);
-    out.setData('error', { command, message, exitCode: result.status });
+    out.setData('error', {
+      code: 'TL_DIFF_GIT_FAILED',
+      message,
+      effectiveCwd,
+      recoveryCall: { tool: 'tl_diff', arguments: { cwd: effectiveCwd } },
+      command,
+      exitCode: result.status,
+    });
     out.print();
   } else {
     console.error(`Error: ${message}`);

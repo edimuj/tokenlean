@@ -82,6 +82,10 @@ describe('MCP CLI underlay regressions', () => {
       assert.notStrictEqual(result.status, 0);
       const parsed = JSON.parse(result.stdout);
       assert.strictEqual(parsed.ok, false);
+      assert.strictEqual(parsed.resultState, 'failed');
+      assert.strictEqual(parsed.error.code, 'TL_DIFF_GIT_FAILED');
+      assert.strictEqual(parsed.error.effectiveCwd, repo);
+      assert.strictEqual(parsed.error.recoveryCall.tool, 'tl_diff');
       assert.match(parsed.error.message, /ambiguous argument|unknown revision|bad revision/i);
       assert.match(parsed.error.command, /git diff/);
     } finally {

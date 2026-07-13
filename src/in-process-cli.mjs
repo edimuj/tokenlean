@@ -43,6 +43,7 @@ export function invokeInProcessCli(run, args = [], { cwd } = {}) {
   const previousLog = console.log;
   const previousError = console.error;
   const previousWarn = console.warn;
+  const previousMcpBudget = process.env.TOKENLEAN_MCP_RESPONSE_BUDGET;
   const stdout = [];
   const stderr = [];
   let exitCode = 0;
@@ -50,6 +51,7 @@ export function invokeInProcessCli(run, args = [], { cwd } = {}) {
 
   try {
     if (cwd) process.chdir(cwd);
+    process.env.TOKENLEAN_MCP_RESPONSE_BUDGET = '1';
     process.exitCode = undefined;
     console.log = capture(stdout);
     console.error = capture(stderr);
@@ -74,6 +76,8 @@ export function invokeInProcessCli(run, args = [], { cwd } = {}) {
     console.log = previousLog;
     console.error = previousError;
     console.warn = previousWarn;
+    if (previousMcpBudget === undefined) delete process.env.TOKENLEAN_MCP_RESPONSE_BUDGET;
+    else process.env.TOKENLEAN_MCP_RESPONSE_BUDGET = previousMcpBudget;
     if (process.cwd() !== previousCwd) process.chdir(previousCwd);
   }
 

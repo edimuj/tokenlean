@@ -1,5 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { clearConfigCache } from './config.mjs';
 import {
   DEFAULT_MAX_STRUCTURED_CHARS,
   estimateTokens,
@@ -101,6 +105,7 @@ describe('parseCommonArgs', () => {
     const opts = parseCommonArgs([]);
     assert.strictEqual(opts.maxLines, Infinity);
     assert.strictEqual(opts.maxTokens, Infinity);
+    assert.strictEqual(opts.offset, 0);
     assert.strictEqual(opts.json, false);
     assert.strictEqual(opts.quiet, false);
     assert.strictEqual(opts.help, false);
@@ -110,6 +115,44 @@ describe('parseCommonArgs', () => {
   it('-l 0 is preserved as 0 (not coerced to Infinity)', () => {
     const opts = parseCommonArgs(['-l', '0']);
     assert.strictEqual(opts.maxLines, 0);
+  });
+
+  it('uses configured global output defaults when flags are absent', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tl-output-config-'));
+    const previousCwd = process.cwd();
+    try {
+      writeFileSync(join(dir, '.tokenleanrc.json'), JSON.stringify({
+        output: { maxLines: 7, maxTokens: 123, format: 'json' }
+      }));
+      process.chdir(dir);
+      clearConfigCache();
+      const opts = parseCommonArgs([]);
+      assert.strictEqual(opts.maxLines, 7);
+      assert.strictEqual(opts.maxTokens, 123);
+      assert.strictEqual(opts.json, true);
+    } finally {
+      process.chdir(previousCwd);
+      clearConfigCache();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('lets explicit flags override configured output defaults', () => {
+    const opts = parseCommonArgs(['-l', '20', '-t', '500', '--offset', '40'], {
+      outputConfig: { maxLines: 7, maxTokens: 123, format: 'text' }
+    });
+    assert.strictEqual(opts.maxLines, 20);
+    assert.strictEqual(opts.maxTokens, 500);
+    assert.strictEqual(opts.offset, 40);
+  });
+
+  it('treats zero/negative configured limits as disabled without changing explicit -l 0', () => {
+    const opts = parseCommonArgs([], {
+      outputConfig: { maxLines: 0, maxTokens: -1, format: 'text' }
+    });
+    assert.strictEqual(opts.maxLines, Infinity);
+    assert.strictEqual(opts.maxTokens, Infinity);
+    assert.strictEqual(parseCommonArgs(['-l', '0']).maxLines, 0);
   });
 });
 
@@ -239,6 +282,21 @@ describe('Output', () => {
     assert.deepStrictEqual(parsed.values, [{ i: 0 }, { i: 1 }, { i: 2 }]);
     assert.strictEqual(parsed.truncated, true);
     assert.ok(bounded.text.length <= 500);
+  });
+
+  it('paginates one primary collection and emits a usable continuation', () => {
+    const bounded = stringifyBoundedJson({
+      tags: ['metadata'],
+      rows: Array.from({ length: 6 }, (_, i) => ({ i, members: [`m${i}-a`, `m${i}-b`] }))
+    }, { maxChars: 5000, maxItems: 2, offset: 2 });
+    const parsed = JSON.parse(bounded.text);
+
+    assert.deepStrictEqual(parsed.tags, ['metadata']);
+    assert.deepStrictEqual(parsed.rows.map(row => row.i), [2, 3]);
+    assert.deepStrictEqual(parsed.rows[0].members, ['m2-a', 'm2-b']);
+    assert.strictEqual(parsed.pagination.collections[0].path, '$.rows');
+    assert.strictEqual(parsed.pagination.collections[0].totalItems, 6);
+    assert.deepStrictEqual(parsed.continuation.arguments, { offset: 4, maxItems: 2, maxTokens: 1250 });
   });
 
   it('section adds title and formatted items', () => {

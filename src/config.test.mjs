@@ -1,6 +1,9 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { deepMerge, DEFAULT_CONFIG, clearConfigCache } from './config.mjs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { deepMerge, DEFAULT_CONFIG, clearConfigCache, loadConfig } from './config.mjs';
 
 describe('deepMerge', () => {
   it('merges flat objects', () => {
@@ -100,5 +103,55 @@ describe('clearConfigCache', () => {
     clearConfigCache();
     clearConfigCache();
     assert.ok(true);
+  });
+});
+
+describe('per-project config cache', () => {
+  afterEach(() => clearConfigCache());
+
+  it('does not leak the first MCP cwd config into a second project', () => {
+    const root = mkdtempSync(join(tmpdir(), 'tl-config-projects-'));
+    const first = join(root, 'first');
+    const second = join(root, 'second');
+    mkdirSync(first);
+    mkdirSync(second);
+    writeFileSync(join(first, '.tokenleanrc.json'), JSON.stringify({ output: { maxLines: 11 } }));
+    writeFileSync(join(second, '.tokenleanrc.json'), JSON.stringify({ output: { maxLines: 22 } }));
+
+    try {
+      assert.strictEqual(loadConfig({ startDir: first }).config.output.maxLines, 11);
+      assert.strictEqual(loadConfig({ startDir: second }).config.output.maxLines, 22);
+      assert.strictEqual(loadConfig({ startDir: first }).config.output.maxLines, 11);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('invalidates a cached config after a same-process edit', () => {
+    const root = mkdtempSync(join(tmpdir(), 'tl-config-edit-'));
+    const configPath = join(root, '.tokenleanrc.json');
+    try {
+      writeFileSync(configPath, JSON.stringify({ output: { maxLines: 11 } }));
+      assert.strictEqual(loadConfig({ startDir: root }).config.output.maxLines, 11);
+      // Same-length rewrite exercises content invalidation, not just size.
+      writeFileSync(configPath, JSON.stringify({ output: { maxLines: 33 } }));
+      assert.strictEqual(loadConfig({ startDir: root }).config.output.maxLines, 33);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('detects a newly-created nearer project config', () => {
+    const root = mkdtempSync(join(tmpdir(), 'tl-config-nearer-'));
+    const nested = join(root, 'packages', 'app');
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(root, '.tokenleanrc.json'), JSON.stringify({ output: { maxLines: 10 } }));
+    try {
+      assert.strictEqual(loadConfig({ startDir: nested }).config.output.maxLines, 10);
+      writeFileSync(join(nested, '.tokenleanrc.json'), JSON.stringify({ output: { maxLines: 20 } }));
+      assert.strictEqual(loadConfig({ startDir: nested }).config.output.maxLines, 20);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

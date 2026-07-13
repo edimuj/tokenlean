@@ -7,7 +7,6 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { capRunResultText, IN_PROCESS_TOOL_NAMES, TOOLS, registerTools, runArgs, runJobDir, withCwdHint } from './mcp-tools.mjs';
 
@@ -142,7 +141,7 @@ describe('MCP tool definitions', () => {
 
   it('tl_run advertises commandTimeoutMs/commandTimeoutSeconds plus a documented "timeout" alias', () => {
     const runTool = TOOLS.find(tool => tool.name === 'tl_run');
-    const schemaKeys = new Set(Object.keys(runTool.schema));
+    const schemaKeys = new Set(Object.keys(runTool.schema.shape));
 
     assert.ok(schemaKeys.has('commandTimeoutMs'));
     assert.ok(schemaKeys.has('commandTimeoutSeconds'));
@@ -151,20 +150,136 @@ describe('MCP tool definitions', () => {
 
   it('tl_run schema keeps "timeout" instead of silently stripping it as an unknown key', () => {
     const runTool = TOOLS.find(tool => tool.name === 'tl_run');
-    const parsed = z.object(runTool.schema).parse({ command: 'echo hi', timeout: 5 });
+    const parsed = runTool.schema.parse({ command: 'echo hi', timeout: 5 });
     assert.strictEqual(parsed.timeout, 5);
   });
 
   it('tl_run schema exposes limit/maxTokens/noSplit budget params', () => {
     const runTool = TOOLS.find(tool => tool.name === 'tl_run');
     for (const key of ['limit', 'maxTokens', 'noSplit']) {
-      assert.ok(runTool.schema[key], `schema should accept "${key}"`);
+      assert.ok(runTool.schema.shape[key], `schema should accept "${key}"`);
     }
   });
 
   it('tl_run wires limit/maxTokens/noSplit through to the tl-run CLI flags (-l/-t/--no-split)', () => {
     const args = runArgs({ command: 'echo hi', limit: 40, maxTokens: 2000, noSplit: true });
     assert.deepStrictEqual(args, ['echo hi', '-l', '40', '-t', '2000', '--no-split', '-j']);
+  });
+
+  it('makes every MCP input schema strict', () => {
+    for (const tool of TOOLS) {
+      const result = tool.schema.safeParse({ bogusKey: true });
+      assert.strictEqual(result.success, false, tool.name);
+      assert.ok(
+        result.error.issues.some(issue => issue.code === 'unrecognized_keys' && issue.keys?.includes('bogusKey')),
+        `${tool.name} did not reject bogusKey: ${JSON.stringify(result.error.issues)}`
+      );
+    }
+  });
+
+  it('rejects fractional, negative, zero, and over-limit numeric options', () => {
+    const invalid = [
+      ['tl_snippet', { name: 'render', context: 1.5 }],
+      ['tl_snippet', { name: 'render', context: -1 }],
+      ['tl_run', { command: 'echo ok', waitSeconds: 111 }],
+      ['tl_run', { command: 'echo ok', limit: 0 }],
+      ['tl_deps', { file: 'src/a.js', depth: 0 }],
+      ['tl_guard', { detailLimit: -1 }],
+      ['tl_dupes', { near: 0 }],
+      ['tl_dupes', { near: 1.01 }],
+      ['tl_dupes', { minTokens: 1.5 }],
+      ['tl_lookup', { query: 'parse', limit: 2.5 }],
+      ['tl_lookup', { query: 'parse', minScore: -0.01 }],
+      ['tl_context', { top: 0 }],
+      ['tl_structure', { depth: 0 }],
+      ['tl_structure', { offset: 10_000_001 }],
+      ['tl_gh_issue_read', { repo: 'o/r', issue: 1.5 }],
+      ['tl_gh_issue_read', { repo: 'o/r', issue: 0 }],
+    ];
+
+    for (const [name, input] of invalid) {
+      const result = TOOLS.find(tool => tool.name === name).schema.safeParse(input);
+      assert.strictEqual(result.success, false, `${name} accepted ${JSON.stringify(input)}`);
+    }
+  });
+
+  it('rejects conflicting aliases and mutually exclusive input modes', () => {
+    const conflicts = [
+      ['tl_run', { command: 'echo ok', commandTimeoutMs: 1000, timeout: 2 }],
+      ['tl_run', { command: 'echo ok', jobId: randomUUID() }],
+      ['tl_tail', { file: 'app.log', maxLines: 20, lines: 20 }],
+      ['tl_diff', { ref: 'HEAD~1', staged: true }],
+      ['tl_context', { top: 10, all: true }],
+      ['tl_pack', { pack: 'debug', target: 'tests', command: 'npm test' }],
+      ['tl_gh_issue_read', { repo: 'o/r', issue: 1, number: 2 }],
+      ['tl_gh_issue_read', { repo: 'o/r', owner: 'different', issue: 1 }],
+      ['tl_gh_issue_read', { repo: 'o/r', issue: 1, full: true, noBody: true }],
+      ['tl_gh_issue_add_sub', { repo: 'o/r', parent: 1, issue: 2, children: [3] }],
+      ['tl_gh_issue_add_sub', { repo: 'o/r', parent: 1, children: [2], sub: [3] }],
+      ['tl_gh_issue_label_batch', { repo: 'o/r', issues: [1], add: 'bug', addLabels: ['P1'] }],
+      ['tl_gh_issue_create_batch', { repo: 'o/r', issues: [{ title: 'A' }], specs: [{ title: 'B' }] }],
+    ];
+
+    for (const [name, input] of conflicts) {
+      const result = TOOLS.find(tool => tool.name === name).schema.safeParse(input);
+      assert.strictEqual(result.success, false, `${name} accepted ${JSON.stringify(input)}`);
+      assert.match(result.error.issues.map(issue => issue.message).join('\n'), /conflict|only one/i, name);
+    }
+  });
+
+  it('requires scalar identifiers for single destructive operations', () => {
+    const close = TOOLS.find(tool => tool.name === 'tl_gh_issue_close').schema;
+    assert.strictEqual(close.safeParse({ repo: 'o/r', issues: 1 }).success, true);
+    assert.strictEqual(close.safeParse({ repo: 'o/r', issue_number: 1 }).success, true);
+    assert.strictEqual(close.safeParse({ repo: 'o/r', issues: [1, 2] }).success, false);
+    assert.strictEqual(close.safeParse({ repo: 'o/r', number: [1, 2] }).success, false);
+
+    const closeBatch = TOOLS.find(tool => tool.name === 'tl_gh_issue_close_batch').schema;
+    assert.strictEqual(closeBatch.safeParse({ repo: 'o/r', issues: [1, 2] }).success, true);
+    assert.strictEqual(closeBatch.safeParse({
+      repo: 'o/r', issues: Array.from({ length: 101 }, (_, index) => index + 1)
+    }).success, false);
+
+    const addSub = TOOLS.find(tool => tool.name === 'tl_gh_issue_add_sub').schema;
+    assert.strictEqual(addSub.safeParse({ repo: 'o/r', issue_number: 1, children: [2] }).success, true);
+    assert.strictEqual(addSub.safeParse({ repo: 'o/r', number: [1, 2], children: [3] }).success, false);
+    assert.strictEqual(addSub.safeParse({ repo: 'o/r', issue_number: [1], children: [2] }).success, false);
+  });
+
+  it('bounds large strings, file lists, and create batches at the schema boundary', () => {
+    const symbols = TOOLS.find(tool => tool.name === 'tl_symbols').schema;
+    assert.strictEqual(symbols.safeParse({
+      files: Array.from({ length: 1001 }, (_, index) => `f${index}.js`)
+    }).success, false);
+
+    const run = TOOLS.find(tool => tool.name === 'tl_run').schema;
+    assert.strictEqual(run.safeParse({ command: 'x'.repeat(100_001) }).success, false);
+
+    const create = TOOLS.find(tool => tool.name === 'tl_gh_issue_create_batch').schema;
+    assert.strictEqual(create.safeParse({
+      repo: 'o/r',
+      issues: Array.from({ length: 101 }, (_, index) => ({ title: `Issue ${index}` }))
+    }).success, false);
+  });
+
+  it('keeps compatibility aliases only when one unambiguous alias is supplied', () => {
+    const run = TOOLS.find(tool => tool.name === 'tl_run').schema;
+    assert.strictEqual(run.safeParse({ command: 'echo ok', timeout: 5 }).success, true);
+    assert.strictEqual(run.safeParse({ jobId: randomUUID(), waitSeconds: 0, tailLines: 5 }).success, true);
+    assert.strictEqual(run.safeParse({ jobId: randomUUID(), maxTokens: 500 }).success, true);
+
+    const create = TOOLS.find(tool => tool.name === 'tl_gh_issue_create_batch').schema;
+    assert.strictEqual(create.safeParse({ repo: 'o/r', specs: [{ title: 'A' }] }).success, true);
+    assert.strictEqual(create.safeParse({ repo: 'o/r', specs: [{ title: 'A', typo: true }] }).success, false);
+
+    const read = TOOLS.find(tool => tool.name === 'tl_gh_issue_read').schema;
+    assert.strictEqual(read.safeParse({ repo: 'o/r', owner: 'o', issue_number: 1 }).success, true);
+    assert.strictEqual(read.safeParse({ repo: 'OpenAI/r', owner: 'openai', issue_number: 1 }).success, true);
+    assert.strictEqual(read.safeParse({ repo: 'r', owner: 'o', issue_number: 1 }).success, true);
+
+    const browse = TOOLS.find(tool => tool.name === 'tl_browse').schema;
+    assert.strictEqual(browse.safeParse({ url: 'example.com/docs' }).success, true);
+    assert.strictEqual(browse.safeParse({ url: 'ftp://example.com' }).success, false);
   });
 
   it('capRunResultText tails a huge stdout field instead of returning megabytes, keeping valid JSON', () => {
@@ -223,7 +338,8 @@ describe('MCP tool definitions', () => {
       const result = await runTool.handler({ jobId, waitSeconds: 0 });
       const payload = JSON.parse(result.content[0].text);
       assert.strictEqual(payload.status, 'failed');
-      assert.match(payload.error, /orphan/i);
+      assert.match(payload.error.message, /orphan/i);
+      assert.match(payload.legacyError, /orphan/i);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -916,12 +1032,12 @@ describe('MCP tool definitions', () => {
     assert.strictEqual(parsedGood.issue, 1);
     assert.deepStrictEqual(parsedGood.sub, [2, 3]);
 
-    // Non-gh tools intentionally keep default (non-strict) zod behavior —
-    // unknown keys are stripped, not errors. Strict mode is scoped to the gh
-    // family where the vent traced the actual problem.
+    // Strictness applies to every tool so typos never silently become defaults.
     const symbols = server._registeredTools['tl_symbols'];
-    const parsedSymbols = await server.validateToolInput(symbols, { files: 'a.js', bogusKey: true }, 'tl_symbols');
-    assert.strictEqual(parsedSymbols.bogusKey, undefined);
+    await assert.rejects(
+      () => server.validateToolInput(symbols, { files: 'a.js', bogusKey: true }, 'tl_symbols'),
+      /bogusKey/i
+    );
   });
 
   it('tl_gh_issue_add_sub resolves the parent from "number"/"issue_number" alias', async () => {

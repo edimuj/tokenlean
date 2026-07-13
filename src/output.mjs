@@ -4,6 +4,9 @@
  * Centralizes output formatting, truncation, and common options.
  */
 
+import { getConfig } from './config.mjs';
+import { inferMcpResultState } from './mcp-result.mjs';
+
 // ─────────────────────────────────────────────────────────────
 // Shell Escaping
 // ─────────────────────────────────────────────────────────────
@@ -33,33 +36,105 @@ function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+const STRUCTURED_SAFETY_KEYS = [
+  'resultState', 'error', 'errorDetails', 'failed', 'partialFailure',
+  'partial', 'unsupported', 'truncated'
+];
+const STRUCTURED_SAFETY_PRIORITY = new Map(STRUCTURED_SAFETY_KEYS.map((key, index) => [key, index]));
+
 function consume(state, chars) {
   if (chars > state.remainingChars) return false;
   state.remainingChars -= chars;
   return true;
 }
 
-function boundedString(value, state) {
-  let candidate = value;
+function recordPage(state, path, totalItems, returnedItems) {
+  const start = Math.min(state.offset, totalItems);
+  const hasPrevious = start > 0;
+  const hasMore = start + returnedItems < totalItems;
+  if (!hasPrevious && !hasMore) return;
+  state.truncated = true;
+  state.pages.push({
+    path,
+    offset: start,
+    limit: state.maxItems,
+    returnedItems,
+    totalItems,
+    hasPrevious,
+    hasMore,
+    nextOffset: hasMore ? start + returnedItems : null
+  });
+}
 
-  if (Number.isFinite(state.remainingItems) && candidate.includes('\n')) {
-    const keep = Math.max(0, state.remainingItems);
-    let end = 0;
-    let linesSeen = 1;
-    while (linesSeen <= keep) {
-      const newline = candidate.indexOf('\n', end);
-      if (newline === -1) break;
-      end = newline + 1;
-      linesSeen++;
-    }
-    if (linesSeen > keep || (keep === 0 && candidate.length > 0)) {
-      candidate = `${candidate.slice(0, keep === 0 ? 0 : end)}... [truncated]`;
-      state.remainingItems = 0;
-      state.truncated = true;
-    } else {
-      state.remainingItems -= linesSeen;
-    }
+function lineCount(value) {
+  let count = 1;
+  let cursor = 0;
+  while ((cursor = value.indexOf('\n', cursor)) !== -1) {
+    count++;
+    cursor++;
   }
+  return count;
+}
+
+// Select one stable, primary collection for item pagination. Nested arrays
+// inside returned rows are deliberately not offset: page 2 must not erase a
+// row's metadata/members. Among peer collections, the largest is usually the
+// command's actual result list (files, symbols, matches, importers, ...).
+function findPrimaryCollection(value, path = '$', seen = new Set()) {
+  if (typeof value === 'string') {
+    return value.includes('\n') ? { path, size: lineCount(value) } : null;
+  }
+  if (Array.isArray(value)) {
+    let best = { path, size: value.length };
+    // A one-item wrapper array commonly represents the project root while its
+    // child collection carries the real page (e.g. structure.tree[0].children).
+    // Do not descend into multi-row arrays: nested members belong to each row
+    // and must remain intact across pages.
+    if (value.length === 1 && isPlainObject(value[0])) {
+      const nested = findPrimaryCollection(value[0], `${path}[0]`, seen);
+      if (nested && nested.size > best.size) best = nested;
+    }
+    return best;
+  }
+  if (!isPlainObject(value) || seen.has(value)) return null;
+  seen.add(value);
+
+  let best = null;
+  for (const [key, item] of Object.entries(value)) {
+    const candidate = findPrimaryCollection(item, `${path}.${key}`, seen);
+    if (candidate && (!best || candidate.size > best.size)) best = candidate;
+  }
+  return best;
+}
+
+function pageMultilineString(value, state, path) {
+  if (!Number.isFinite(state.maxItems) || path !== state.pagePath || !value.includes('\n')) return value;
+
+  const startLine = state.offset;
+  const endLine = startLine + state.maxItems;
+  let line = 0;
+  let cursor = 0;
+  let selectedStart = startLine === 0 ? 0 : null;
+  let selectedEnd = state.maxItems === 0 ? 0 : value.length;
+
+  while (cursor < value.length) {
+    const newline = value.indexOf('\n', cursor);
+    if (newline === -1) break;
+    line++;
+    cursor = newline + 1;
+    if (line === startLine) selectedStart = cursor;
+    if (line === endLine) selectedEnd = cursor;
+  }
+
+  const totalLines = line + 1;
+  const start = selectedStart ?? value.length;
+  const returned = Math.min(state.maxItems, Math.max(0, totalLines - startLine));
+  recordPage(state, path, totalLines, returned);
+  return value.slice(start, selectedEnd);
+}
+
+function boundedString(value, state, path) {
+  let candidate = pageMultilineString(value, state, path);
 
   const suffix = '\n... [truncated]';
   // Avoid stringifying an unbounded original value just to learn that it is
@@ -86,8 +161,8 @@ function boundedString(value, state) {
   return candidate;
 }
 
-function boundValue(value, state) {
-  if (typeof value === 'string') return boundedString(value, state);
+function boundValue(value, state, path = '$') {
+  if (typeof value === 'string') return boundedString(value, state, path);
 
   if (value === null || typeof value === 'number' || typeof value === 'boolean') {
     const encoded = JSON.stringify(value);
@@ -99,7 +174,7 @@ function boundValue(value, state) {
   }
 
   if (typeof value === 'bigint') {
-    return boundedString(String(value), state);
+    return boundedString(String(value), state, path);
   }
 
   if (Array.isArray(value)) {
@@ -108,26 +183,23 @@ function boundValue(value, state) {
       return undefined;
     }
     const result = [];
-    for (const item of value) {
-      if (Number.isFinite(state.remainingItems)) {
-        if (state.remainingItems <= 0) {
-          state.truncated = true;
-          break;
-        }
-        state.remainingItems--;
-      }
+    const paginate = Number.isFinite(state.maxItems) && path === state.pagePath;
+    const start = paginate ? Math.min(state.offset, value.length) : 0;
+    const end = paginate ? Math.min(value.length, start + state.maxItems) : value.length;
+    if (paginate) recordPage(state, path, value.length, end - start);
+    for (let index = start; index < end; index++) {
       if (result.length > 0 && !consume(state, 1)) {
         state.truncated = true;
         break;
       }
-      const bounded = boundValue(item, state);
+      const bounded = boundValue(value[index], state, `${path}[${index}]`);
       if (bounded === undefined) {
         state.truncated = true;
         break;
       }
       result.push(bounded);
     }
-    if (result.length < value.length) state.truncated = true;
+    if (result.length < end - start) state.truncated = true;
     return result;
   }
 
@@ -137,7 +209,11 @@ function boundValue(value, state) {
       return undefined;
     }
     const result = {};
-    const entries = Object.entries(value);
+    const entries = Object.entries(value).sort(([left], [right]) => {
+      const leftPriority = STRUCTURED_SAFETY_PRIORITY.get(left) ?? STRUCTURED_SAFETY_KEYS.length;
+      const rightPriority = STRUCTURED_SAFETY_PRIORITY.get(right) ?? STRUCTURED_SAFETY_KEYS.length;
+      return leftPriority - rightPriority;
+    });
     let resultSize = 0;
     for (const [key, item] of entries) {
       if (item === undefined || typeof item === 'function' || typeof item === 'symbol') continue;
@@ -146,7 +222,7 @@ function boundValue(value, state) {
         state.truncated = true;
         break;
       }
-      const bounded = boundValue(item, state);
+      const bounded = boundValue(item, state, `${path}.${key}`);
       if (bounded === undefined) {
         state.truncated = true;
         break;
@@ -174,25 +250,82 @@ function boundValue(value, state) {
 export function stringifyBoundedJson(value, {
   maxChars = DEFAULT_MAX_STRUCTURED_CHARS,
   maxItems = Infinity,
+  offset = 0,
+  continuationTool = null,
+  continuationArguments = null,
   pretty = true
 } = {}) {
   const normalizedMaxChars = Number.isFinite(maxChars)
     ? Math.max(64, Math.floor(maxChars))
     : DEFAULT_MAX_STRUCTURED_CHARS;
+  let continuationReserve = 1024;
+  if (continuationArguments) {
+    try {
+      continuationReserve = Math.max(continuationReserve, JSON.stringify(continuationArguments).length + 512);
+    } catch { /* non-serializable request metadata is omitted below */ }
+  }
   const state = {
     // Reserve room for the truncation marker and container punctuation without
     // consuming the entire budget when callers intentionally request a very
     // small structured response.
-    remainingChars: Math.max(0, normalizedMaxChars - Math.min(128, Math.floor(normalizedMaxChars / 3))),
-    remainingItems: Number.isFinite(maxItems) ? Math.max(0, Math.floor(maxItems)) : Infinity,
-    truncated: false
+    remainingChars: Math.max(0, normalizedMaxChars - Math.min(continuationReserve, Math.floor(normalizedMaxChars / 4))),
+    maxItems: Number.isFinite(maxItems) ? Math.max(0, Math.floor(maxItems)) : Infinity,
+    offset: Number.isFinite(offset) ? Math.max(0, Math.floor(offset)) : 0,
+    truncated: false,
+    pages: []
   };
+  state.pagePath = Number.isFinite(state.maxItems) ? findPrimaryCollection(value)?.path ?? null : null;
 
   let bounded = boundValue(value, state);
   if (bounded === undefined) bounded = isPlainObject(value) ? {} : null;
-  if (state.truncated && isPlainObject(bounded)) bounded.truncated = true;
+  if (state.truncated && isPlainObject(bounded)) {
+    bounded.truncated = true;
+    if (state.pages.length > 0) {
+      const pages = state.pages.slice(0, 8);
+      bounded.pagination = {
+        offset: state.offset,
+        limit: state.maxItems,
+        collections: pages,
+        ...(state.pages.length > pages.length && { omittedCollections: state.pages.length - pages.length })
+      };
+      const nextOffsets = pages.filter(page => page.hasMore).map(page => page.nextOffset);
+      if (nextOffsets.length > 0) {
+        const nextOffset = Math.min(...nextOffsets);
+        bounded.continuation = {
+          hasMore: true,
+          ...(continuationTool && { tool: continuationTool }),
+          nextOffset,
+          arguments: {
+            ...(continuationArguments || {}),
+            offset: nextOffset,
+            maxItems: state.maxItems,
+            maxTokens: continuationArguments?.maxTokens ?? Math.floor(normalizedMaxChars / 4)
+          },
+          cliArguments: [
+            '--offset', String(nextOffset),
+            '--max-lines', String(state.maxItems),
+            '--max-tokens', String(Math.floor(normalizedMaxChars / 4))
+          ],
+          hint: 'Call the same tool with continuation.arguments (or rerun the CLI with continuation.cliArguments).'
+        };
+      }
+    } else {
+      bounded.continuation = {
+        hasMore: true,
+        nextOffset: null,
+        hint: 'The token budget was exhausted. Narrow the query or request a larger maxTokens budget.'
+      };
+    }
+  }
 
-  const compact = JSON.stringify(bounded);
+  let compact = JSON.stringify(bounded);
+  // Very small explicit budgets may not have room for full continuation
+  // guidance. Preserve valid JSON and the essential truncation signal first.
+  if (compact.length > normalizedMaxChars && isPlainObject(bounded)) {
+    delete bounded.continuation;
+    delete bounded.pagination;
+    compact = JSON.stringify(bounded);
+  }
   const formatted = pretty ? JSON.stringify(bounded, null, 2) : compact;
   return {
     text: formatted.length <= normalizedMaxChars ? formatted : compact,
@@ -205,11 +338,21 @@ export function stringifyBoundedJson(value, {
 // Argument Parsing
 // ─────────────────────────────────────────────────────────────
 
-export function parseCommonArgs(args) {
+function configuredLimit(value) {
+  // Configured limits are defaults/ceilings, so null/zero/negative disables
+  // them. Explicit CLI `-l 0` remains supported as a one-off empty result.
+  return Number.isInteger(value) && value > 0 ? value : Infinity;
+}
+
+export function parseCommonArgs(args, { outputConfig = getConfig('output') || {} } = {}) {
+  if (process.env.TOKENLEAN_MCP_RESPONSE_BUDGET === '1') outputConfig = {};
   const options = {
-    maxLines: Infinity,
-    maxTokens: Infinity,
-    json: false,
+    maxLines: configuredLimit(outputConfig.maxLines),
+    maxTokens: configuredLimit(outputConfig.maxTokens),
+    offset: 0,
+    maxLinesExplicit: false,
+    maxTokensExplicit: false,
+    json: outputConfig.format === 'json',
     quiet: false,
     help: false,
     remaining: []
@@ -221,9 +364,14 @@ export function parseCommonArgs(args) {
     if (arg === '--max-lines' || arg === '-l') {
       const n = parseInt(args[++i], 10);
       options.maxLines = Number.isInteger(n) ? n : Infinity;
+      options.maxLinesExplicit = true;
     } else if (arg === '--max-tokens' || arg === '-t') {
       const n = parseInt(args[++i], 10);
       options.maxTokens = Number.isInteger(n) ? n : Infinity;
+      options.maxTokensExplicit = true;
+    } else if (arg === '--offset') {
+      const n = parseInt(args[++i], 10);
+      options.offset = Number.isInteger(n) && n >= 0 ? n : 0;
     } else if (arg === '--json' || arg === '-j') {
       options.json = true;
     } else if (arg === '--quiet' || arg === '-q') {
@@ -242,6 +390,7 @@ export const COMMON_OPTIONS_HELP = `
 Common options:
   --max-lines N, -l N   Limit output to N lines
   --max-tokens N, -t N  Limit output to ~N tokens
+  --offset N             Skip N structured items/lines (JSON pagination)
   --json, -j            Output as JSON (for piping)
   --quiet, -q           Minimal output (no headers/stats)
   --help, -h            Show help`;
@@ -255,6 +404,7 @@ export class Output {
     this.options = {
       maxLines: options.maxLines ?? Infinity,
       maxTokens: options.maxTokens ?? Infinity,
+      offset: options.offset ?? 0,
       json: options.json ?? false,
       quiet: options.quiet ?? false
     };
@@ -356,13 +506,18 @@ export class Output {
         DEFAULT_MAX_STRUCTURED_CHARS,
         Number.isFinite(this.options.maxTokens) ? Math.max(64, this.options.maxTokens * 4) : Infinity
       );
-      const bounded = stringifyBoundedJson({
+      const structuredData = {
         ...this.data,
         truncated: this.truncated,
         totalItems: this.totalLines
-      }, {
+      };
+      if (!structuredData.resultState) {
+        structuredData.resultState = inferMcpResultState(structuredData);
+      }
+      const bounded = stringifyBoundedJson(structuredData, {
         maxChars,
-        maxItems: this.options.maxLines
+        maxItems: this.options.maxLines,
+        offset: this.options.offset
       });
 
       return bounded.text;

@@ -98,18 +98,30 @@ if (!query) {
 const { functions, fileCount, exists } = buildFunctionIndex(targetPath, { includeTests });
 if (!exists) { console.error(`Error: path not found: ${targetPath}`); process.exit(1); }
 
-const limit = Number.isFinite(options.maxLines) ? options.maxLines : 15;
+// output.maxLines controls structured page size, not search semantics. Only an
+// explicit -l/--max-lines changes how many matches the lookup computes.
+const limit = options.maxLinesExplicit && Number.isFinite(options.maxLines) ? options.maxLines : 15;
 const matches = searchFunctions(functions, query, { limit, minScore });
 
 // ── Render ──
 const out = createOutput({ ...options, maxLines: Infinity });
+
+function printLookupOutput() {
+  // Build the human summary without treating each two-line match as a page
+  // item, then restore the configured JSON collection budget at serialization.
+  if (options.json) {
+    out.options.maxLines = options.maxLines;
+    out.options.offset = options.offset;
+  }
+  out.print();
+}
 
 if (matches.length === 0) {
   out.header(`No existing function matches "${query}" (${functions.length} scanned in ${fileCount} files)`);
   out.add('Looks safe to write a new one.');
   out.setData('query', query);
   out.setData('matches', []);
-  out.print();
+  printLookupOutput();
   process.exit(0);
 }
 
@@ -125,7 +137,7 @@ out.setData('query', query);
 out.setData('scanned', functions.length);
 out.setData('matches', matches);
 
-out.print();
+printLookupOutput();
 }
 
 if (isMainModule(import.meta.url)) runLookupCli();

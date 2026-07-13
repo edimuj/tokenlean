@@ -211,6 +211,25 @@ function runTool(name, args, opts = {}) {
   };
 }
 
+function inferPayloadResultState(text, exitCode = 0) {
+  if (exitCode !== 0) return 'failed';
+  try {
+    const data = JSON.parse(text);
+    if (['success', 'empty', 'failed', 'partial', 'unsupported'].includes(data?.resultState)) {
+      return data.resultState;
+    }
+    if (data?.partialFailure === true) return 'partial';
+    if (data?.unsupported === true) return 'unsupported';
+    if (data?.totalDefinitions === 0 || data?.totalFiles === 0 || data?.totalEntries === 0) return 'empty';
+    if (Array.isArray(data?.matches) && data.matches.length === 0) return 'empty';
+  } catch { /* human output */ }
+  const normalized = String(text || '').trim();
+  if (!normalized || /^(?:No\s+(?:changes|matches|results|files|importers|related files)\b|\(no output\))/i.test(normalized)) {
+    return 'empty';
+  }
+  return 'success';
+}
+
 async function runToolAsync(name, args, opts = {}) {
   const commandArgs = [toolPath(name), ...args];
   const command = formatToolCommand(name, args);
@@ -233,6 +252,7 @@ async function runToolAsync(name, args, opts = {}) {
       output,
       stdout: stdout || '',
       stderr: stderr || '',
+      resultState: inferPayloadResultState(stdout, 0),
       optional: Boolean(opts.optional)
     };
   } catch (err) {
@@ -248,6 +268,7 @@ async function runToolAsync(name, args, opts = {}) {
       output,
       stdout: err.stdout || '',
       stderr: err.stderr || '',
+      resultState: 'failed',
       optional: Boolean(opts.optional)
     };
   }
@@ -373,13 +394,24 @@ async function executeAnalyzedSection(item, context) {
     optional: Boolean(item.optional),
   };
   if (analyzed.exitCode !== 0 || !analyzed.data) {
-    return { ...base, exitCode: analyzed.exitCode || 1, output: analyzed.output || 'Analysis failed.' };
+    return {
+      ...base,
+      exitCode: analyzed.exitCode || 1,
+      resultState: 'failed',
+      output: analyzed.output || 'Analysis failed.'
+    };
   }
 
   if (item.analyzeProjection) {
     const sectionRun = analyzed.data.sections?.[item.analyzeProjection];
     if (sectionRun?.status === 'error') {
-      return { ...base, exitCode: 1, output: sectionRun.error || `${item.analyzeProjection} failed`, reusedFrom: analyzed.command };
+      return {
+        ...base,
+        exitCode: 1,
+        resultState: 'failed',
+        output: sectionRun.error || `${item.analyzeProjection} failed`,
+        reusedFrom: analyzed.command
+      };
     }
   }
 
@@ -391,6 +423,12 @@ async function executeAnalyzedSection(item, context) {
   return {
     ...base,
     exitCode: 0,
+    resultState: item.structuredAnalyze
+      ? analyzed.data.resultState || 'success'
+      : item.analyzeProjection === 'impact'
+        ? ((analyzed.data.impactSummary?.totalFiles || 0) === 0 ? 'empty' : 'success')
+        : ((analyzed.data.relatedSummary?.totalFiles || 0) === 0 ? 'empty' : 'success'),
+    ...(item.structuredAnalyze && Array.isArray(analyzed.data.errors) ? { errors: analyzed.data.errors } : {}),
     output,
     ...(item.analyzeProjection ? { reusedFrom: analyzed.command } : {}),
   };
@@ -724,21 +762,66 @@ async function renderPack(pack, target, sections, options) {
   const includedSections = await Promise.all(budgeted.included.map(item => executeSection(item, executionContext)));
   const failures = includedSections.filter(s => s.exitCode !== 0 && !s.optional);
   const optionalFailures = includedSections.filter(s => s.exitCode !== 0 && s.optional);
+  const packRecoveryCall = {
+    tool: 'tl_pack',
+    arguments: {
+      pack,
+      ...(target ? (pack === 'debug' && !options.contextOnly ? { command: target } : { target }) : {}),
+      ...(options.budget ? { budget: options.budget } : {}),
+      ...(options.full ? { full: true } : {}),
+      cwd: process.cwd()
+    }
+  };
+  const sectionError = item => ({
+    code: 'TL_PACK_SECTION_FAILED',
+    effectiveCwd: process.cwd(),
+    section: item.title,
+    recoveryCall: packRecoveryCall,
+    message: String(item.output || `${item.title} failed`).trim()
+  });
   const compactSections = includedSections.map(item => ({
     title: item.title,
     command: item.command,
     exitCode: item.exitCode,
     optional: item.optional,
+    resultState: item.resultState || (item.exitCode !== 0 ? 'failed' : inferPayloadResultState(item.output, 0)),
+    ...(item.exitCode !== 0 ? { error: sectionError(item) } : {}),
+    ...(Array.isArray(item.errors) && item.errors.length > 0 ? { errors: item.errors } : {}),
     ...(item.reusedFrom ? { reusedFrom: item.reusedFrom } : {}),
     output: compactLines(item.output || '(no output)', budgeted.tier === 'small' ? 12 : options.full ? 60 : 24)
   }));
 
+  const failedItems = [...failures, ...optionalFailures];
+  const nestedErrors = includedSections.flatMap(item => Array.isArray(item.errors) ? item.errors : []);
+  const resultState = includedSections.length === 0
+    ? 'unsupported'
+    : failedItems.length === includedSections.length
+      ? 'failed'
+      : budgeted.omitted.length > 0 || failedItems.length > 0 || compactSections.some(item => item.resultState === 'partial')
+        ? 'partial'
+        : compactSections.every(item => item.resultState === 'empty')
+          ? 'empty'
+          : 'success';
+  out.setData('resultState', resultState);
+  out.setData('partialFailure', failedItems.length > 0 || nestedErrors.length > 0);
+  if (budgeted.omitted.length > 0) out.setData('partialReason', 'budget');
+  if (resultState === 'failed' || resultState === 'unsupported') {
+    out.setData('error', {
+      code: resultState === 'failed' ? 'TL_PACK_FAILED' : 'TL_PACK_UNSUPPORTED',
+      effectiveCwd: process.cwd(),
+      recoveryCall: packRecoveryCall,
+      message: resultState === 'failed' ? 'Every included pack section failed.' : 'The pack produced no supported sections.'
+    });
+  }
+  if (failedItems.length > 0 || nestedErrors.length > 0) {
+    out.setData('errors', [...failedItems.map(sectionError), ...nestedErrors]);
+  }
   out.setData('pack', pack);
   out.setData('target', target);
   out.setData('budgetTier', budgeted.tier);
-  out.setData('sections', compactSections);
-  out.setData('omittedSections', budgeted.omitted);
   out.setData('failed', failures.length > 0);
+  out.setData('sections', compactSections);
+  out.setData('omittedSections', budgeted.omitted.map(item => ({ ...item, resultState: 'unsupported', reason: 'budget' })));
 
   out.header(`Context pack: ${pack}${target ? ` (${target})` : ''}`);
   out.header(PACKS[pack]?.summary || '');

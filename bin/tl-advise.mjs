@@ -424,6 +424,7 @@ function routeGoal(goal, includeAll) {
     return {
       intent: 'general',
       label: 'General context',
+      supported: false,
       suggestions: defaultAdvice(goal)
     };
   }
@@ -440,6 +441,7 @@ function routeGoal(goal, includeAll) {
   return {
     intent: primary.name,
     label: primary.label,
+    supported: true,
     suggestions
   };
 }
@@ -450,6 +452,7 @@ function printRoutes(out) {
     out.add(`  ${route.name.padEnd(12)} ${route.label}`);
   }
   out.setData('routes', ROUTES.map(route => ({ name: route.name, label: route.label })));
+  out.setData('resultState', 'success');
   out.print();
 }
 
@@ -473,7 +476,21 @@ if (!options.goal) {
 }
 
 const result = routeGoal(options.goal, options.all);
+const effectiveCwd = process.cwd();
 
+out.setData('resultState', result.supported ? 'success' : 'unsupported');
+if (!result.supported) {
+  out.setData('unsupported', true);
+  out.setData('error', {
+    code: 'TL_ADVISE_UNSUPPORTED_GOAL',
+    effectiveCwd,
+    recoveryCall: {
+      tool: 'tl_advise',
+      arguments: { goal: '<more specific goal>', cwd: effectiveCwd }
+    },
+    message: 'No specific advice route matched this goal; returning general context suggestions.'
+  });
+}
 out.setData('goal', options.goal);
 out.setData('intent', result.intent);
 out.setData('label', result.label);

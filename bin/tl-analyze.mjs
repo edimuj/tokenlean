@@ -67,6 +67,36 @@ Examples:
 // Sub-tool Runner
 // ─────────────────────────────────────────────────────────────
 
+function analyzeRecoveryCall(filePath) {
+  return {
+    tool: 'tl_analyze',
+    arguments: { file: filePath, cwd: process.cwd() }
+  };
+}
+
+function sectionErrorDetails(toolName, filePath, message, code = 'TL_ANALYZE_SECTION_FAILED') {
+  return {
+    code,
+    effectiveCwd: process.cwd(),
+    section: toolName,
+    recoveryCall: analyzeRecoveryCall(filePath),
+    message
+  };
+}
+
+function inferSectionResultState(data) {
+  if (['success', 'empty', 'failed', 'partial', 'unsupported'].includes(data?.resultState)) {
+    return data.resultState;
+  }
+  if (data?.partialFailure === true) return 'partial';
+  if (data?.unsupported === true) return 'unsupported';
+  if (data?.totalDefinitions === 0 || data?.totalFiles === 0 || data?.symbolCount === 0 || data?.totalImports === 0) {
+    return 'empty';
+  }
+  if (Array.isArray(data?.functions) && data.functions.length === 0) return 'empty';
+  return 'success';
+}
+
 async function runSubToolAsync(toolName, filePath) {
   try {
     const toolPath = join(__dirname, `tl-${toolName}.mjs`);
@@ -76,21 +106,38 @@ async function runSubToolAsync(toolName, filePath) {
       timeout: 15000
     });
     try {
-      return { status: 'success', data: JSON.parse(stdout) };
+      const data = JSON.parse(stdout);
+      return { status: 'success', resultState: inferSectionResultState(data), data };
     } catch (err) {
-      return { status: 'error', error: `Invalid ${toolName} JSON: ${err.message}` };
+      const message = `Invalid ${toolName} JSON: ${err.message}`;
+      return {
+        status: 'error',
+        resultState: 'failed',
+        error: message,
+        errorDetails: sectionErrorDetails(toolName, filePath, message, 'TL_ANALYZE_INVALID_SECTION_OUTPUT')
+      };
     }
   } catch (err) {
     const stderr = String(err?.stderr || '').trim();
     const message = stderr || (err?.killed
       ? `${toolName} timed out after 15000ms`
       : err?.message || String(err));
-    return { status: 'error', error: message };
+    return {
+      status: 'error',
+      resultState: 'failed',
+      error: message,
+      errorDetails: sectionErrorDetails(
+        toolName,
+        filePath,
+        message,
+        err?.killed ? 'TL_ANALYZE_SECTION_TIMEOUT' : 'TL_ANALYZE_SECTION_FAILED'
+      )
+    };
   }
 }
 
 function skippedSection() {
-  return Promise.resolve({ status: 'skipped' });
+  return Promise.resolve({ status: 'skipped', resultState: 'unsupported' });
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -377,8 +424,24 @@ const complexityData = complexityRun.data || null;
 const relatedData = relatedRun.data || null;
 const failedSections = Object.entries(sectionRuns)
   .filter(([, run]) => run.status === 'error')
-  .map(([name, run]) => ({ name, error: run.error }));
-const partialFailure = failedSections.length > 0;
+  .map(([name, run]) => ({ name, ...run.errorDetails, error: run.error }));
+const enabledRuns = Object.values(sectionRuns).filter(run => run.status !== 'skipped');
+const successfulRuns = enabledRuns.filter(run => run.status === 'success');
+const childFailedRuns = successfulRuns.filter(run => run.resultState === 'failed');
+const degradedRuns = successfulRuns.filter(run => ['failed', 'partial', 'unsupported'].includes(run.resultState));
+const failedRunCount = failedSections.length + childFailedRuns.length;
+const resultState = enabledRuns.length === 0
+  ? 'unsupported'
+  : failedRunCount === enabledRuns.length
+    ? 'failed'
+    : successfulRuns.every(run => run.resultState === 'unsupported')
+        ? 'unsupported'
+      : failedSections.length > 0 || degradedRuns.length > 0
+        ? 'partial'
+        : successfulRuns.every(run => run.resultState === 'empty')
+          ? 'empty'
+          : 'success';
+const partialFailure = resultState === 'partial';
 
 const symbols = extractSymbols(symbolsData, full);
 const deps = extractDeps(depsData, full);
@@ -391,17 +454,31 @@ const exportCount = symbols ? symbols.exportCount : '';
 const exportStr = exportCount ? `, ${exportCount} exports` : '';
 
 // Set JSON data
+out.setData('resultState', resultState);
 out.setData('file', relPath);
 out.setData('tokens', tokens);
 out.setData('sections', Object.fromEntries(
   Object.entries(sectionRuns).map(([name, run]) => [name, {
     status: run.status,
+    resultState: run.resultState,
+    ...(run.errorDetails ? { errorDetails: run.errorDetails } : {}),
     ...(run.status === 'error' ? { error: run.error } : {}),
   }])
 ));
 out.setData('partial', partialFailure);
 out.setData('partialFailure', partialFailure);
-if (partialFailure) out.setData('errors', failedSections);
+if (failedSections.length > 0) out.setData('errors', failedSections);
+if (resultState === 'failed' || resultState === 'unsupported') {
+  const message = resultState === 'unsupported'
+    ? 'No analysis sections were enabled.'
+    : 'Every enabled analysis section failed.';
+  out.setData('error', {
+    code: resultState === 'unsupported' ? 'TL_ANALYZE_NO_ENABLED_SECTIONS' : 'TL_ANALYZE_ALL_SECTIONS_FAILED',
+    effectiveCwd: process.cwd(),
+    recoveryCall: analyzeRecoveryCall(filePath),
+    message
+  });
+}
 if (symbols) out.setData('symbols', symbolsData?.symbols || {});
 if (deps) out.setData('deps', depsData?.imports || {});
 // Keep the established result shapes while preserving the small metadata that
@@ -434,8 +511,8 @@ if (related) {
 out.header(`\n\ud83d\udccb ${relPath} (~${formatTokens(tokens)} tokens${exportStr})`);
 out.blank();
 
-if (partialFailure) {
-  out.add(`  Partial analysis: ${failedSections.length} section(s) failed`);
+if (failedSections.length > 0) {
+  out.add(`  ${resultState === 'failed' ? 'Analysis failed' : 'Partial analysis'}: ${failedSections.length} section(s) failed`);
   for (const failure of failedSections) {
     out.add(`    ${failure.name}: ${failure.error}`);
   }
