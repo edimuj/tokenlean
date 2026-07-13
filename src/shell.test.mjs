@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { gitCommand, rgCommand } from './shell.mjs';
+import { gitCommand, rgCommand, SearchCommandError } from './shell.mjs';
 import { isRipgrepAvailable } from './traverse.mjs';
 
 const RG_SKIP = !isRipgrepAvailable() && 'requires ripgrep binary';
@@ -56,10 +56,30 @@ describe('rgCommand', { skip: RG_SKIP }, () => {
     assert.equal(result, '', 'no matches should return empty string');
   });
 
-  it('returns null for errors (exit code >= 2)', () => {
+  it('throws a typed error with diagnostics for exit code >= 2', () => {
     // Invalid regex should cause rg error
-    const result = rgCommand(['-e', '[invalid regex']);
-    assert.equal(result, null);
+    assert.throws(
+      () => rgCommand(['-e', '[invalid regex']),
+      err => {
+        assert.ok(err instanceof SearchCommandError);
+        assert.equal(err.status, 2);
+        assert.match(err.message, /regex|unclosed|failed/i);
+        assert.deepEqual(err.args, ['-e', '[invalid regex']);
+        return true;
+      }
+    );
+  });
+
+  it('throws instead of returning empty output when maxBuffer is exceeded', () => {
+    assert.throws(
+      () => rgCommand(['-n', 'export', 'src/shell.mjs'], { maxBuffer: 10 }),
+      err => {
+        assert.ok(err instanceof SearchCommandError);
+        assert.equal(err.code, 'ENOBUFS');
+        assert.match(err.message, /ENOBUFS|buffer/i);
+        return true;
+      }
+    );
   });
 
   it('respects cwd option', () => {

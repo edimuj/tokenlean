@@ -168,12 +168,23 @@ function isCodePath(path) {
 function extractIssueNumbers(goal) {
   const numbers = [];
   const seen = new Set();
-  for (const match of goal.matchAll(/(?:#|\bissue\s+|\bissues\s+|\b)(\d+)\b/gi)) {
-    const value = match[1];
-    if (seen.has(value)) continue;
+
+  function add(value) {
+    if (seen.has(value)) return;
     seen.add(value);
     numbers.push(value);
   }
+
+  // Explicit #N references are unambiguous wherever they appear.
+  for (const match of goal.matchAll(/#(\d+)\b/g)) add(match[1]);
+
+  // Accept a grammatical issue list, but stop before unrelated numbers such
+  // as test counts, dates, or version numbers later in the sentence.
+  const issueListRe = /\bissues?\s+((?:#?\d+\b)(?:\s*(?:,\s*(?:and\s+)?|and\s+|&\s*)#?\d+\b)*)/gi;
+  for (const listMatch of goal.matchAll(issueListRe)) {
+    for (const numberMatch of listMatch[1].matchAll(/#?(\d+)\b/g)) add(numberMatch[1]);
+  }
+
   return numbers;
 }
 
@@ -413,6 +424,7 @@ function routeGoal(goal, includeAll) {
     return {
       intent: 'general',
       label: 'General context',
+      supported: false,
       suggestions: defaultAdvice(goal)
     };
   }
@@ -429,6 +441,7 @@ function routeGoal(goal, includeAll) {
   return {
     intent: primary.name,
     label: primary.label,
+    supported: true,
     suggestions
   };
 }
@@ -439,6 +452,7 @@ function printRoutes(out) {
     out.add(`  ${route.name.padEnd(12)} ${route.label}`);
   }
   out.setData('routes', ROUTES.map(route => ({ name: route.name, label: route.label })));
+  out.setData('resultState', 'success');
   out.print();
 }
 
@@ -462,7 +476,21 @@ if (!options.goal) {
 }
 
 const result = routeGoal(options.goal, options.all);
+const effectiveCwd = process.cwd();
 
+out.setData('resultState', result.supported ? 'success' : 'unsupported');
+if (!result.supported) {
+  out.setData('unsupported', true);
+  out.setData('error', {
+    code: 'TL_ADVISE_UNSUPPORTED_GOAL',
+    effectiveCwd,
+    recoveryCall: {
+      tool: 'tl_advise',
+      arguments: { goal: '<more specific goal>', cwd: effectiveCwd }
+    },
+    message: 'No specific advice route matched this goal; returning general context suggestions.'
+  });
+}
 out.setData('goal', options.goal);
 out.setData('intent', result.intent);
 out.setData('label', result.label);

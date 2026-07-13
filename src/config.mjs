@@ -16,7 +16,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 
 // ─────────────────────────────────────────────────────────────
@@ -180,9 +180,29 @@ function findProjectConfig(startDir = process.cwd()) {
 // Main API
 // ─────────────────────────────────────────────────────────────
 
-// Cached merged config
-let cachedConfig = null;
-let cachedProjectRoot = null;
+// A shared MCP server serves many worktrees/projects in one process. Cache by
+// requested start directory so one project's config can never leak into the
+// next request merely because it was loaded first.
+const configCache = new Map();
+const MAX_CONFIG_CACHE_ENTRIES = 64;
+
+function configSignature(path) {
+  try {
+    // Config files are small. Content signatures catch same-size rewrites even
+    // on filesystems whose timestamp resolution is too coarse for an MCP edit.
+    return readFileSync(path, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+function setCachedConfig(key, entry) {
+  configCache.delete(key);
+  configCache.set(key, entry);
+  while (configCache.size > MAX_CONFIG_CACHE_ENTRIES) {
+    configCache.delete(configCache.keys().next().value);
+  }
+}
 
 /**
  * Load and merge all config sources
@@ -190,10 +210,20 @@ let cachedProjectRoot = null;
  */
 export function loadConfig(options = {}) {
   const { reload = false, startDir = process.cwd() } = options;
+  const cacheKey = resolve(startDir);
+  const projectResult = findProjectConfig(startDir);
+  const globalSignature = configSignature(GLOBAL_CONFIG_PATH);
+  const projectSignature = projectResult ? configSignature(projectResult.path) : null;
 
-  // Return cached config if available
-  if (cachedConfig && !reload) {
-    return { config: cachedConfig, projectRoot: cachedProjectRoot };
+  const cached = configCache.get(cacheKey);
+  if (!reload && cached
+    && cached.globalSignature === globalSignature
+    && cached.projectPath === projectResult?.path
+    && cached.projectSignature === projectSignature) {
+    // LRU touch.
+    configCache.delete(cacheKey);
+    configCache.set(cacheKey, cached);
+    return cached.loaded;
   }
 
   // Start with defaults
@@ -207,24 +237,27 @@ export function loadConfig(options = {}) {
   }
 
   // Load project config (overrides global)
-  const projectResult = findProjectConfig(startDir);
   if (projectResult) {
     merged = deepMerge(merged, projectResult.config);
     projectRoot = projectResult.root;
   }
 
   // Cache the result
-  cachedConfig = merged;
-  cachedProjectRoot = projectRoot;
-
-  return { config: merged, projectRoot };
+  const loaded = { config: merged, projectRoot };
+  setCachedConfig(cacheKey, {
+    loaded,
+    globalSignature,
+    projectPath: projectResult?.path,
+    projectSignature
+  });
+  return loaded;
 }
 
 /**
  * Get a specific config section
  */
-export function getConfig(section) {
-  const { config } = loadConfig();
+export function getConfig(section, options = {}) {
+  const { config } = loadConfig(options);
   return section ? config[section] : config;
 }
 
@@ -250,8 +283,7 @@ export function getConfigPaths() {
  * Clear the config cache (useful for testing)
  */
 export function clearConfigCache() {
-  cachedConfig = null;
-  cachedProjectRoot = null;
+  configCache.clear();
 }
 
 // ─────────────────────────────────────────────────────────────

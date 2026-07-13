@@ -21,6 +21,7 @@ if (process.argv.includes('--prompt')) {
 
 import { createOutput, parseCommonArgs, estimateTokens, formatTokens, COMMON_OPTIONS_HELP } from '../src/output.mjs';
 import { NodeHtmlMarkdown } from 'node-html-markdown';
+import { fetchPublicText, SafeHttpError } from '../src/safe-http.mjs';
 
 const HELP = `
 tl-browse - Fetch URL as clean markdown
@@ -75,66 +76,33 @@ function convertHtml(html) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// SSRF Protection
-// ─────────────────────────────────────────────────────────────
-
-function isPrivateHost(hostname) {
-  if (hostname === 'localhost' || hostname === '0.0.0.0' || hostname === '[::]') return true;
-  // IPv4 private ranges
-  if (/^127\./.test(hostname)) return true;
-  if (/^10\./.test(hostname)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) return true;
-  if (/^192\.168\./.test(hostname)) return true;
-  if (/^169\.254\./.test(hostname)) return true; // link-local
-  // IPv6 loopback
-  if (hostname === '::1' || hostname === '[::1]') return true;
-  // Cloud metadata endpoints
-  if (hostname === 'metadata.google.internal') return true;
-  return false;
-}
-
-// ─────────────────────────────────────────────────────────────
 // Fetch
 // ─────────────────────────────────────────────────────────────
 
 async function fetchMarkdown(url, { native = true, timeout = DEFAULT_TIMEOUT } = {}) {
-  // Block requests to private/internal networks
-  try {
-    const parsed = new URL(url);
-    if (isPrivateHost(parsed.hostname)) {
-      return { error: 'Blocked: cannot fetch private/internal network addresses' };
-    }
-  } catch {
-    return { error: `Invalid URL: ${url}` };
-  }
-
   const headers = {};
   if (native) {
     headers['Accept'] = 'text/markdown';
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-
   try {
-    const response = await fetch(url, { headers, signal: controller.signal, redirect: 'follow' });
-    clearTimeout(timer);
+    const response = await fetchPublicText(url, { headers, timeout });
 
     // 406 means server rejected Accept: text/markdown — retry as HTML
     if (response.status === 406 && native) {
       return fetchMarkdown(url, { native: false, timeout });
     }
 
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       return { error: `HTTP ${response.status} ${response.statusText}` };
     }
 
-    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    const contentType = (response.headers['content-type'] || '').toLowerCase();
 
     // Native markdown from Cloudflare
     if (contentType.includes('text/markdown')) {
-      const markdown = await response.text();
-      const nativeTokens = response.headers.get('x-markdown-tokens');
+      const markdown = response.body;
+      const nativeTokens = response.headers['x-markdown-tokens'];
       return {
         source: 'native',
         markdown,
@@ -144,22 +112,19 @@ async function fetchMarkdown(url, { native = true, timeout = DEFAULT_TIMEOUT } =
 
     // HTML — convert locally
     if (contentType.includes('text/html')) {
-      const html = await response.text();
+      const html = response.body;
       const markdown = convertHtml(html);
       return { source: 'converted', markdown };
     }
 
     // Plain text — pass through
     if (contentType.includes('text/plain')) {
-      const text = await response.text();
-      return { source: 'passthrough', markdown: text };
+      return { source: 'passthrough', markdown: response.body };
     }
 
     return { error: `Unsupported content type: ${contentType}` };
   } catch (err) {
-    clearTimeout(timer);
-
-    if (err.name === 'AbortError') {
+    if (err instanceof SafeHttpError && err.code === 'TIMEOUT') {
       return { error: `Request timed out after ${timeout}ms` };
     }
 

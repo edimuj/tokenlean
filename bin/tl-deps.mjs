@@ -11,7 +11,7 @@
  */
 
 // Prompt info for tl-prompt
-if (process.argv.includes('--prompt')) {
+if (isMainModule(import.meta.url) && process.argv.includes('--prompt')) {
   console.log(JSON.stringify({
     name: 'tl-deps',
     desc: 'Show file imports and dependency tree',
@@ -33,6 +33,7 @@ import {
 import { findProjectRoot, detectLanguage } from '../src/project.mjs';
 import { extractGenericImports } from '../src/generic-lang.mjs';
 import { getJsTsGraphFile, getJsTsProjectGraph } from '../src/semantic-js-graph.mjs';
+import { isMainModule } from '../src/in-process-cli.mjs';
 
 const HELP = `
 tl-deps - Show what a file imports/depends on
@@ -483,7 +484,7 @@ function printCategory(out, title, items, emoji, showResolved, fileDir, projectR
 // Main
 // ─────────────────────────────────────────────────────────────
 
-const args = process.argv.slice(2);
+export function runDepsCli(args = process.argv.slice(2)) {
 const options = parseCommonArgs(args);
 
 // Parse tool-specific options
@@ -583,3 +584,6 @@ if (isGeneric) {
 }
 
 out.print();
+}
+
+if (isMainModule(import.meta.url)) runDepsCli();

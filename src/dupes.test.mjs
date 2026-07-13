@@ -117,6 +117,12 @@ describe('findDuplicates', () => {
     assert.equal(r.exact[0].count, 2);
   });
 
+  it('does not enrich the caller function objects in place', () => {
+    const fns = [mk('getId', 'a.js', 1, 'return input.value + offset;')];
+    findDuplicates(fns, { minTokens: 0, near: 0.5 });
+    assert.deepEqual(Object.keys(fns[0]).sort(), ['body', 'endLine', 'file', 'lang', 'line', 'name']);
+  });
+
   it('flags structural clones (renamed) separately from exact', () => {
     const fns = [
       mk('a', 'a.js', 1, 'const total = sum(items); return total + base;'),

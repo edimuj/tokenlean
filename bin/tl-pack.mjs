@@ -211,6 +211,25 @@ function runTool(name, args, opts = {}) {
   };
 }
 
+function inferPayloadResultState(text, exitCode = 0) {
+  if (exitCode !== 0) return 'failed';
+  try {
+    const data = JSON.parse(text);
+    if (['success', 'empty', 'failed', 'partial', 'unsupported'].includes(data?.resultState)) {
+      return data.resultState;
+    }
+    if (data?.partialFailure === true) return 'partial';
+    if (data?.unsupported === true) return 'unsupported';
+    if (data?.totalDefinitions === 0 || data?.totalFiles === 0 || data?.totalEntries === 0) return 'empty';
+    if (Array.isArray(data?.matches) && data.matches.length === 0) return 'empty';
+  } catch { /* human output */ }
+  const normalized = String(text || '').trim();
+  if (!normalized || /^(?:No\s+(?:changes|matches|results|files|importers|related files)\b|\(no output\))/i.test(normalized)) {
+    return 'empty';
+  }
+  return 'success';
+}
+
 async function runToolAsync(name, args, opts = {}) {
   const commandArgs = [toolPath(name), ...args];
   const command = formatToolCommand(name, args);
@@ -226,7 +245,16 @@ async function runToolAsync(name, args, opts = {}) {
       env
     });
     const output = [stdout || '', stderr || ''].filter(Boolean).join('\n').trim();
-    return { title: opts.title || command, command, exitCode: 0, output, optional: Boolean(opts.optional) };
+    return {
+      title: opts.title || command,
+      command,
+      exitCode: 0,
+      output,
+      stdout: stdout || '',
+      stderr: stderr || '',
+      resultState: inferPayloadResultState(stdout, 0),
+      optional: Boolean(opts.optional)
+    };
   } catch (err) {
     const timedOut = err.killed && err.signal === 'SIGTERM';
     const errorText = timedOut
@@ -238,6 +266,9 @@ async function runToolAsync(name, args, opts = {}) {
       command,
       exitCode: typeof err.code === 'number' ? err.code : 1,
       output,
+      stdout: err.stdout || '',
+      stderr: err.stderr || '',
+      resultState: 'failed',
       optional: Boolean(opts.optional)
     };
   }
@@ -251,10 +282,160 @@ function section(title, name, args, opts = {}) {
     command: formatToolCommand(name, args),
     optional: Boolean(opts.optional),
     timeout: opts.timeout,
+    structuredAnalyze: Boolean(opts.structuredAnalyze),
   };
 }
 
-async function executeSection(item) {
+function analyzedSection(title, toolName, target, analyzeArgs) {
+  return {
+    title,
+    command: formatToolCommand(toolName, [target]),
+    optional: false,
+    analyzeProjection: toolName,
+    analyzeArgs,
+  };
+}
+
+function countArrays(value) {
+  if (Array.isArray(value)) return value.length;
+  if (!value || typeof value !== 'object') return 0;
+  return Object.values(value).reduce((sum, item) => sum + (Array.isArray(item) ? item.length : 0), 0);
+}
+
+function formatAnalyzeProfile(data) {
+  const lines = [`${data.file || 'File'} (~${data.tokens || 0} tokens)`];
+  const symbols = data.symbols || {};
+  const exportCount = Array.isArray(symbols.exports) ? symbols.exports.length : 0;
+  const functionCount = Array.isArray(symbols.functions) ? symbols.functions.length : 0;
+  const classCount = Array.isArray(symbols.classes) ? symbols.classes.length : 0;
+  lines.push(`Symbols: ${exportCount} exports, ${functionCount} functions, ${classCount} classes`);
+  lines.push(`Dependencies: ${countArrays(data.deps)}`);
+
+  const complexity = Array.isArray(data.complexity) ? data.complexity : [];
+  const hotspots = complexity.filter(fn => Number(fn.cyclomatic) >= 10);
+  lines.push(`Complexity: ${complexity.length} functions, ${hotspots.length} hotspots`);
+  for (const fn of hotspots.slice(0, 8)) {
+    lines.push(`  ${fn.name}: cyclomatic ${fn.cyclomatic}, cognitive ${fn.cognitive}`);
+  }
+
+  if (data.partialFailure) {
+    lines.push(`Partial analysis: ${(data.errors || []).length} section(s) failed`);
+    for (const failure of data.errors || []) lines.push(`  ${failure.name}: ${failure.error}`);
+  }
+  return lines.join('\n');
+}
+
+function formatImpactProjection(data) {
+  const impact = data.impact || {};
+  const summary = data.impactSummary || {};
+  // Accept both the established analyze shape and a full tl-impact payload.
+  const categories = impact.importers && !Array.isArray(impact.importers) ? impact.importers : impact;
+  const totalFiles = Number.isFinite(summary.totalFiles) ? summary.totalFiles : countArrays(categories);
+  if (totalFiles === 0) return 'No importers found.';
+
+  const lines = [`${totalFiles} importer(s), ~${summary.totalTokens || impact.totalTokens || 0} tokens`];
+  for (const [category, files] of Object.entries(categories)) {
+    if (!Array.isArray(files) || files.length === 0) continue;
+    lines.push(`${category}:`);
+    for (const file of files) lines.push(`  ${file.relPath || file.path}${file.line ? `:${file.line}` : ''}`);
+  }
+  return lines.join('\n');
+}
+
+function formatRelatedProjection(data) {
+  const related = data.related || {};
+  const summary = data.relatedSummary || {};
+  const groups = [
+    ['tests', related.tests],
+    ['types', related.types],
+    ['importers', related.importers],
+    ['siblings', related.siblings],
+  ];
+  const totalFiles = Number.isFinite(summary.totalFiles) ? summary.totalFiles : countArrays(related);
+  if (totalFiles === 0) return 'No related files found.';
+
+  const lines = [`${totalFiles} related file(s), ~${summary.totalTokens || related.totalTokens || 0} tokens`];
+  for (const [label, files] of groups) {
+    if (!Array.isArray(files) || files.length === 0) continue;
+    lines.push(`${label}:`);
+    for (const file of files) lines.push(`  ${file.path || file.relPath || String(file)}`);
+  }
+  return lines.join('\n');
+}
+
+function getStructuredAnalyze(context, args) {
+  const key = JSON.stringify(args);
+  if (!context.analyzeRuns.has(key)) {
+    const displayCommand = formatToolCommand('analyze', args);
+    const jsonArgs = args.includes('--json') || args.includes('-j') ? args : [...args, '--json'];
+    context.analyzeRuns.set(key, runToolAsync('analyze', jsonArgs).then((run) => {
+      if (run.exitCode !== 0) return { ...run, command: displayCommand, data: null };
+      try {
+        return { ...run, command: displayCommand, data: JSON.parse(run.stdout) };
+      } catch (err) {
+        return {
+          ...run,
+          command: displayCommand,
+          exitCode: 1,
+          output: `Invalid tl analyze JSON: ${err.message}`,
+          data: null,
+        };
+      }
+    }));
+  }
+  return context.analyzeRuns.get(key);
+}
+
+async function executeAnalyzedSection(item, context) {
+  const analyzed = await getStructuredAnalyze(context, item.analyzeArgs || item.args);
+  const base = {
+    title: item.title,
+    command: item.command,
+    optional: Boolean(item.optional),
+  };
+  if (analyzed.exitCode !== 0 || !analyzed.data) {
+    return {
+      ...base,
+      exitCode: analyzed.exitCode || 1,
+      resultState: 'failed',
+      output: analyzed.output || 'Analysis failed.'
+    };
+  }
+
+  if (item.analyzeProjection) {
+    const sectionRun = analyzed.data.sections?.[item.analyzeProjection];
+    if (sectionRun?.status === 'error') {
+      return {
+        ...base,
+        exitCode: 1,
+        resultState: 'failed',
+        output: sectionRun.error || `${item.analyzeProjection} failed`,
+        reusedFrom: analyzed.command
+      };
+    }
+  }
+
+  const output = item.structuredAnalyze
+    ? formatAnalyzeProfile(analyzed.data)
+    : item.analyzeProjection === 'impact'
+      ? formatImpactProjection(analyzed.data)
+      : formatRelatedProjection(analyzed.data);
+  return {
+    ...base,
+    exitCode: 0,
+    resultState: item.structuredAnalyze
+      ? analyzed.data.resultState || 'success'
+      : item.analyzeProjection === 'impact'
+        ? ((analyzed.data.impactSummary?.totalFiles || 0) === 0 ? 'empty' : 'success')
+        : ((analyzed.data.relatedSummary?.totalFiles || 0) === 0 ? 'empty' : 'success'),
+    ...(item.structuredAnalyze && Array.isArray(analyzed.data.errors) ? { errors: analyzed.data.errors } : {}),
+    output,
+    ...(item.analyzeProjection ? { reusedFrom: analyzed.command } : {}),
+  };
+}
+
+async function executeSection(item, context) {
+  if (item.structuredAnalyze || item.analyzeProjection) return executeAnalyzedSection(item, context);
   if (!item.name) return item;
   return runToolAsync(item.name, item.args, {
     title: item.title,
@@ -418,9 +599,9 @@ function buildFileReview(target, options) {
   if (options.full) analyzeArgs.push('--full');
 
   return [
-    section('File profile', 'analyze', analyzeArgs),
-    section('Blast radius', 'impact', [target]),
-    section('Related files', 'related', [target]),
+    section('File profile', 'analyze', analyzeArgs, { structuredAnalyze: true }),
+    analyzedSection('Blast radius', 'impact', target, analyzeArgs),
+    analyzedSection('Related files', 'related', target, analyzeArgs),
     section('Target diff', 'diff', ['--file', target], { optional: true })
   ];
 }
@@ -500,9 +681,9 @@ function buildRefactor(target, options) {
   if (options.full) analyzeArgs.push('--full');
 
   return [
-    section('File profile', 'analyze', analyzeArgs),
-    section('Blast radius', 'impact', [target]),
-    section('Related files', 'related', [target]),
+    section('File profile', 'analyze', analyzeArgs, { structuredAnalyze: true }),
+    analyzedSection('Blast radius', 'impact', target, analyzeArgs),
+    analyzedSection('Related files', 'related', target, analyzeArgs),
     section('Test mapping', 'test-map', [target])
   ];
 }
@@ -576,24 +757,71 @@ function printList(out) {
 async function renderPack(pack, target, sections, options) {
   const out = createOutput(options);
   const budgeted = applyBudget(sections, options);
+  const executionContext = { analyzeRuns: new Map() };
   // Execute all included sections concurrently; Promise.all preserves order.
-  const includedSections = await Promise.all(budgeted.included.map(executeSection));
+  const includedSections = await Promise.all(budgeted.included.map(item => executeSection(item, executionContext)));
   const failures = includedSections.filter(s => s.exitCode !== 0 && !s.optional);
   const optionalFailures = includedSections.filter(s => s.exitCode !== 0 && s.optional);
+  const packRecoveryCall = {
+    tool: 'tl_pack',
+    arguments: {
+      pack,
+      ...(target ? (pack === 'debug' && !options.contextOnly ? { command: target } : { target }) : {}),
+      ...(options.budget ? { budget: options.budget } : {}),
+      ...(options.full ? { full: true } : {}),
+      cwd: process.cwd()
+    }
+  };
+  const sectionError = item => ({
+    code: 'TL_PACK_SECTION_FAILED',
+    effectiveCwd: process.cwd(),
+    section: item.title,
+    recoveryCall: packRecoveryCall,
+    message: String(item.output || `${item.title} failed`).trim()
+  });
   const compactSections = includedSections.map(item => ({
     title: item.title,
     command: item.command,
     exitCode: item.exitCode,
     optional: item.optional,
+    resultState: item.resultState || (item.exitCode !== 0 ? 'failed' : inferPayloadResultState(item.output, 0)),
+    ...(item.exitCode !== 0 ? { error: sectionError(item) } : {}),
+    ...(Array.isArray(item.errors) && item.errors.length > 0 ? { errors: item.errors } : {}),
+    ...(item.reusedFrom ? { reusedFrom: item.reusedFrom } : {}),
     output: compactLines(item.output || '(no output)', budgeted.tier === 'small' ? 12 : options.full ? 60 : 24)
   }));
 
+  const failedItems = [...failures, ...optionalFailures];
+  const nestedErrors = includedSections.flatMap(item => Array.isArray(item.errors) ? item.errors : []);
+  const resultState = includedSections.length === 0
+    ? 'unsupported'
+    : failedItems.length === includedSections.length
+      ? 'failed'
+      : budgeted.omitted.length > 0 || failedItems.length > 0 || compactSections.some(item => item.resultState === 'partial')
+        ? 'partial'
+        : compactSections.every(item => item.resultState === 'empty')
+          ? 'empty'
+          : 'success';
+  out.setData('resultState', resultState);
+  out.setData('partialFailure', failedItems.length > 0 || nestedErrors.length > 0);
+  if (budgeted.omitted.length > 0) out.setData('partialReason', 'budget');
+  if (resultState === 'failed' || resultState === 'unsupported') {
+    out.setData('error', {
+      code: resultState === 'failed' ? 'TL_PACK_FAILED' : 'TL_PACK_UNSUPPORTED',
+      effectiveCwd: process.cwd(),
+      recoveryCall: packRecoveryCall,
+      message: resultState === 'failed' ? 'Every included pack section failed.' : 'The pack produced no supported sections.'
+    });
+  }
+  if (failedItems.length > 0 || nestedErrors.length > 0) {
+    out.setData('errors', [...failedItems.map(sectionError), ...nestedErrors]);
+  }
   out.setData('pack', pack);
   out.setData('target', target);
   out.setData('budgetTier', budgeted.tier);
-  out.setData('sections', compactSections);
-  out.setData('omittedSections', budgeted.omitted);
   out.setData('failed', failures.length > 0);
+  out.setData('sections', compactSections);
+  out.setData('omittedSections', budgeted.omitted.map(item => ({ ...item, resultState: 'unsupported', reason: 'budget' })));
 
   out.header(`Context pack: ${pack}${target ? ` (${target})` : ''}`);
   out.header(PACKS[pack]?.summary || '');

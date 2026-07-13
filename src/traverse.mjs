@@ -14,7 +14,7 @@ import { readdirSync, statSync, lstatSync, existsSync, realpathSync } from 'node
 import { join, relative, basename, extname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { getSkipDirs, getSkipExtensions, getImportantDirs, getImportantFiles, shouldSkip } from './project.mjs';
-import { rgCommand } from './shell.mjs';
+import { rgCommand, SearchCommandError } from './shell.mjs';
 
 // ─────────────────────────────────────────────────────────────
 // Token Estimation from File Size
@@ -38,7 +38,13 @@ export function estimateTokensFromSize(bytes) {
 let _rgAvailable = null;
 export function isRipgrepAvailable() {
   if (_rgAvailable !== null) return _rgAvailable;
-  _rgAvailable = rgCommand(['--version']) !== null;
+  try {
+    rgCommand(['--version']);
+    _rgAvailable = true;
+  } catch (err) {
+    if (!(err instanceof SearchCommandError)) throw err;
+    _rgAvailable = false;
+  }
   return _rgAvailable;
 }
 
@@ -419,10 +425,10 @@ export function batchRipgrep(patterns, searchPath, options = {}) {
 
   const proc = spawnSync('rg', args, spawnOpts);
 
-  // Exit 1 = no matches, exit 2+ = error
-  if (proc.status >= 2 || proc.error) {
-    if (proc.stderr) process.stderr.write(proc.stderr);
-    return result;
+  // Exit 1 = no matches. Any execution failure must remain distinct from an
+  // empty result so callers do not cache a false "nothing found" answer.
+  if (proc.error || (proc.status !== 0 && proc.status !== 1)) {
+    throw new SearchCommandError('rg', args, proc, spawnOpts);
   }
 
   if (!proc.stdout) return result;

@@ -11,7 +11,7 @@
  */
 
 // Prompt info for tl-prompt
-if (process.argv.includes('--prompt')) {
+if (isMainModule(import.meta.url) && process.argv.includes('--prompt')) {
   console.log(JSON.stringify({
     name: 'tl-dupes',
     desc: 'Find duplicate / near-duplicate functions across a codebase',
@@ -28,6 +28,7 @@ import {
 } from '../src/output.mjs';
 import { findDuplicates } from '../src/dupes.mjs';
 import { buildFunctionIndex } from '../src/walk.mjs';
+import { isMainModule } from '../src/in-process-cli.mjs';
 
 const HELP = `
 tl-dupes - Find duplicate and near-duplicate functions
@@ -67,7 +68,7 @@ Examples:
   tl-dupes --strict            # Fail CI on duplication
 `;
 
-const rawArgs = process.argv.slice(2);
+export function runDupesCli(rawArgs = process.argv.slice(2)) {
 const options = parseCommonArgs(rawArgs);
 
 if (options.help) {
@@ -190,3 +191,6 @@ if (includeNames) out.setData('names', result.names);
 out.print();
 
 process.exit(strict && totalDupes > 0 ? 1 : 0);
+}
+
+if (isMainModule(import.meta.url)) runDupesCli();

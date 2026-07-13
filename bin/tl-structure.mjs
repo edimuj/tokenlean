@@ -12,7 +12,7 @@
  */
 
 // Prompt info for tl-prompt
-if (process.argv.includes('--prompt')) {
+if (isMainModule(import.meta.url) && process.argv.includes('--prompt')) {
   console.log(JSON.stringify({
     name: 'tl-structure',
     desc: 'Project overview with token estimates',
@@ -33,6 +33,7 @@ import {
 import { traverseDirectory } from '../src/traverse.mjs';
 import { getConfig } from '../src/config.mjs';
 import { rgCommand } from '../src/shell.mjs';
+import { isMainModule } from '../src/in-process-cli.mjs';
 
 const HELP = `
 tl-structure - Smart project overview with context estimates
@@ -215,7 +216,7 @@ function extractExportName(line) {
 }
 
 // Main
-const args = process.argv.slice(2);
+export function runStructureCli(args = process.argv.slice(2)) {
 const options = parseCommonArgs(args);
 
 // Get config defaults
@@ -299,3 +300,6 @@ if (showEntryPoints) {
 }
 
 out.print();
+}
+
+if (isMainModule(import.meta.url)) runStructureCli();

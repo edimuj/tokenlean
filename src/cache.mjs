@@ -22,8 +22,8 @@
  *   }
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, unlinkSync, rmSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, lstatSync, readlinkSync, unlinkSync, rmSync } from 'node:fs';
+import { join, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { loadConfig } from './config.mjs';
@@ -109,13 +109,36 @@ function getCacheKeyHash(key) {
 // Git State Detection
 // ─────────────────────────────────────────────────────────────
 
-// In-process memo: keyed by resolved cwd.
-// Each entry is { headSnapshot: string, state: object|null }
-// headSnapshot is the resolved HEAD commit SHA read directly from git internals
-// (cheap file reads, no spawn). If the snapshot changes between calls, the state
-// is recomputed. This lets us avoid git spawns on every call in the common case
-// while still detecting commits made mid-process (e.g. in test suites).
-const _gitStateMemo = new Map();
+function resolveGitDir(dir) {
+  let current = resolve(dir);
+  while (true) {
+    const marker = join(current, '.git');
+    if (existsSync(marker)) {
+      try {
+        if (lstatSync(marker).isDirectory()) return marker;
+        const content = readFileSync(marker, 'utf8').trim();
+        const match = content.match(/^gitdir:\s*(.+)$/i);
+        if (!match) throw new Error(`Invalid gitdir marker: ${marker}`);
+        return resolve(current, match[1]);
+      } catch (err) {
+        throw new Error(`Cannot resolve git directory from ${marker}: ${err.message}`);
+      }
+    }
+
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+function resolveCommonGitDir(gitDir) {
+  try {
+    const common = readFileSync(join(gitDir, 'commondir'), 'utf8').trim();
+    return resolve(gitDir, common);
+  } catch {
+    return gitDir;
+  }
+}
 
 /**
  * Resolve the HEAD commit SHA by reading git's internal files directly.
@@ -123,22 +146,23 @@ const _gitStateMemo = new Map();
  * Cost: 1–2 synchronous file reads (no git spawn).
  */
 function readHeadSnapshot(dir) {
-  // Find git dir by walking up (simplified: check .git in given dir only,
-  // which matches how gitCommand is called with cwd=projectRoot)
-  const gitDir = join(dir, '.git');
-  if (!existsSync(gitDir)) return null;
+  const gitDir = resolveGitDir(dir);
+  if (!gitDir) return null;
 
   try {
     const headContent = readFileSync(join(gitDir, 'HEAD'), 'utf8').trim();
     if (headContent.startsWith('ref: ')) {
       // Symbolic ref — follow to the actual ref file
       const refPath = headContent.slice(5); // e.g. "refs/heads/main"
-      const refFile = join(gitDir, refPath);
-      if (existsSync(refFile)) {
-        return readFileSync(refFile, 'utf8').trim();
+      const commonDir = resolveCommonGitDir(gitDir);
+      for (const baseDir of new Set([gitDir, commonDir])) {
+        const refFile = join(baseDir, refPath);
+        if (existsSync(refFile)) {
+          return readFileSync(refFile, 'utf8').trim();
+        }
       }
       // Try packed-refs fallback
-      const packedRefs = join(gitDir, 'packed-refs');
+      const packedRefs = join(commonDir, 'packed-refs');
       if (existsSync(packedRefs)) {
         const packed = readFileSync(packedRefs, 'utf8');
         for (const line of packed.split('\n')) {
@@ -156,6 +180,68 @@ function readHeadSnapshot(dir) {
   }
 }
 
+function parsePorcelainStatus(raw) {
+  const records = raw.split('\0');
+  const entries = [];
+
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i];
+    if (!record || record.length < 3) continue;
+    const status = record.slice(0, 2);
+    const path = record.slice(3);
+    const renamed = status.includes('R') || status.includes('C');
+    const originalPath = renamed ? (records[++i] || null) : null;
+    entries.push({ status, path, originalPath });
+  }
+
+  return entries.sort((a, b) =>
+    a.path.localeCompare(b.path) || a.status.localeCompare(b.status)
+  );
+}
+
+function updateFingerprint(hash, label, value) {
+  const data = Buffer.isBuffer(value) ? value : Buffer.from(String(value));
+  hash.update(`${label}:${data.length}:`);
+  hash.update(data);
+  hash.update('\0');
+}
+
+function fingerprintWorktree(projectRoot, entries) {
+  const digest = createHash('sha256');
+  updateFingerprint(digest, 'version', 'worktree-v1');
+
+  for (const entry of entries) {
+    updateFingerprint(digest, 'status', entry.status);
+    updateFingerprint(digest, 'path', entry.path);
+    if (entry.originalPath) updateFingerprint(digest, 'originalPath', entry.originalPath);
+
+    const fullPath = resolve(projectRoot, entry.path);
+    try {
+      const stat = lstatSync(fullPath);
+      if (stat.isSymbolicLink()) {
+        updateFingerprint(digest, 'symlink', readlinkSync(fullPath));
+      } else if (stat.isFile()) {
+        // Hash actual dirty/untracked content. Filename-only status snapshots let
+        // a second edit to an already-dirty file reuse stale source analysis.
+        updateFingerprint(digest, 'content', readFileSync(fullPath));
+      } else if (stat.isDirectory()) {
+        // Usually a dirty submodule. Its HEAD captures the source state without
+        // recursively hashing a potentially large nested worktree.
+        const submoduleHead = gitCommand(['rev-parse', 'HEAD'], { cwd: fullPath });
+        updateFingerprint(digest, 'directory', submoduleHead || `${stat.size}:${stat.mtimeMs}`);
+      } else {
+        updateFingerprint(digest, 'other', `${stat.mode}:${stat.size}:${stat.mtimeMs}`);
+      }
+    } catch (err) {
+      // Deletions are part of the state too; the status/path plus this marker is
+      // stable until that deleted path changes state again.
+      updateFingerprint(digest, 'missing', err.code || err.message);
+    }
+  }
+
+  return digest.digest('hex');
+}
+
 /**
  * Check if directory is a git repository
  */
@@ -164,57 +250,44 @@ function isGitRepo(dir) {
 }
 
 /**
- * Get current git state (HEAD commit + dirty files)
+ * Get current git state (HEAD commit + dirty file content fingerprint)
  * Returns null if not in a git repo.
- * Memoized per cwd using a cheap HEAD-file snapshot as a staleness key —
- * avoids all git spawns on hits, recomputes only when HEAD actually changes.
  */
 export function getGitState(projectRoot) {
-  const headSnapshot = readHeadSnapshot(projectRoot);
-
-  // Not a git repo (no .git dir resolvable via file reads)
-  if (headSnapshot === null) {
-    // Still verify via git spawn in case we're in a worktree / nested repo
-    const entry = _gitStateMemo.get(projectRoot);
-    if (entry && entry.headSnapshot === null) return null;
-
-    if (!isGitRepo(projectRoot)) {
-      _gitStateMemo.set(projectRoot, { headSnapshot: null, state: null });
-      return null;
-    }
-    // Is a git repo but we couldn't read HEAD files — fall through to full compute
-  }
-
-  // Check memo: if snapshot matches, return cached state
-  const entry = _gitStateMemo.get(projectRoot);
-  if (entry && entry.headSnapshot === headSnapshot) {
-    return entry.state;
-  }
-
-  // Snapshot changed or cold start — recompute via git spawns
   try {
-    // If readHeadSnapshot succeeded we already have the HEAD commit
-    const head = headSnapshot ?? gitCommand(['rev-parse', 'HEAD'], { cwd: projectRoot });
-    if (!head) {
-      _gitStateMemo.set(projectRoot, { headSnapshot, state: null });
-      return null;
+    const gitDir = resolveGitDir(projectRoot);
+    if (!gitDir) return null;
+    const headSnapshot = readHeadSnapshot(projectRoot);
+    if (headSnapshot === null && !isGitRepo(projectRoot)) {
+      return { head: null, dirtyFiles: [], worktreeFingerprint: null, invalid: true };
     }
 
-    // Get list of modified/untracked files (sorted for consistency)
-    const status = gitCommand(['status', '--porcelain'], { cwd: projectRoot }) || '';
+    // Unborn repositories have no HEAD commit but still need content-based cache
+    // invalidation for their untracked source files.
+    const head = headSnapshot ?? gitCommand(['rev-parse', 'HEAD'], { cwd: projectRoot }) ?? 'UNBORN';
+    const status = gitCommand(
+      ['status', '--porcelain=v1', '-z', '--untracked-files=all'],
+      { cwd: projectRoot, trim: false }
+    );
+    if (status === null) {
+      return { head, dirtyFiles: [], worktreeFingerprint: null, invalid: true };
+    }
 
-    const dirtyFiles = status
-      .split('\n')
-      .filter(line => line.trim())
-      .map(line => line.slice(3)) // Remove status prefix
-      .sort();
+    const entries = parsePorcelainStatus(status);
+    const dirtyFiles = entries.flatMap(entry =>
+      entry.originalPath ? [entry.path, entry.originalPath] : [entry.path]
+    ).sort();
 
-    const state = { head, dirtyFiles };
-    _gitStateMemo.set(projectRoot, { headSnapshot, state });
-    return state;
+    return {
+      head,
+      dirtyFiles,
+      worktreeFingerprint: fingerprintWorktree(projectRoot, entries)
+    };
   } catch {
-    _gitStateMemo.set(projectRoot, { headSnapshot, state: null });
-    return null;
+    // A repository marker was present, so this is a state-evaluation failure,
+    // not a non-git directory. Callers must bypass the cache rather than fall
+    // back to TTL and risk serving stale source-derived data.
+    return { head: null, dirtyFiles: [], worktreeFingerprint: null, invalid: true };
   }
 }
 
@@ -223,7 +296,10 @@ export function getGitState(projectRoot) {
  */
 function gitStateMatches(stored, current) {
   if (!stored || !current) return false;
+  if (stored.invalid || current.invalid) return false;
   if (stored.head !== current.head) return false;
+  if (!stored.worktreeFingerprint || !current.worktreeFingerprint) return false;
+  if (stored.worktreeFingerprint !== current.worktreeFingerprint) return false;
   if (stored.dirtyFiles.length !== current.dirtyFiles.length) return false;
 
   for (let i = 0; i < stored.dirtyFiles.length; i++) {
@@ -387,6 +463,7 @@ export function getCached(key, projectRoot, options = {}) {
     // Git-based invalidation
     const currentGitState = getGitState(projectRoot);
     if (currentGitState) {
+      if (currentGitState.invalid) return null;
       if (headOnly) {
         // Only compare HEAD commit — ignore dirty files
         if (!cached.gitState || cached.gitState.head !== currentGitState.head) {
@@ -487,9 +564,7 @@ export function clearCache(projectRoot = null) {
         rmSync(cacheDir, { recursive: true });
       } catch { /* ignore errors */ }
     }
-    // Evict in-process git state memo so callers see fresh state
-    _gitStateMemo.delete(projectRoot);
-    _cacheSizeIndex.delete(projectRoot);
+    _cacheSizeIndex.delete(cacheDir);
   } else {
     // Clear all caches
     if (existsSync(config.location)) {
@@ -497,7 +572,6 @@ export function clearCache(projectRoot = null) {
         rmSync(config.location, { recursive: true });
       } catch { /* ignore errors */ }
     }
-    _gitStateMemo.clear();
     _cacheSizeIndex.clear();
   }
 }

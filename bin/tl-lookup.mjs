@@ -11,7 +11,7 @@
  */
 
 // Prompt info for tl-prompt
-if (process.argv.includes('--prompt')) {
+if (isMainModule(import.meta.url) && process.argv.includes('--prompt')) {
   console.log(JSON.stringify({
     name: 'tl-lookup',
     desc: 'Find an existing function by name/intent before writing a new one',
@@ -28,6 +28,7 @@ import {
 } from '../src/output.mjs';
 import { buildFunctionIndex } from '../src/walk.mjs';
 import { searchFunctions } from '../src/lookup.mjs';
+import { isMainModule } from '../src/in-process-cli.mjs';
 
 const HELP = `
 tl-lookup - Find existing functions before writing a new one
@@ -55,7 +56,7 @@ Examples:
   tl-lookup parseConfig -j             # JSON for tooling
 `;
 
-const rawArgs = process.argv.slice(2);
+export function runLookupCli(rawArgs = process.argv.slice(2)) {
 const options = parseCommonArgs(rawArgs);
 
 if (options.help) {
@@ -97,18 +98,30 @@ if (!query) {
 const { functions, fileCount, exists } = buildFunctionIndex(targetPath, { includeTests });
 if (!exists) { console.error(`Error: path not found: ${targetPath}`); process.exit(1); }
 
-const limit = Number.isFinite(options.maxLines) ? options.maxLines : 15;
+// output.maxLines controls structured page size, not search semantics. Only an
+// explicit -l/--max-lines changes how many matches the lookup computes.
+const limit = options.maxLinesExplicit && Number.isFinite(options.maxLines) ? options.maxLines : 15;
 const matches = searchFunctions(functions, query, { limit, minScore });
 
 // ── Render ──
 const out = createOutput({ ...options, maxLines: Infinity });
+
+function printLookupOutput() {
+  // Build the human summary without treating each two-line match as a page
+  // item, then restore the configured JSON collection budget at serialization.
+  if (options.json) {
+    out.options.maxLines = options.maxLines;
+    out.options.offset = options.offset;
+  }
+  out.print();
+}
 
 if (matches.length === 0) {
   out.header(`No existing function matches "${query}" (${functions.length} scanned in ${fileCount} files)`);
   out.add('Looks safe to write a new one.');
   out.setData('query', query);
   out.setData('matches', []);
-  out.print();
+  printLookupOutput();
   process.exit(0);
 }
 
@@ -124,4 +137,7 @@ out.setData('query', query);
 out.setData('scanned', functions.length);
 out.setData('matches', matches);
 
-out.print();
+printLookupOutput();
+}
+
+if (isMainModule(import.meta.url)) runLookupCli();

@@ -277,4 +277,15 @@ describe('batchRipgrep', () => {
       assert.ok(m.file.endsWith('.mjs'), 'all matches should be in .mjs files');
     }
   });
+
+  it('throws instead of returning cacheable empty results on ENOBUFS', { skip: RG_SKIP }, () => {
+    assert.throws(
+      () => batchRipgrep(['export'], 'src/', { maxBuffer: 10 }),
+      err => {
+        assert.equal(err.name, 'SearchCommandError');
+        assert.equal(err.code, 'ENOBUFS');
+        return true;
+      }
+    );
+  });
 });
